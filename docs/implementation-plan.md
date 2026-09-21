@@ -84,19 +84,42 @@ is one that does not exist.
 
 ---
 
-## M3 — The review loop
+## M3 — The review loop  ✅ done
 
 **Goal:** the thing the whole product exists for.
 
 - Single-requirement view: one requirement plus its scenarios, full width.
 - `a` accept · `r` reject (with reason) · `e` edit in `$EDITOR` · `d` defer
-  (with reason) · `s` skip · `n`/`p` navigate · `?` help.
+  (with reason) · `s` skip · `n`/`p` navigate · `?` help. Cancel is `ctrl+c`,
+  not escape — see the note below.
 - Queue progress always on screen: `17/42 · 3 rejected · 2 deferred`.
 - Rejections collect into a revision instruction bundle for the agent.
 - Resume exactly where you left off.
 
 **Exit:** review a real 40-requirement change end to end using only the
 keyboard, quit halfway, resume in place.
+
+**Result:** met, against the largest change in the OpenSpec repo
+(`simplify-skill-installation`, 26 requirements). Accepting all 26 by keyboard
+reports complete; stopping after 7 and reopening from disk alone resumes at the
+same requirement; a mixed accept/reject/defer/skip pass persists every decision
+with its reason.
+
+The screens are driven in tests by real keystrokes against the real component
+tree, with assertions on the rendered terminal frame — OpenTUI's test renderer
+is the same renderer, so this is not a mock of the UI.
+
+**Two findings worth carrying forward:**
+
+- **A lone `escape` cannot be delivered.** It is the prefix of every escape
+  sequence, so a terminal parser has to wait to see what follows: pressed
+  alone it produces no event, and pressed before `x` it arrives as alt-x.
+  `ctrl+c` is the reliable cancel; `escape` is still accepted where a terminal
+  does resolve it, but nothing depends on it.
+- **`onKeyDown` on a `<box>` never fires**, even with `focused`. `useKeyboard`
+  is the working API. The M0 shell used the former, so its `j`/`k`/`q` bindings
+  were dead on arrival — invisible without a TTY, and caught only once the
+  screens were driven by real key events.
 
 ---
 
