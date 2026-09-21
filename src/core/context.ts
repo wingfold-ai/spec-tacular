@@ -14,15 +14,16 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ReviewedRequirement } from './review.ts';
+import { acceptedAdrs } from './decisions.ts';
+import type { ReviewedItem } from './review.ts';
 
 export interface ContextBundle {
   /** Ground rules: stack, architecture, conventions. */
   foundation: { name: string; content: string }[];
   /** Accepted architectural decision records. */
   decisions: { name: string; content: string }[];
-  accepted: ReviewedRequirement[];
-  deferred: ReviewedRequirement[];
+  accepted: ReviewedItem[];
+  deferred: ReviewedItem[];
   /** What could not be included, so the prompt can say so rather than imply completeness. */
   missing: string[];
 }
@@ -44,10 +45,15 @@ function readMarkdownDir(dir: string): { name: string; content: string }[] {
 
 export function buildContext(
   projectRoot: string,
-  reviewed: ReviewedRequirement[],
+  reviewed: ReviewedItem[],
 ): ContextBundle {
   const foundation = readMarkdownDir(join(projectRoot, 'spec-tacular', 'foundation'));
-  const decisions = readMarkdownDir(join(projectRoot, 'spec-tacular', 'decisions'));
+  // Only accepted ADRs are binding. A superseded one is history, and feeding
+  // it to an agent as a rule would resurrect a decision the project reversed.
+  const decisions = acceptedAdrs(projectRoot).map((adr) => ({
+    name: `ADR-${String(adr.number).padStart(4, '0')}: ${adr.title}`,
+    content: adr.content,
+  }));
 
   const missing: string[] = [];
   if (foundation.length === 0) missing.push('no foundation documents yet');
@@ -101,7 +107,7 @@ export function renderContext(bundle: ContextBundle): string {
       '',
     );
     for (const item of bundle.accepted) {
-      out.push(`- ${item.requirement.capability}: ${item.requirement.name}`);
+      out.push(`- ${item.item.capability}: ${item.item.name}`);
     }
     out.push('');
   }
@@ -111,7 +117,7 @@ export function renderContext(bundle: ContextBundle): string {
     out.push('Accepted in principle, but not verifiable yet. Do not treat them as done.', '');
     for (const item of bundle.deferred) {
       const why = item.review.deferReason ? ` (${item.review.deferReason})` : '';
-      out.push(`- ${item.requirement.capability}: ${item.requirement.name}${why}`);
+      out.push(`- ${item.item.capability}: ${item.item.name}${why}`);
     }
     out.push('');
   }

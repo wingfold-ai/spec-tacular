@@ -30,21 +30,43 @@ export interface Scenario {
   body: string[];
 }
 
-export interface Requirement {
-  /** `<capability>#<slug>` — stable across edits that do not rename it. */
+/**
+ * Anything a human reviews one at a time.
+ *
+ * A spec requirement and a design decision differ in what they say but not in
+ * how they are reviewed: both are a named block of text that gets accepted,
+ * rejected or deferred, and both must drop back to pending when edited. That
+ * shared behaviour lives on this type so the two can never drift apart — the
+ * review loop, the sidecar and drift detection are written once.
+ */
+export interface ReviewItem {
+  /** `<group>#<slug>` — stable across edits that do not rename it. */
   id: string;
+  /** The capability for a requirement; `design` for a decision. */
   capability: string;
   name: string;
-  operation: DeltaOperation;
-  /** Prose between the requirement header and its first scenario. */
   text: string;
-  scenarios: Scenario[];
-  /** Absolute path of the spec file. */
+  /** Absolute path of the file it lives in. */
   file: string;
-  /** 1-based line of the requirement header, so `$EDITOR` can jump to it. */
+  /** 1-based line of its header, so `$EDITOR` can jump to it. */
   line: number;
   /** Hash of the normalized block. Drift detection compares against this. */
   hash: string;
+}
+
+export interface Requirement extends ReviewItem {
+  operation: DeltaOperation;
+  scenarios: Scenario[];
+}
+
+/**
+ * Narrows a review item to a spec requirement.
+ *
+ * Needed wherever behaviour is requirement-specific — scenarios to render,
+ * prose to lint for premature concreteness. A design decision has neither.
+ */
+export function isRequirement(item: ReviewItem): item is Requirement {
+  return Array.isArray((item as Requirement).scenarios);
 }
 
 export interface Rename {

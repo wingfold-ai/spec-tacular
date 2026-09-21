@@ -132,7 +132,7 @@ describe('drift detection', () => {
     const [alpha] = reqs();
     const review = setState(emptyReview('c'), alpha!, 'accepted');
     const reduced = reqs('## ADDED Requirements\n\n### Requirement: Beta\nThe system SHALL beta.\n');
-    expect(reconcile(reduced, review).map((r) => r.requirement.id)).toEqual(['cap#beta']);
+    expect(reconcile(reduced, review).map((r) => r.item.id)).toEqual(['cap#beta']);
   });
 });
 

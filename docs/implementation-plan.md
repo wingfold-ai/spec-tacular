@@ -276,7 +276,7 @@ naming it is never flagged. That starts working when M7 writes the file.
 
 ---
 
-## M7 — Foundation and global decisions
+## M7 — Foundation and global decisions  ✅ done (one gap, stated below)
 
 **Goal:** ground rules before the first change (§9), and decisions that outlive
 a change (§6).
@@ -292,6 +292,47 @@ a change (§6).
 
 **Exit:** a decision promoted in change A demonstrably appears in the context of
 change B's design generation.
+
+**Result:** met, verified against a real project.
+
+```
+$ spectacular instructions proposal -c m7-demo
+Refused: the project's ground rules are not settled yet
+  - foundation/architecture: Architecture style (layered, hexagonal, ...) and why.
+  ...
+```
+
+Answer them and the same command succeeds, now carrying the ground rules. Then
+promoting a decision writes `spec-tacular/decisions/0001-errors-are-values.md`,
+leaves `See ADR-0001 (...)` behind in `design.md`, and every later change's
+prompt opens with *"Accepted architectural decisions — follow these. To depart
+from one, propose superseding it by number and say why — never diverge
+silently."*
+
+**A cross-milestone result worth noting.** The Foundation stack feeds M6's
+linter: with `Runtime is \`Bun\`. Database is \`Postgres\`.` in `stack.md`,
+`Postgres` stops being flagged while `MongoDB` still is. Naming a technology
+the project committed to is a decision made, not a premature one.
+
+**The refactor this needed.** A design decision and a spec requirement differ
+in what they say but not in how they are reviewed: both are a named block of
+text that gets accepted, rejected or deferred, and both must drop back to
+pending when edited. That shared behaviour now lives on a `ReviewItem` type, so
+the review loop, the sidecar and drift detection are written once and cannot
+drift apart. `Requirement` extends it with scenarios and a delta operation;
+`Decision` with a scope. The screen names what it is showing — *requirement*,
+*decision* or *ground rule* — rather than calling everything an item.
+
+**The gap.** The Foundation gate checks that its questions are *answered*, not
+that they were *accepted* through the review loop. The machinery is there —
+`loadFoundation` returns `ReviewItem`s that `openSession` accepts unchanged —
+but it is not yet reachable from the TUI, so there is no keystroke that accepts
+a ground rule. `spectacular foundation` shows what is outstanding. Wiring it
+into the TUI's routing is small and worth doing before M8.
+
+Also unchanged from M4: `tasks` is still gated on a design *existing* rather
+than on its decisions being accepted. Decisions are now reviewable, so closing
+that is a matter of extending the gate to read their review state.
 
 ---
 

@@ -38,6 +38,10 @@ bun run src/cli.ts instructions design -c <change> --cwd /path/to/project
 # Dispatch an agent in the background; returns immediately
 bun run src/cli.ts run design -c <change> --cwd /path/to/project
 bun run src/cli.ts jobs --cwd /path/to/project
+
+# Ground rules and durable decisions
+bun run src/cli.ts foundation --cwd /path/to/project
+bun run src/cli.ts adr --cwd /path/to/project
 ```
 
 Drop `--print` for the TUI; `enter` opens the review queue for the selected
@@ -46,7 +50,7 @@ over a pipe and in CI.
 
 ## Status
 
-**M0–M6 done** (M1 mostly). The review loop works: open a change, walk its
+**M0–M7 done** (M1 mostly; M7 has one stated gap). The review loop works: open a change, walk its
 requirements one at a time, and `a`ccept / `r`eject / `d`efer / `e`dit each one
 from the keyboard. Decisions persist immediately, drift is detected when a
 reviewed requirement is edited afterwards, and reopening resumes where you
@@ -79,7 +83,21 @@ only: it never blocks a stage.
    3. names a class or symbol: ExportController
 ```
 
-Tune it per project with `spec-tacular/lint.json`:
+Ground rules come first. `spectacular init` scaffolds a Foundation — stack,
+architecture, conventions — with every question left as `TBD` on purpose, and
+refuses to start a change until they are answered. Once answered they enter
+every agent's context.
+
+Architectural decisions outlive their change. Mark one `**Scope: global**` in a
+design and `p` promotes it to a numbered ADR under `spec-tacular/decisions/`,
+leaving a reference behind. Later changes get it as a rule:
+
+```
+$ spectacular adr
+ADR-0001  accepted   Errors are values
+```
+
+Tune the linter per project with `spec-tacular/lint.json`:
 
 ```json
 { "allow": ["tasks.md", "proposal.md", "openspec"] }
