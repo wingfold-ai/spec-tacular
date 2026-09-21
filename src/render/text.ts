@@ -7,6 +7,7 @@
  * afterthought.
  */
 
+import { staleArtifacts } from '../core/gate.ts';
 import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
 
 const MARK: Record<StageState, string> = {
@@ -91,6 +92,16 @@ export function renderOverview(
       );
     }
 
+    // A downstream artifact written against something that changed since is
+    // the precise failure the sequencing fix exists to prevent, and OpenSpec
+    // cannot see it: both files still exist, so it reports everything fine.
+    for (const stale of staleArtifacts(p)) {
+      out.push(
+        `${' '.repeat(width)}  ` +
+          paint(`! ${stale.artifact} may be stale — ${stale.because.join('; ')}`, YELLOW, color),
+      );
+    }
+
     for (const g of p.gaps) {
       // Worded as an observation, not a verdict: an optional artifact that was
       // deliberately skipped looks identical on disk. See PrerequisiteGap.
@@ -109,12 +120,14 @@ export function renderOverview(
   const blocked = pipelines.flatMap((p) =>
     [...p.stages, p.apply].filter((s) => s.state === 'blocked').map(describeBlocked),
   );
+  const stale = pipelines.filter((p) => staleArtifacts(p).length > 0);
   const withGaps = pipelines.filter((p) => p.gaps.length > 0);
 
   out.push(
     paint(
       `${blocked.length} blocked stage${blocked.length === 1 ? '' : 's'} · ` +
-        `${withGaps.length} change${withGaps.length === 1 ? '' : 's'} with an unwritten prerequisite`,
+        `${withGaps.length} change${withGaps.length === 1 ? '' : 's'} with an unwritten prerequisite · ` +
+        `${stale.length} with a possibly stale artifact`,
       DIM,
       color,
     ),

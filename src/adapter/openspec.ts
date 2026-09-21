@@ -90,6 +90,17 @@ export class OpenSpecAdapter {
     return this.runJson<OpenSpecChangeStatus>(['status', '--change', change, '--json']);
   }
 
+  /**
+   * Raw instructions for writing one artifact.
+   *
+   * Returned as text, not parsed: this is handed to an agent verbatim, and
+   * spec-tacular has no business reinterpreting OpenSpec's guidance.
+   */
+  async instructions(artifact: string, change: string): Promise<string> {
+    const { stdout } = await this.run(['instructions', artifact, '--change', change]);
+    return stdout;
+  }
+
   /** The OpenSpec version in use, for the compatibility check. */
   async version(): Promise<string> {
     const { stdout } = await this.run(['--version']);

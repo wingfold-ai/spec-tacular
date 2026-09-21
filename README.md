@@ -25,19 +25,33 @@ pipeline that is always visible.
 
 ```bash
 bun install
+
+# Overview of every change
 bun run src/cli.ts --cwd /path/to/an/openspec/project --print
+
+# Install the schema that sequences design after specs
+bun run src/cli.ts init --cwd /path/to/project
+
+# Ask for an artifact — refused while its prerequisites are unreviewed
+bun run src/cli.ts instructions design -c <change> --cwd /path/to/project
 ```
 
-Drop `--print` for the TUI. `--print` renders the same model as text, so the
-overview also works over a pipe and in CI.
+Drop `--print` for the TUI; `enter` opens the review queue for the selected
+change. `--print` renders the same model as text, so the overview also works
+over a pipe and in CI.
 
 ## Status
 
-**M0–M3 done** (M1 mostly). The review loop works: open a change, walk its
+**M0–M4 done** (M1 mostly). The review loop works: open a change, walk its
 requirements one at a time, and `a`ccept / `r`eject / `d`efer / `e`dit each one
 from the keyboard. Decisions persist immediately, drift is detected when a
 reviewed requirement is edited afterwards, and reopening resumes where you
 stopped.
+
+Sequencing is enforced. `spectacular init` installs a schema where `design`
+requires `specs` (OpenSpec's own has it require only `proposal`), and
+`spectacular instructions design -c <change>` is refused — exit 1 — while any
+spec requirement is unreviewed.
 
 Verified against the largest change in the OpenSpec repo — 26 requirements,
 reviewed end to end by keystroke in tests that assert on the real rendered
