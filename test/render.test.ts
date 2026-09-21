@@ -52,9 +52,41 @@ describe('renderOverview', () => {
     expect(out).toContain('tasks exists but design was never written');
   });
 
-  test('states that "written" is not "accepted"', () => {
-    expect(out).toContain('not that anyone accepted it');
-    expect(out).toContain('review state arrives in M2');
+  test('distinguishes written from accepted in the legend', () => {
+    expect(out).toContain('+ accepted');
+    expect(out).toContain('* written (review unfinished)');
+  });
+
+  test('an artifact with no review data is never shown as accepted', () => {
+    // Absence of review is not evidence of review.
+    expect(renderPipelineBar(buildPipeline(status))).toContain('* specs');
+    expect(renderPipelineBar(buildPipeline(status))).not.toContain('+ specs');
+  });
+
+  test('shows review progress when the artifact carries requirements', () => {
+    const withReview = renderOverview(
+      [
+        buildPipeline(status, {
+          specs: { total: 10, accepted: 7, rejected: 1, deferred: 0, pending: 2, drifted: 0, complete: false },
+        }),
+      ],
+      {},
+    );
+    expect(withReview).toContain('specs: 7/10 accepted · 1 rejected · 2 pending');
+  });
+
+  test('marks a fully reviewed artifact accepted and calls out drift', () => {
+    const accepted = buildPipeline(status, {
+      specs: { total: 4, accepted: 3, rejected: 0, deferred: 1, pending: 0, drifted: 0, complete: true },
+    });
+    expect(renderPipelineBar(accepted)).toContain('+ specs');
+
+    const drifted = renderOverview([
+      buildPipeline(status, {
+        specs: { total: 4, accepted: 3, rejected: 0, deferred: 0, pending: 1, drifted: 1, complete: false },
+      }),
+    ]);
+    expect(drifted).toContain('1 changed since review');
   });
 
   test('reports changes that failed to load', () => {
