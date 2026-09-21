@@ -101,6 +101,24 @@ export class OpenSpecAdapter {
     return stdout;
   }
 
+  /**
+   * Archives a change through OpenSpec.
+   *
+   * `--yes` is passed because spec-tacular has already resolved what it
+   * covers: every requirement is accepted or recorded in the pending register,
+   * and the only unchecked tasks are ones deliberately deferred.
+   */
+  async archive(change: string): Promise<string> {
+    const { stdout, stderr } = await this.run(['archive', change, '--yes']);
+    return stdout + stderr;
+  }
+
+  /** Validates a spec or change, so a write can be checked by its owner. */
+  async validate(item: string): Promise<string> {
+    const { stdout, stderr } = await this.run(['validate', item, '--type', 'spec']);
+    return stdout + stderr;
+  }
+
   /** The OpenSpec version in use, for the compatibility check. */
   async version(): Promise<string> {
     const { stdout } = await this.run(['--version']);
