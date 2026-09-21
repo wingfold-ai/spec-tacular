@@ -25,8 +25,18 @@ import type { OpenSpecChangeStatus } from './adapter/types.ts';
 import { renderOverview } from './render/text.ts';
 import { gateFor } from './core/gate.ts';
 import { initProject, SCHEMA_NAME } from './core/init.ts';
+import { buildContext, buildPrompt } from './core/context.ts';
+import {
+  activeJobForChange,
+  cancelJob,
+  JobConflictError,
+  listJobs,
+  startJob,
+  tailJob,
+} from './core/jobs.ts';
+import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
 
-type Command = 'overview' | 'init' | 'instructions';
+type Command = 'overview' | 'init' | 'instructions' | 'run' | 'jobs';
 
 interface Args {
   command: Command;
@@ -38,6 +48,10 @@ interface Args {
   bin: string | undefined;
   force: boolean;
   help: boolean;
+  driver: string;
+  /** For `jobs`: a job id to cancel or tail. */
+  job: string | undefined;
+  cancel: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -50,6 +64,9 @@ function parseArgs(argv: string[]): Args {
     bin: undefined,
     force: false,
     help: false,
+    driver: DEFAULT_DRIVER,
+    job: undefined,
+    cancel: false,
   };
 
   const positional: string[] = [];
@@ -61,13 +78,17 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--cwd') args.cwd = argv[++i] ?? args.cwd;
     else if (a === '--change' || a === '-c') args.change = argv[++i];
     else if (a === '--openspec-bin') args.bin = argv[++i];
+    else if (a === '--driver') args.driver = argv[++i] ?? args.driver;
+    else if (a === '--job') args.job = argv[++i];
+    else if (a === '--cancel') args.cancel = true;
     else if (a !== undefined && !a.startsWith('-')) positional.push(a);
   }
 
   const [first, second] = positional;
   if (first === 'init') args.command = 'init';
-  else if (first === 'instructions') {
-    args.command = 'instructions';
+  else if (first === 'jobs') args.command = 'jobs';
+  else if (first === 'instructions' || first === 'run') {
+    args.command = first === 'run' ? 'run' : 'instructions';
     args.artifact = second;
   }
   return args;
@@ -83,12 +104,18 @@ Usage:
                                            Instructions for writing an artifact,
                                            refused while its prerequisites are
                                            not accepted
+  spectacular run <artifact> -c <change>   Dispatch an agent in the background
+                                           to write it. Returns immediately.
+  spectacular jobs                         List background jobs
+  spectacular jobs --job <id>              Tail one job's output
+  spectacular jobs --job <id> --cancel     Stop a running job
 
 Options:
   -p, --print            Print the overview as text and exit
   -c, --change <name>    The change to act on
       --cwd <dir>        Project root (default: current directory)
       --openspec-bin <p> Path to the openspec binary
+      --driver <name>    Agent to run (claude, opencode). Default: claude
   -f, --force            Overwrite an existing schema install
   -h, --help             Show this help
 `;
@@ -142,26 +169,24 @@ function runInit(args: Args): number {
 }
 
 /**
- * `spectacular instructions <artifact> -c <change>` — the gate.
- *
- * This is the seam an agent goes through to write an artifact, so refusing
- * here is what actually stops a design being written against pending specs.
- * M5's agent driver calls the same function.
+ * Runs the gate and reports it. Shared by `instructions` and `run` so an agent
+ * dispatched in the background can never bypass a check the foreground honours.
  */
-async function runInstructions(
+async function checkGate(
   args: Args,
   adapter: OpenSpecAdapter,
-): Promise<number> {
+  verb: string,
+): Promise<{ ok: false; code: number } | { ok: true; artifact: string; change: string }> {
   if (!args.artifact || !args.change) {
-    process.stderr.write('Usage: spectacular instructions <artifact> --change <name>\n');
-    return 1;
+    process.stderr.write(`Usage: spectacular ${verb} <artifact> --change <name>\n`);
+    return { ok: false, code: 1 };
   }
 
   const { pipelines } = await loadPipelines(adapter, args.cwd);
   const pipeline = pipelines.find((p) => p.name === args.change);
   if (!pipeline) {
     process.stderr.write(`No change called '${args.change}'.\n`);
-    return 1;
+    return { ok: false, code: 1 };
   }
 
   const gate = gateFor(pipeline, args.artifact);
@@ -177,9 +202,128 @@ async function runInstructions(
     process.stderr.write(
       `\nReview it first: spectacular --cwd ${args.cwd}, select ${args.change}, press enter.\n`,
     );
+    return { ok: false, code: 1 };
+  }
+  return { ok: true, artifact: args.artifact, change: args.change };
+}
+
+/**
+ * `spectacular instructions <artifact> -c <change>` — the gate, plus the
+ * prompt an agent would receive. Useful on its own for piping into a tool
+ * spec-tacular has no driver for.
+ */
+async function runInstructions(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const gate = await checkGate(args, adapter, 'instructions');
+  if (!gate.ok) return gate.code;
+  process.stdout.write(await composePrompt(args, adapter, gate.artifact, gate.change));
+  return 0;
+}
+
+/** Context bundle plus OpenSpec's instructions — exactly what a job runs on. */
+async function composePrompt(
+  args: Args,
+  adapter: OpenSpecAdapter,
+  artifact: string,
+  change: string,
+): Promise<string> {
+  const instructions = await adapter.instructions(artifact, change);
+  const status = (await adapter.statusAll()).changes.find((c) => c.changeName === change);
+  const reviewed = status ? loadChangeReview(args.cwd, status).requirements : [];
+  return buildPrompt(buildContext(args.cwd, reviewed), instructions);
+}
+
+/**
+ * `spectacular run <artifact> -c <change>` — dispatch and return.
+ *
+ * Returning immediately is the point: this is what lets you review one change
+ * while another is being implemented, in one terminal.
+ */
+async function runAgent(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const gate = await checkGate(args, adapter, 'run');
+  if (!gate.ok) return gate.code;
+
+  let driver;
+  try {
+    driver = defaultRegistry().get(args.driver);
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
     return 1;
   }
-  process.stdout.write(await adapter.instructions(args.artifact, args.change));
+
+  const prompt = await composePrompt(args, adapter, gate.artifact, gate.change);
+
+  try {
+    const job = startJob({
+      projectRoot: args.cwd,
+      change: gate.change,
+      artifact: gate.artifact,
+      driver: driver.id,
+      command: driver.build({ prompt, cwd: args.cwd }),
+      cwd: args.cwd,
+    });
+    process.stdout.write(
+      `Started ${driver.label} on ${gate.change}/${gate.artifact}\n` +
+        `  job:  ${job.id}\n` +
+        `  log:  ${job.logPath}\n\n` +
+        `Follow it with: spectacular jobs --job ${job.id}\n`,
+    );
+    return 0;
+  } catch (err) {
+    if (err instanceof JobConflictError) {
+      process.stderr.write(`${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+}
+
+/** `spectacular jobs` — list, tail, or cancel. */
+function runJobs(args: Args): number {
+  const driver = defaultRegistry();
+
+  if (args.job) {
+    const job = listJobs(args.cwd).find((j) => j.id === args.job || j.id.startsWith(args.job!));
+    if (!job) {
+      process.stderr.write(`No job matching '${args.job}'.\n`);
+      return 1;
+    }
+    if (args.cancel) {
+      const stopped = cancelJob(args.cwd, job.id);
+      process.stdout.write(
+        stopped ? `Cancelled ${job.id}\n` : `${job.id} is not running (${job.status}).\n`,
+      );
+      return stopped ? 0 : 1;
+    }
+
+    process.stdout.write(
+      `${job.change}/${job.artifact}  ${job.status}  started ${job.startedAt}\n\n`,
+    );
+    let format: (line: string) => string | null;
+    try {
+      format = driver.get(job.driver).formatLine;
+    } catch {
+      // A job recorded under a driver this build no longer has is still
+      // readable — its log is plain text on disk.
+      format = (line) => line;
+    }
+    for (const line of tailJob(job)) {
+      const rendered = format(line);
+      if (rendered !== null) process.stdout.write(`${rendered}\n`);
+    }
+    return 0;
+  }
+
+  const jobs = listJobs(args.cwd);
+  if (jobs.length === 0) {
+    process.stdout.write('No jobs yet.\n');
+    return 0;
+  }
+  for (const job of jobs) {
+    const when = job.endedAt ?? job.startedAt;
+    process.stdout.write(
+      `${job.status.padEnd(11)} ${job.change}/${job.artifact}  ${when}  ${job.id}\n`,
+    );
+  }
   return 0;
 }
 
@@ -201,11 +345,13 @@ async function main(): Promise<number> {
   }
 
   if (args.command === 'init') return runInit(args);
+  if (args.command === 'jobs') return runJobs(args);
 
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
   try {
     if (args.command === 'instructions') return await runInstructions(args, adapter);
+    if (args.command === 'run') return await runAgent(args, adapter);
 
     const { pipelines, failed, statuses } = await loadPipelines(adapter, args.cwd);
 
@@ -248,6 +394,23 @@ async function main(): Promise<number> {
       reparse: (change) =>
         queueFor(change)?.requirements.map((r) => r.requirement) ?? [],
       reloadPipelines: async () => (await loadPipelines(adapter, args.cwd)).pipelines,
+      listJobs: () => listJobs(args.cwd),
+      tailJob: (job) => {
+        let format: (line: string) => string | null;
+        try {
+          format = defaultRegistry().get(job.driver).formatLine;
+        } catch {
+          // A job recorded under a driver this build no longer has is still
+          // readable — its log is plain text on disk.
+          format = (line) => line;
+        }
+        return tailJob(job)
+          .map(format)
+          .filter((line): line is string => line !== null);
+      },
+      cancelJob: (job) => {
+        cancelJob(args.cwd, job.id);
+      },
     });
     return 0;
   } catch (err) {

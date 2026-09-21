@@ -23,8 +23,10 @@ import {
 import type { Requirement } from '../core/requirements.ts';
 import { currentItem } from '../core/session.ts';
 import { openInEditor } from './editor.ts';
+import { JobPane, summarizeJobs } from './jobs.tsx';
 import { ReviewScreen } from './review.tsx';
 import { THEME } from './theme.ts';
+import type { Job } from '../core/jobs.ts';
 
 export interface TuiInput {
   pipelines: ChangePipeline[];
@@ -38,6 +40,11 @@ export interface TuiInput {
   reparse: (change: string) => Requirement[];
   /** Recomputes the overview after review changed something. */
   reloadPipelines: () => Promise<ChangePipeline[]>;
+  /** Background jobs, re-read each time the pane opens. */
+  listJobs: () => Job[];
+  /** Rendered log lines for one job. */
+  tailJob: (job: Job) => string[];
+  cancelJob: (job: Job) => void;
 }
 
 const STAGE_COLOR: Record<StageState, string> = {
@@ -109,9 +116,31 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const [index, setIndex] = createSignal(0);
   const [session, setSession] = createSignal<ReviewSession | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
+  const [jobs, setJobs] = createSignal<Job[]>(props.input.listJobs());
+  const [jobIndex, setJobIndex] = createSignal(0);
+  const [jobsOpen, setJobsOpen] = createSignal(false);
 
   const selected = () => pipelines()[index()];
-  const inReview = createMemo(() => session() !== null);
+  const inReview = createMemo(() => session() !== null && !jobsOpen());
+
+  const selectedJob = createMemo(() => jobs()[jobIndex()]);
+  const jobLines = createMemo(() => {
+    const job = selectedJob();
+    return job ? props.input.tailJob(job) : [];
+  });
+
+  /**
+   * Re-reads from disk every time the pane opens.
+   *
+   * Jobs are spawned detached and record their own outcome, so the in-memory
+   * list goes stale the moment one finishes — and a pane showing a job as
+   * still running long after it stopped is worse than no pane.
+   */
+  const openJobs = () => {
+    setJobs(props.input.listJobs());
+    setJobIndex((i) => Math.min(Math.max(i, 0), Math.max(props.input.listJobs().length - 1, 0)));
+    setJobsOpen(true);
+  };
 
   const move = (delta: number) => {
     const n = pipelines().length;
@@ -165,6 +194,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   };
 
   useKeyboard((key) => {
+    // The job overlay owns the keyboard while it is up, including during a
+    // review — that is what makes it a glance rather than a context switch.
+    if (jobsOpen()) return;
+    if (key.ctrl && key.name === 'j') return openJobs();
     if (inReview()) return;
     if (key.name === 'q' || (key.ctrl && key.name === 'c')) props.onQuit();
     else if (key.name === 'j' || key.name === 'down') move(1);
@@ -187,6 +220,21 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       {/* Constant region 1: the pipeline of the selected change */}
       <PipelineBar pipeline={selected()} />
 
+      <Show when={jobsOpen()}>
+        <JobPane
+          jobs={jobs()}
+          lines={jobLines()}
+          selected={jobIndex()}
+          onSelect={(i) => setJobIndex(Math.min(Math.max(i, 0), Math.max(jobs().length - 1, 0)))}
+          onCancel={(job) => {
+            props.input.cancelJob(job);
+            setJobs(props.input.listJobs());
+          }}
+          onClose={() => setJobsOpen(false)}
+        />
+      </Show>
+
+      <Show when={!jobsOpen()}>
       <Show
         when={session()}
         fallback={
@@ -208,7 +256,12 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
               <Show when={notice()}>
                 <text style={{ fg: THEME.warn }}>{`  ${notice()}`}</text>
               </Show>
-              <text style={{ fg: THEME.dim }}>{'   j/k move · enter review · q quit'}</text>
+              <Show when={summarizeJobs(jobs()) !== ''}>
+                <text style={{ fg: THEME.dim }}>{`  jobs: ${summarizeJobs(jobs())}`}</text>
+              </Show>
+              <text style={{ fg: THEME.dim }}>
+                {'   j/k move · enter review · ctrl+j jobs · q quit'}
+              </text>
             </box>
           </>
         }
@@ -223,6 +276,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           onMove={(d) => commit(moveCursor(session()!, d))}
           onBack={() => void leaveReview()}
         />
+      </Show>
       </Show>
     </box>
   );
