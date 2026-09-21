@@ -21,9 +21,22 @@ pipeline that is always visible.
 | `apply` blocks the terminal | `apply` runs in the **background** while you keep reviewing |
 | A task needing a deployed env blocks archive | That task is **deferred**; the rest of the change archives |
 
+## Try it
+
+```bash
+bun install
+bun run src/cli.ts --cwd /path/to/an/openspec/project --print
+```
+
+Drop `--print` for the TUI. `--print` renders the same model as text, so the
+overview also works over a pipe and in CI.
+
 ## Status
 
-Pre-implementation. This repository currently contains the plan:
+**M0 done** — reads a real OpenSpec project and renders the pipeline for every
+change. M1 (always-visible overview) partly done. See the plan for what's next.
+
+The plan:
 
 - [`docs/problem-analysis.md`](docs/problem-analysis.md) — each pain point traced to its
   root cause in the OpenSpec source, and what the fix has to be.
@@ -34,3 +47,12 @@ Pre-implementation. This repository currently contains the plan:
   schema that enforces the sequencing. This one is already runnable.
 
 Start with `docs/implementation-plan.md`.
+
+Source layout:
+
+| Path | What |
+| --- | --- |
+| `src/adapter/` | The only module that knows OpenSpec exists. Reads its `--json` CLI; never writes a file OpenSpec owns. |
+| `src/core/` | Pure domain logic — stage derivation, gating. Schema-agnostic and terminal-free. |
+| `src/render/` | Headless text rendering, so the overview is testable and pipe-friendly. |
+| `src/tui/` | OpenTUI + Solid shell. Deliberately thin. |
