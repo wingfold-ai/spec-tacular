@@ -27,6 +27,8 @@ import { JobPane, summarizeJobs } from './jobs.tsx';
 import { ReviewScreen } from './review.tsx';
 import { THEME } from './theme.ts';
 import type { Job } from '../core/jobs.ts';
+import { lintRequirement, type LintConfig } from '../core/concreteness.ts';
+import { markExampleInFile } from '../core/mark.ts';
 
 export interface TuiInput {
   pipelines: ChangePipeline[];
@@ -38,6 +40,8 @@ export interface TuiInput {
   saveSession: (session: ReviewSession) => void;
   /** Re-parses a change's specs, for after an external edit. */
   reparse: (change: string) => Requirement[];
+  /** Per-project linter tuning. */
+  lintConfig: LintConfig;
   /** Recomputes the overview after review changed something. */
   reloadPipelines: () => Promise<ChangePipeline[]>;
   /** Background jobs, re-read each time the pane opens. */
@@ -177,6 +181,12 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setSession(next);
   };
 
+  const findings = createMemo(() => {
+    const current = session();
+    const item = current ? currentItem(current) : null;
+    return item ? lintRequirement(item.requirement, props.input.lintConfig) : [];
+  });
+
   const onEdit = () => {
     const current = session();
     const item = current ? currentItem(current) : null;
@@ -274,6 +284,22 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           onSkip={() => commit(skipItem(session()!))}
           onEdit={onEdit}
           onMove={(d) => commit(moveCursor(session()!, d))}
+          findings={findings()}
+          onMarkExample={(finding) => {
+            const current = session();
+            const item = current ? currentItem(current) : null;
+            if (!current || !item) return;
+            const result = markExampleInFile(item.requirement, finding.value);
+            if (!result.ok) {
+              setNotice(result.reason);
+              return;
+            }
+            // Re-parsed rather than patched in memory: the text changed, so
+            // the hash changed, and an accepted requirement must drop back to
+            // pending exactly as any other edit would make it.
+            setNotice(null);
+            setSession(refresh(current, props.input.reparse(current.change)));
+          }}
           onBack={() => void leaveReview()}
         />
       </Show>

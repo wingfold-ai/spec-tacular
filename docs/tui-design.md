@@ -77,6 +77,7 @@ Verify one here and it merges into the main specs.
 | Key | Action |
 | --- | --- |
 | `a` `r` `e` `d` `s` | accept · reject · edit · defer · skip |
+| `m` then `1`–`9` | mark a flagged value as an example, not a contract |
 | `n` `p` | next · previous requirement |
 | `p` | promote decision to ADR (design review only) |
 | `g` then `d`/`r`/`j`/`k`/`v` | go to dashboard · review · jobs · decisions · pending validation |

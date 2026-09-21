@@ -221,7 +221,7 @@ to know is settled.
 
 ---
 
-## M6 — Concreteness linter
+## M6 — Concreteness linter  ✅ done
 
 **Goal:** stop premature specificity without another paragraph of instructions.
 
@@ -235,6 +235,44 @@ to know is settled.
 
 **Exit:** tuned against real specs from the OpenSpec repo to a tolerable false
 positive rate; no finding can ever block a stage.
+
+**Result:** met. Measured across all 138 requirements in the OpenSpec repo:
+
+| | requirements flagged | findings |
+| --- | --- | --- |
+| untuned | 59/138 (43%) | 2.2 per requirement |
+| with a 16-entry project allowlist | 43/138 (31%) | 1.1 per requirement |
+
+More useful than the rate is what survives. After the allowlist the remaining
+findings are dominated by `skillsDir`, `existingOutputPaths`, `artifactPaths`,
+`ToolCommandAdapter`, `getFilePath`, `validateChangeExists` — internal
+identifiers sitting in behaviour specs, which is exactly the thing OpenSpec's
+own `config.yaml` tells its authors to avoid ("Prefer user-facing product
+behavior and observable outcomes over internal implementation mechanics").
+These are true positives. Most of the rest are the project's own artifact
+filenames, which is precisely what the allowlist is for.
+
+Two false positives the measurement exposed, both since fixed:
+
+- `Node.js` was flagged as a *file*, because `.js` is a code extension. A
+  single capitalised word before the extension is a framework, not a file —
+  real file references are lowercase, kebab, all-caps (`README.md`) or
+  multi-cap (`CommandContent.ts`).
+- `PowerShell`, `OpenCode` and `CodeBuddy` were flagged as symbols. PascalCase
+  is genuinely ambiguous between a product name and an internal class, so it
+  is now flagged **only inside backticks**. Authors reliably format code that
+  way and product names not, which is a better signal than the shape of the
+  word. `ToolCommandAdapter` still gets caught; `PowerShell` no longer does.
+
+**The linter is advisory by construction.** It cannot know whether a value is
+a real contract — for a CLI tool the command names *are* the contract — so
+every finding is phrased as a question, and a test asserts that a flagged
+requirement can still be accepted.
+
+**Scope note.** There is no rule that flags library names, because no list of
+every library exists. The Foundation stack works the other way round: any
+backticked technology in `foundation/stack.md` is a decision already made, so
+naming it is never flagged. That starts working when M7 writes the file.
 
 ---
 
