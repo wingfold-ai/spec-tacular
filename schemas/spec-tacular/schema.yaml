@@ -1,0 +1,174 @@
+name: spec-tacular
+version: 1
+description: >-
+  Strictly sequenced spec-driven workflow: proposal → specs → design → tasks.
+  Design is written only after specs are settled; cross-cutting decisions are
+  promoted to global ADRs; deployment-dependent verification is deferrable.
+
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: Why this change exists and which capabilities it touches
+    template: proposal.md
+    instruction: |
+      Establish WHY this change is needed. Keep it to 1-2 pages.
+
+      Sections: Why · What Changes · Capabilities (new and modified) · Impact.
+
+      Read the project's ground rules in `spec-tacular/foundation/` and the
+      accepted ADRs in `spec-tacular/decisions/` before writing. A proposal that
+      contradicts an accepted ADR must say so explicitly and argue for
+      superseding it — never contradict one silently.
+
+      The Capabilities section is the contract with the specs phase. Research
+      existing specs first (`openspec list --specs`, then `openspec show
+      "<spec-id>" --type spec`) and reuse exact existing capability paths rather
+      than introducing near-duplicates.
+
+      Prefer few capabilities over many. A proposal that names eight new
+      capabilities is usually several changes wearing one coat; say so and
+      suggest the split instead of proceeding.
+
+      No implementation detail. That is design's job, two phases from now.
+    requires: []
+
+  - id: specs
+    generates: "specs/**/*.md"
+    description: WHAT the system must do, as reviewable requirements
+    template: spec.md
+    instruction: |
+      Write behaviour contracts, one file per capability named in the proposal,
+      at `specs/<capability-path>/spec.md`.
+
+      Delta headers: `## ADDED Requirements`, `## MODIFIED Requirements`
+      (full updated content), `## REMOVED Requirements` (with **Reason** and
+      **Migration**), `## RENAMED Requirements` (FROM:/TO:).
+
+      Format, exactly:
+      - `### Requirement: <name>` then normative text using SHALL/MUST.
+      - `#### Scenario: <name>` — exactly four hashtags — with WHEN/THEN bullets.
+      - Every requirement has at least one scenario.
+      - New capabilities only: open the file with `## Purpose` (50+ characters).
+
+      STAY ABSTRACT. This is the most common failure in practice, so it is a
+      hard rule, not advice.
+
+      A requirement states observable behaviour: inputs, outputs, error
+      conditions, external constraints. It does not decide anything the project
+      has not decided yet.
+
+      Any concrete value that is NOT a decided contract MUST be marked as an
+      example:
+
+          {{example: POST /v1/export}}
+
+      Unmarked concrete values are read as binding contracts and will be
+      reviewed as such. Endpoint paths, status codes, field names, table names,
+      class names, file paths and library names are all concrete values.
+
+      Write this:
+        The system SHALL let an authenticated user export their data in a
+        portable, machine-readable format. {{example: CSV}}
+
+      Not this:
+        The system SHALL expose GET /api/v2/export returning a CSV via
+        ExportController.
+
+      Quick test: if the implementation could change without changing what a
+      user or a downstream system observes, it does not belong here.
+
+      Requirements are reviewed and accepted one at a time by a human before
+      design begins. Keep each one independently reviewable: one requirement,
+      one behaviour.
+    requires:
+      - proposal
+
+  - id: design
+    generates: design.md
+    description: HOW to implement it, written against settled specs
+    template: design.md
+    instruction: |
+      Explain HOW to build what the specs require.
+
+      This phase starts only after the specs above have been reviewed and
+      accepted. Treat them as fixed input. If writing the design reveals that a
+      spec is wrong, incomplete or ambiguous, STOP and say so — do not design
+      around it and do not edit the spec yourself. The specs go back for
+      revision and the design is rewritten against the corrected version. That
+      is the whole reason this phase is sequenced after specs.
+
+      Sections: Context · Goals / Non-Goals · Decisions · Risks / Trade-offs ·
+      Migration Plan · Open Questions.
+
+      Ground rules. Read `spec-tacular/foundation/` and every accepted ADR in
+      `spec-tacular/decisions/` first. The design MUST conform to them. Where it
+      cannot, propose superseding the specific ADR by number, with rationale —
+      never diverge silently.
+
+      Mark every decision with its scope:
+
+          **Scope: local**  — applies to this change only
+          **Scope: global** — an architectural rule the whole project should follow
+
+      Global-scope decisions are candidates for promotion to project ADRs during
+      review. Err toward `global` for anything about layering, error handling,
+      persistence, authentication, API style, or dependency choice: a decision
+      wrongly marked local gets silently re-decided, differently, in the next
+      change.
+
+      Each decision carries the alternatives considered and why they lost.
+
+      Architecture and approach, not line-by-line implementation.
+    requires:
+      - specs
+
+  - id: tasks
+    generates: tasks.md
+    description: Implementation checklist, with deployment-dependent work marked
+    template: tasks.md
+    instruction: |
+      Break the work down. Resolve any design Open Question that would change
+      what gets built before writing a single task.
+
+      Format is parsed, so follow it exactly:
+      - Group under `## <n>. <Group name>` headings.
+      - Every task is `- [ ] <n>.<m> <description>`. Only `x` in the box counts
+        as done; `~`, `-` and empty do not.
+      - Order by dependency.
+      - Each task states how to verify it: a test, a command, an observable
+        behaviour, or a delivered artifact.
+
+      Deployment-dependent work. Any task that cannot be verified without a
+      running deployed environment MUST be marked:
+
+          - [ ] 4.2 (defer: awaiting-deployment) Verify export completes against
+                a deployed instance
+
+      These tasks do not block archiving. At archive time their requirements
+      move to `spec-tacular/pending-validation.md` instead of merging into the
+      accepted specs, so the change can close while what was never verified
+      stays visible and unmerged.
+
+      Use this only for work that genuinely needs a deployment. A task that is
+      merely hard, or that you would rather not do now, is not deferrable.
+
+      Reference the specs for what, the design for how.
+    requires:
+      - specs
+      - design
+
+apply:
+  requires: [tasks]
+  tracks: tasks.md
+  instruction: |
+    Work through pending tasks, marking each complete as you go.
+
+    Skip tasks marked `(defer: ...)` — they are handled at archive time and are
+    not blockers.
+
+    Stay within the accepted specs and the accepted design. If implementation
+    reveals that either is wrong, stop and report it rather than improvising:
+    the specs were reviewed and accepted by a human, and quietly diverging from
+    them makes that review worthless.
+
+    Pause on any blocker or ambiguity.
