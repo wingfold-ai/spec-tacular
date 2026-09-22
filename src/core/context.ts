@@ -18,6 +18,8 @@ import { acceptedAdrs } from './decisions.ts';
 import type { ReviewedItem } from './review.ts';
 
 export interface ContextBundle {
+  /** What the project is for, in the developer's words — greenfield only. */
+  vision: string;
   /** Ground rules: stack, architecture, conventions. */
   foundation: { name: string; content: string }[];
   /** Accepted architectural decision records. */
@@ -55,11 +57,19 @@ export function buildContext(
     content: adr.content,
   }));
 
+  let vision = '';
+  try {
+    vision = readFileSync(join(projectRoot, 'spec-tacular', 'vision.md'), 'utf8').trim();
+  } catch {
+    // No vision: a project that did not start from one. Nothing is missing.
+  }
+
   const missing: string[] = [];
   if (foundation.length === 0) missing.push('no foundation documents yet');
   if (decisions.length === 0) missing.push('no architectural decision records yet');
 
   return {
+    vision,
     foundation,
     decisions,
     accepted: reviewed.filter((r) => r.state === 'accepted'),
@@ -77,6 +87,12 @@ export function buildContext(
  */
 export function renderContext(bundle: ContextBundle): string {
   const out: string[] = [];
+
+  if (bundle.vision) {
+    out.push('# Product vision', '');
+    out.push('What the developer is building, in their words. Every change serves it.', '');
+    out.push(bundle.vision.replace(/^#[^\n]*\n+/, ''), '');
+  }
 
   if (bundle.foundation.length > 0) {
     out.push('# Project ground rules', '');

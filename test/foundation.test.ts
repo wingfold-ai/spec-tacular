@@ -71,6 +71,7 @@ describe('parsing', () => {
     expect(groups).toEqual([
       'foundation/architecture',
       'foundation/conventions',
+      'foundation/domain',
       'foundation/stack',
     ]);
   });
