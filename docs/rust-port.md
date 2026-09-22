@@ -16,8 +16,11 @@ terminal can clear.
 
 **Size.** The TypeScript build needed **127 MB** of `node_modules`, plus a Bun
 or Node runtime, present and at the right version. The Rust build is a **single
-static binary well under a megabyte** — `x86_64-unknown-linux-musl`, stripped,
-nothing dynamically linked. You copy it onto a machine and it runs.
+static binary under 3 MB** — `x86_64-unknown-linux-musl`, stripped, nothing
+dynamically linked. You copy it onto a machine and it runs. (It was 0.8 MB
+through stage 2, before anything ran a subprocess; the async runtime that drives
+OpenSpec, and will drive the background jobs and the TUI's event loop, is the
+rest. Two orders of magnitude is still the point.)
 
 **Distribution.** "Install Bun, then install this" is a worse first step than
 "download this file". A static binary is also what makes a release workflow
@@ -55,6 +58,7 @@ alone.
 src/
   main.rs        entry point
   cli.rs         argument parsing and dispatch (clap)
+  commands.rs    what each verb prints and exits with, over core/ and adapter/
   adapter/       openspec.rs, types.rs — the only OpenSpec-aware code
   core/          the model: markdown, requirements, review, session, pipeline,
                  gate, change_review, examples, mark, concreteness, revision,
@@ -78,7 +82,7 @@ reviewable on its own.
 | --- | --- | --- |
 | 1 | `rust/01-skeleton` | Cargo project, CLI parsing, docs, `--help` |
 | 2 | `rust/02-core` | markdown/requirement parsing, review state and drift, session, revision bundle, pipeline, gate, concreteness linter, foundation, decisions/ADRs, requirement rendering |
-| 3 | `rust/03-adapter` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
+| 3 | `rust/03-adapter-commands` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
 | 4 | `rust/04-jobs` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
 | 5 | `rust/05-tui` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane (ctrl+c never quits) |
 | 6 | `rust/06-review` | TUI review screen, document viewer, editor integration |
@@ -163,7 +167,7 @@ not a blocker.
 ## Deliberate differences from the TypeScript version
 
 The port is meant to be a faithful one — the help text, the exit codes and the
-messages are reproduced rather than reinvented. Two places knowingly differ.
+messages are reproduced rather than reinvented. Four places knowingly differ.
 
 **Flags are scoped to the subcommand they belong to.** The TypeScript parser
 scanned the whole command line into one flat struct, so every flag was accepted
@@ -177,6 +181,19 @@ being ignored, and this is the moment to fix it rather than reproduce it.
 `tests/cli.rs` has a regression test pinning the behaviour. The genuinely
 global options — `-p`, `-c`, `--cwd`, `--openspec-bin`, `--driver`, `-f` — stay
 accepted before or after a subcommand, as they were.
+
+**The schema is compiled into the binary.** The TypeScript `initProject` copied
+`schemas/spec-tacular/` out of the installed package at runtime, which a single
+downloaded file cannot do. `core::init::BUNDLED_SCHEMA` holds each of the five
+files through `include_str!`, so what `spectacular init` writes is what the
+repository ships — pinned byte for byte by a test — and the binary still needs
+nothing beside it. `bundled_schema_dir()` survives as the answer to "which
+files does that mirror", for that test alone.
+
+**A failed install says what failed.** The TypeScript `runInit` let an I/O error
+propagate out of `main`, which printed a stack trace. Here it prints the error
+and exits 1: a tool that could not write a file should say which one, not paste
+its own internals over the terminal.
 
 **`adr` takes no arguments.** It lists; promotion is a review action you reach
 by pressing `p` on a decision in the TUI, which is where you are when you

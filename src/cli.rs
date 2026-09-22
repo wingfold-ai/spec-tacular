@@ -6,14 +6,18 @@
 //! from the one people already know is its own small bug.
 //!
 //! Nothing here does any work. Dispatch decides *which* command was asked for
-//! and whether the project is one spec-tacular can act on; the commands
-//! themselves live in `core/` and land stage by stage.
+//! and whether the project is one spec-tacular can act on; what each command
+//! does lives in `commands.rs`, over `core/` and `adapter/`, and the ones that
+//! are not ported yet still decline rather than pretend.
 
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Parser, Subcommand};
+
+use crate::adapter::openspec::{is_openspec_project, OpenSpecAdapter, OpenSpecError};
+use crate::commands::{self, Streams};
 
 /// The default agent driver, matching the TypeScript `DEFAULT_DRIVER`.
 pub const DEFAULT_DRIVER: &str = "claude";
@@ -190,7 +194,9 @@ impl Command {
     /// message. The stages are the ones listed in README.md.
     fn stage(&self) -> u8 {
         match self {
+            // Stage 3 landed these; `run` never asks them for a stage.
             Command::Init | Command::Instructions { .. } | Command::Adr | Command::Foundation => 3,
+            // The background jobs and the archive half.
             Command::Run { .. }
             | Command::Jobs { .. }
             | Command::Archive { .. }
@@ -215,12 +221,6 @@ impl Command {
             Command::Roadmap { .. } => "roadmap",
         }
     }
-}
-
-/// A project spec-tacular can act on is one with an `openspec/` directory.
-/// Mirrors `isOpenSpecProject` in the adapter.
-fn is_openspec_project(cwd: &Path) -> bool {
-    cwd.join("openspec").is_dir()
 }
 
 /// Parse and dispatch. Returns the process exit code rather than exiting, so
@@ -260,12 +260,82 @@ where
         return 1;
     }
 
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let mut out = stdout.lock();
+    let mut err = stderr.lock();
+    let mut io = Streams {
+        out: &mut out,
+        err: &mut err,
+    };
+
     match &cli.command {
+        Some(Command::Init) => commands::run_init(&cwd, cli.force, &mut io),
+        Some(Command::Adr) => commands::run_adrs(&cwd, &mut io),
+        Some(Command::Foundation) => commands::run_foundation(&cwd, &mut io),
+        Some(Command::Instructions { artifact }) => {
+            let Some(runtime) = runtime(&mut io) else {
+                return 1;
+            };
+            let adapter = adapter(&cli, &cwd);
+            let result = runtime.block_on(commands::run_instructions(
+                &adapter,
+                &cwd,
+                artifact.as_deref(),
+                cli.change.as_deref(),
+                &mut io,
+            ));
+            report(result, &mut io)
+        }
         Some(command) => not_implemented(command.name(), command.stage()),
-        // The overview: the TUI when there is a terminal, the text rendering
-        // otherwise. Both are still ahead.
+        // The TUI is stage 5. Everything it would show is already here — the
+        // overview below is the same model, rendered without a terminal.
         None if tui => not_implemented("the TUI", 5),
-        None => not_implemented("--print", 3),
+        None => {
+            let Some(runtime) = runtime(&mut io) else {
+                return 1;
+            };
+            let adapter = adapter(&cli, &cwd);
+            let color = std::io::stdout().is_terminal();
+            let result = runtime.block_on(commands::run_overview(&adapter, &cwd, color, &mut io));
+            report(result, &mut io)
+        }
+    }
+}
+
+fn adapter(cli: &Cli, cwd: &Path) -> OpenSpecAdapter {
+    OpenSpecAdapter::new(cwd, cli.openspec_bin.clone())
+}
+
+/// The runtime the OpenSpec-facing commands wait on.
+///
+/// Current-thread: each of them waits on one subprocess, so a thread pool would
+/// buy nothing and cost startup — the thing the port exists to fix.
+fn runtime(io: &mut Streams<'_>) -> Option<tokio::runtime::Runtime> {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => Some(runtime),
+        Err(error) => {
+            io.err(format!("Could not start the async runtime: {error}\n"));
+            None
+        }
+    }
+}
+
+/// Reports an OpenSpec failure the way the TypeScript `main` did: the message,
+/// then the hint on its own line, then exit 1.
+fn report(result: Result<u8, OpenSpecError>, io: &mut Streams<'_>) -> u8 {
+    match result {
+        Ok(code) => code,
+        Err(error) => {
+            io.err(format!("{}\n", error.message));
+            if let Some(hint) = error.hint {
+                io.err(format!("{hint}\n"));
+            }
+            1
+        }
     }
 }
 
@@ -354,5 +424,11 @@ mod tests {
     #[test]
     fn a_directory_with_openspec_is_a_project() {
         assert!(!is_openspec_project(Path::new("/nonexistent-xyz")));
+    }
+
+    #[test]
+    fn what_is_left_declines_with_the_stage_that_brings_it() {
+        assert_eq!(Command::Pending.stage(), 4);
+        assert_eq!(Command::Adr.stage(), 3);
     }
 }
