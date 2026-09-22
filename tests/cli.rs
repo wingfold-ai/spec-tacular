@@ -142,6 +142,27 @@ fn the_overview_without_a_terminal_still_needs_a_project() {
 }
 
 #[test]
+fn a_flag_on_the_wrong_subcommand_is_a_usage_error() {
+    // Deliberately stricter than the TypeScript parser, which scanned every
+    // flag into one flat struct and silently ignored the ones a command had no
+    // use for. See docs/rust-port.md, "Deliberate differences from the
+    // TypeScript version".
+    let dir = TempDir::new("scoping");
+    std::fs::create_dir_all(dir.path().join("openspec")).unwrap();
+
+    let out = run(&["pending", "--cancel", "--cwd", dir.path().to_str().unwrap()]);
+
+    assert_eq!(out.status.code(), Some(2), "stdout was:\n{}", stdout(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("unexpected argument") && err.contains("--cancel"),
+        "expected a usage error naming --cancel, got:\n{err}"
+    );
+    // And it must be the usage error, not the placeholder.
+    assert!(!err.contains("not implemented yet"), "got:\n{err}");
+}
+
+#[test]
 fn an_unknown_flag_is_a_usage_error() {
     let out = run(&["--nonsense"]);
     assert_eq!(out.status.code(), Some(2));

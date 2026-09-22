@@ -160,6 +160,28 @@ outside `target/`. Installing a real toolchain (`build-essential` on Debian and
 Ubuntu) is better in every way; the script is there so a missing compiler is
 not a blocker.
 
+## Deliberate differences from the TypeScript version
+
+The port is meant to be a faithful one — the help text, the exit codes and the
+messages are reproduced rather than reinvented. Two places knowingly differ.
+
+**Flags are scoped to the subcommand they belong to.** The TypeScript parser
+scanned the whole command line into one flat struct, so every flag was accepted
+everywhere and quietly ignored where it meant nothing: `spectacular pending
+--cancel` ran `pending` as though the flag were not there, and a `--requirement`
+typed on the wrong command vanished. clap scopes `--job`/`--cancel` to `jobs`,
+`--requirement` to `verify`, `--promote`/`--done` to `roadmap` and `--dry-run`
+to `archive`, so using one elsewhere is a usage error and exits 2. A flag that
+silently does nothing is a flag you believe worked; being told is better than
+being ignored, and this is the moment to fix it rather than reproduce it.
+`tests/cli.rs` has a regression test pinning the behaviour. The genuinely
+global options — `-p`, `-c`, `--cwd`, `--openspec-bin`, `--driver`, `-f` — stay
+accepted before or after a subcommand, as they were.
+
+**`adr` takes no arguments.** It lists; promotion is a review action you reach
+by pressing `p` on a decision in the TUI, which is where you are when you
+discover a decision is architectural. That matches the TypeScript `runAdrs`.
+
 ## What is not being ported
 
 The TypeScript tests are not translated mechanically. Each stage brings its own

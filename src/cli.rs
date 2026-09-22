@@ -134,17 +134,24 @@ pub enum Command {
     },
 
     /// List architectural decision records
-    Adr {
-        /// Promote a design decision to a project-wide ADR
-        #[arg(long, value_name = "decision")]
-        promote: Option<String>,
-    },
+    ///
+    /// Listing only. Promotion is a review action, not a command: you press
+    /// `p` on a decision in the TUI, which is where you are when you find out
+    /// a decision is architectural.
+    Adr,
 
     /// Show the project's ground rules and what is still unanswered
     Foundation,
 
     /// Merge accepted requirements, divert deferred ones to the register
     Archive {
+        // NOTE(stage 4): there are two ways to name the change here, and they
+        // are not equal. The TypeScript parser falls back to this positional
+        // *only when `-c` was not given* (src/cli.ts:140,
+        // `if (second && !args.change) args.change = second`), so `-c` wins on
+        // a conflict and the positional is the shorthand. clap parses both
+        // independently, so whoever implements `archive` has to reconcile
+        // them explicitly rather than inheriting that precedence.
         /// The change to archive (or pass it with -c)
         change: Option<String>,
 
@@ -183,10 +190,7 @@ impl Command {
     /// message. The stages are the ones listed in README.md.
     fn stage(&self) -> u8 {
         match self {
-            Command::Init
-            | Command::Instructions { .. }
-            | Command::Adr { .. }
-            | Command::Foundation => 3,
+            Command::Init | Command::Instructions { .. } | Command::Adr | Command::Foundation => 3,
             Command::Run { .. }
             | Command::Jobs { .. }
             | Command::Archive { .. }
@@ -203,7 +207,7 @@ impl Command {
             Command::Instructions { .. } => "instructions",
             Command::Run { .. } => "run",
             Command::Jobs { .. } => "jobs",
-            Command::Adr { .. } => "adr",
+            Command::Adr => "adr",
             Command::Foundation => "foundation",
             Command::Archive { .. } => "archive",
             Command::Pending => "pending",
