@@ -83,7 +83,7 @@ reviewable on its own.
 | 1 | `rust/01-skeleton` | Cargo project, CLI parsing, docs, `--help` |
 | 2 | `rust/02-core` | markdown/requirement parsing, review state and drift, session, revision bundle, pipeline, gate, concreteness linter, foundation, decisions/ADRs, requirement rendering |
 | 3 | `rust/03-adapter-commands` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
-| 4 | `rust/04-jobs` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
+| 4 | `rust/04-jobs-agents` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
 | 5 | `rust/05-tui` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane (ctrl+c never quits) |
 | 6 | `rust/06-review` | TUI review screen, document viewer, editor integration |
 | 7 | `rust/07-setup` | guided setup: project stages, ground-rules screen, describe-then-name new change |
@@ -167,7 +167,7 @@ not a blocker.
 ## Deliberate differences from the TypeScript version
 
 The port is meant to be a faithful one — the help text, the exit codes and the
-messages are reproduced rather than reinvented. Four places knowingly differ.
+messages are reproduced rather than reinvented. Six places knowingly differ.
 
 **Flags are scoped to the subcommand they belong to.** The TypeScript parser
 scanned the whole command line into one flat struct, so every flag was accepted
@@ -198,6 +198,22 @@ its own internals over the terminal.
 **`adr` takes no arguments.** It lists; promotion is a review action you reach
 by pressing `p` on a decision in the TUI, which is where you are when you
 discover a decision is architectural. That matches the TypeScript `runAdrs`.
+
+**There is a `-V`/`--version`.** The TypeScript had none: you found out which
+build you were running by looking at `package.json` next to it, which a single
+downloaded binary does not have. `spectacular --version` prints the crate
+version and exits 0.
+
+**A finished job is reaped by whoever is still watching it.** The TypeScript
+spawned detached and let Node's runtime collect the child through `SIGCHLD`.
+Rust has no such runtime, and an unwaited child of a live process stays a
+zombie — whose pid still answers `kill(pid, 0)`, so `list_jobs` would report a
+job as `running` forever and the TUI would never see one finish. `start_job`
+therefore waits on the child from a thread and records the outcome, exactly as
+the TypeScript's `child.on('exit')` did. Nothing about detachment changes:
+`spectacular run` still exits immediately, the agent still has its own session
+through `setsid`, and the `.exit` file the wrapper writes is still how an
+outcome is recovered when no spec-tacular process is left to see it.
 
 ## What is not being ported
 

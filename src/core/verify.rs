@@ -234,7 +234,10 @@ mod tests {
         add_to_register(dir.path(), &[entry()]).expect("add");
 
         let result = verify_requirement(dir.path(), "data-export", &entry().name);
-        assert!(matches!(result, VerifyResult::Verified { .. }), "{result:?}");
+        assert!(
+            matches!(result, VerifyResult::Verified { .. }),
+            "{result:?}"
+        );
 
         let spec = std::fs::read_to_string(&file).expect("read");
         assert!(spec.contains("### Requirement: Existing"));
@@ -271,8 +274,7 @@ mod tests {
             "{result:?}"
         );
 
-        let spec =
-            std::fs::read_to_string(spec_file_for(dir.path(), "data-export")).expect("read");
+        let spec = std::fs::read_to_string(spec_file_for(dir.path(), "data-export")).expect("read");
         assert!(spec.contains("## Purpose"));
         assert!(spec.contains("TBD"));
         assert!(spec.contains("### Requirement: Export completes against a deployed instance"));
@@ -325,6 +327,8 @@ mod tests {
         );
         add_to_register(dir.path(), &[entry()]).expect("add");
         verify_requirement(dir.path(), "data-export", &entry().name);
-        assert!(!std::fs::read_to_string(&file).expect("read").contains("\n\n\n"));
+        assert!(!std::fs::read_to_string(&file)
+            .expect("read")
+            .contains("\n\n\n"));
     }
 }

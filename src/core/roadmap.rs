@@ -523,7 +523,11 @@ slices:\n\
         );
         let loaded = load_roadmap(dir.path()).expect("loaded");
         assert_eq!(
-            loaded.slices.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            loaded
+                .slices
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
             ["ok"]
         );
         assert_eq!(loaded.slices[0].status, SliceStatus::Planned);
@@ -629,7 +633,10 @@ slices:\n\
 
     #[test]
     fn next_promotable_is_the_first_unblocked_planned_slice() {
-        assert_eq!(next_promotable(&roadmap()).map(|s| s.id.as_str()), Some("auth"));
+        assert_eq!(
+            next_promotable(&roadmap()).map(|s| s.id.as_str()),
+            Some("auth")
+        );
     }
 
     #[test]

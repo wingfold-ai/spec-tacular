@@ -14,13 +14,23 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::adapter::openspec::{OpenSpecAdapter, OpenSpecError};
+use crate::agent::default_registry;
+use crate::agent::driver::AgentRequest;
+use crate::core::archive::{plan_archive, prepare_archive};
 use crate::core::change_review::{load_change_review, spec_files_of, specs_artifact_id};
 use crate::core::context::{build_context, build_prompt};
 use crate::core::decisions::{list_adrs, AdrStatus};
 use crate::core::foundation::{foundation_dir, is_unanswered, load_foundation};
 use crate::core::gate::{foundation_gate, gate_for};
 use crate::core::init::{init_project, schema_dir, SCHEMA_NAME};
+use crate::core::jobs::{cancel_job, list_jobs, start_job, tail_job, StartJobOptions, TAIL_LIMIT};
+use crate::core::pending::{load_register, register_path};
 use crate::core::pipeline::{build_pipeline, sort_by_progress, ChangePipeline, ReviewByArtifact};
+use crate::core::roadmap::{
+    active_slice, complete_slice, load_roadmap, next_promotable, promote_slice, roadmap_path,
+    save_roadmap, scaffold_roadmap, SliceChange,
+};
+use crate::core::verify::{verify_requirement, VerifyResult};
 use crate::render::text::{render_overview, OverviewOptions};
 
 /// Where a command's output goes. Buffers in a test, the process's streams in
@@ -330,6 +340,431 @@ fn change_description(change_root: &Path) -> String {
         _ => &readme,
     };
     body.trim().to_owned()
+}
+
+/// `spectacular run <artifact> -c <change>` — dispatch and return.
+///
+/// Returning immediately is the point: this is what lets you review one change
+/// while another is being implemented, in one terminal.
+pub async fn run_agent(
+    adapter: &OpenSpecAdapter,
+    cwd: &Path,
+    artifact: Option<&str>,
+    change: Option<&str>,
+    driver_id: &str,
+    io: &mut Streams<'_>,
+) -> Result<u8, OpenSpecError> {
+    let (artifact, change) = match check_gate(adapter, cwd, artifact, change, "run", io).await? {
+        Gate::Refused(code) => return Ok(code),
+        Gate::Allowed { artifact, change } => (artifact, change),
+    };
+
+    let registry = default_registry();
+    let driver = match registry.get(driver_id) {
+        Ok(driver) => driver,
+        Err(error) => {
+            io.err(format!("{error}\n"));
+            return Ok(1);
+        }
+    };
+
+    let prompt = compose_prompt(adapter, cwd, &artifact, &change, None).await?;
+    let job = match start_job(StartJobOptions {
+        project_root: cwd,
+        change: &change,
+        artifact: &artifact,
+        driver: driver.id(),
+        command: driver.build(&AgentRequest {
+            prompt: &prompt,
+            cwd: &cwd.display().to_string(),
+        }),
+        cwd,
+    }) {
+        Ok(job) => job,
+        Err(conflict) => {
+            io.err(format!("{conflict}\n"));
+            return Ok(1);
+        }
+    };
+
+    io.out(format!(
+        "Started {} on {change}/{artifact}\n  job:  {}\n  log:  {}\n\n\
+         Follow it with: spectacular jobs --job {}\n",
+        driver.label(),
+        job.id,
+        job.log_path,
+        job.id
+    ));
+    Ok(0)
+}
+
+/// `spectacular jobs` — list, tail, or cancel.
+pub fn run_jobs(cwd: &Path, job_id: Option<&str>, cancel: bool, io: &mut Streams<'_>) -> u8 {
+    let registry = default_registry();
+
+    let Some(job_id) = job_id else {
+        let jobs = list_jobs(cwd);
+        if jobs.is_empty() {
+            io.out("No jobs yet.\n");
+            return 0;
+        }
+        for job in jobs {
+            let when = job.ended_at.as_deref().unwrap_or(&job.started_at);
+            io.out(format!(
+                "{:<11} {}/{}  {when}  {}\n",
+                job.status.as_str(),
+                job.change,
+                job.artifact,
+                job.id
+            ));
+        }
+        return 0;
+    };
+
+    // A prefix is enough: job ids carry a timestamp and a random suffix, and
+    // nobody is going to retype one in full to read its log.
+    let Some(job) = list_jobs(cwd)
+        .into_iter()
+        .find(|j| j.id == job_id || j.id.starts_with(job_id))
+    else {
+        io.err(format!("No job matching '{job_id}'.\n"));
+        return 1;
+    };
+
+    if cancel {
+        let stopped = cancel_job(cwd, &job.id);
+        if stopped {
+            io.out(format!("Cancelled {}\n", job.id));
+            return 0;
+        }
+        io.out(format!("{} is not running ({}).\n", job.id, job.status));
+        return 1;
+    }
+
+    io.out(format!(
+        "{}/{}  {}  started {}\n\n",
+        job.change, job.artifact, job.status, job.started_at
+    ));
+    // A job recorded under a driver this build no longer has is still
+    // readable — its log is plain text on disk.
+    let driver = registry.get(&job.driver).ok();
+    for line in tail_job(&job, TAIL_LIMIT) {
+        let rendered = match driver {
+            Some(driver) => driver.format_line(&line),
+            None => Some(line.clone()),
+        };
+        if let Some(rendered) = rendered {
+            io.out(format!("{rendered}\n"));
+        }
+    }
+    0
+}
+
+/// `w` in the TUI: the same gates as `spectacular run`, reported as a line.
+///
+/// It lives here rather than in the TUI so the two paths into an agent cannot
+/// drift: whatever `run` refuses, this refuses, in the same order. Its caller
+/// is the jobs pane, in stage 5.
+#[allow(dead_code)]
+pub async fn dispatch(
+    adapter: &OpenSpecAdapter,
+    cwd: &Path,
+    change: &str,
+    artifact: &str,
+    driver_id: &str,
+    feedback: Option<&str>,
+) -> Result<String, String> {
+    let loaded = load_pipelines(adapter, cwd)
+        .await
+        .map_err(|error| error.describe())?;
+    let Some(pipeline) = loaded.pipelines.iter().find(|p| p.name == change) else {
+        return Err(format!("No change called '{change}'"));
+    };
+
+    let target = pipeline.all_stages().find(|stage| stage.id == artifact);
+    if target.is_some_and(|stage| stage.requires.is_empty()) {
+        let foundation = foundation_gate(cwd);
+        if let Some(reason) = foundation.reason() {
+            return Err(format!("Refused: {reason}"));
+        }
+    }
+    if let Some(reason) = gate_for(pipeline, artifact).reason() {
+        return Err(format!("Refused: {reason}"));
+    }
+
+    let registry = default_registry();
+    let driver = registry.get(driver_id).map_err(|err| err.to_string())?;
+    let prompt = compose_prompt(adapter, cwd, artifact, change, feedback)
+        .await
+        .map_err(|error| error.describe())?;
+    start_job(StartJobOptions {
+        project_root: cwd,
+        change,
+        artifact,
+        driver: driver.id(),
+        command: driver.build(&AgentRequest {
+            prompt: &prompt,
+            cwd: &cwd.display().to_string(),
+        }),
+        cwd,
+    })
+    .map_err(|conflict| conflict.to_string())?;
+
+    Ok(if feedback.is_some() {
+        format!(
+            "{} is redrafting the {artifact} with your feedback",
+            driver.label()
+        )
+    } else {
+        format!(
+            "{} is drafting the {artifact} — it opens for you when done",
+            driver.label()
+        )
+    })
+}
+
+/// `spectacular archive <change>` — the split.
+pub async fn run_archive(
+    adapter: &OpenSpecAdapter,
+    cwd: &Path,
+    change: Option<&str>,
+    dry_run: bool,
+    io: &mut Streams<'_>,
+) -> Result<u8, OpenSpecError> {
+    let Some(change) = change else {
+        io.err("Usage: spectacular archive <change>\n");
+        return Ok(1);
+    };
+
+    let status = adapter.status_all().await?;
+    let Some(status) = status.changes.iter().find(|c| c.change_name == change) else {
+        io.err(format!("No change called '{change}'.\n"));
+        return Ok(1);
+    };
+
+    let queue = load_change_review(cwd, status, false);
+    let plan = plan_archive(change, &queue.requirements);
+
+    io.out(format!(
+        "{} requirement(s) merge into the baseline\n{} divert to pending validation\n",
+        plan.merging.len(),
+        plan.diverting.len()
+    ));
+    for entry in &plan.diverting {
+        io.out(format!(
+            "  {}: {} — {}\n",
+            entry.capability, entry.name, entry.needs
+        ));
+    }
+
+    if !plan.unresolved.is_empty() {
+        io.err(format!(
+            "\nRefused: {} requirement(s) are neither accepted nor deferred.\n",
+            plan.unresolved.len()
+        ));
+        for id in &plan.unresolved {
+            io.err(format!("  - {id}\n"));
+        }
+        io.err("\nArchiving now would merge text nobody agreed to — exactly what `--yes` does.\n");
+        return Ok(1);
+    }
+
+    if dry_run {
+        io.out("\nDry run — nothing written.\n");
+        return Ok(0);
+    }
+
+    match prepare_archive(cwd, change, &queue.requirements) {
+        Ok(prepared) => {
+            for file in &prepared.rewritten {
+                io.out(format!("  rewrote {file}\n"));
+            }
+            for file in &prepared.removed {
+                io.out(format!(
+                    "  removed {file} (every requirement in it deferred)\n"
+                ));
+            }
+        }
+        Err(blocked) => {
+            io.err(format!("{blocked}\n"));
+            return Ok(1);
+        }
+    }
+
+    // `--yes` is honest here: the only incomplete tasks are ones deliberately
+    // deferred, and every deferred requirement is now recorded in the register.
+    io.out(adapter.archive(change).await?);
+    Ok(0)
+}
+
+/// `spectacular pending` — what was accepted but never verified.
+pub fn run_pending(cwd: &Path, io: &mut Streams<'_>) -> u8 {
+    let entries = load_register(cwd);
+    if entries.is_empty() {
+        io.out("Nothing is waiting on validation.\n");
+        return 0;
+    }
+
+    let mut capability = "";
+    for entry in &entries {
+        if entry.capability != capability {
+            capability = &entry.capability;
+            io.out(format!("\n{capability}\n"));
+        }
+        io.out(format!("  {}\n", entry.name));
+        io.out(format!("    needs: {}\n", entry.needs));
+        io.out(format!(
+            "    from:  {} ({})\n",
+            entry.change, entry.deferred
+        ));
+    }
+    io.out(format!(
+        "\n{} requirement(s) accepted but unverified — not in the baseline.\nRegister: {}\n",
+        entries.len(),
+        register_path(cwd).display()
+    ));
+    0
+}
+
+/// `spectacular verify <capability> --requirement <name>`.
+pub async fn run_verify(
+    adapter: &OpenSpecAdapter,
+    cwd: &Path,
+    capability: Option<&str>,
+    requirement: Option<&str>,
+    io: &mut Streams<'_>,
+) -> Result<u8, OpenSpecError> {
+    let (Some(capability), Some(requirement)) = (capability, requirement) else {
+        io.err("Usage: spectacular verify <capability> --requirement \"<name>\"\n");
+        return Ok(1);
+    };
+
+    let result = match verify_requirement(cwd, capability, requirement) {
+        VerifyResult::Refused { reason } => {
+            io.err(format!("{reason}\n"));
+            return Ok(1);
+        }
+        verified => verified,
+    };
+    let VerifyResult::Verified {
+        entry,
+        spec_file,
+        created,
+    } = result
+    else {
+        unreachable!("a refusal has already returned");
+    };
+
+    io.out(format!(
+        "Verified '{}' into {}\n",
+        entry.name,
+        spec_file.display()
+    ));
+    if created {
+        io.out("  (the spec did not exist — fill in its Purpose)\n");
+    }
+
+    // This is the one place spec-tacular writes to openspec/specs/, so the
+    // result is handed straight back to OpenSpec to confirm it still parses.
+    match adapter.validate(capability).await {
+        Ok(validation) if validation.trim().is_empty() => io.out("openspec validate: ok\n"),
+        Ok(validation) => io.out(format!("{}\n", validation.trim())),
+        Err(error) => {
+            io.err(format!(
+                "Written, but openspec could not validate it: {}\n",
+                error.describe()
+            ));
+            return Ok(1);
+        }
+    }
+    Ok(0)
+}
+
+/// `spectacular roadmap` — show, promote, or complete a slice.
+pub fn run_roadmap(
+    cwd: &Path,
+    promote: Option<&str>,
+    done: Option<&str>,
+    io: &mut Streams<'_>,
+) -> u8 {
+    let Some(roadmap) = load_roadmap(cwd) else {
+        // Nothing there yet is the first run, and the first run scaffolds. A
+        // file that exists and does not parse is the other case, and saying so
+        // is better than silently replacing what somebody wrote.
+        match scaffold_roadmap(cwd) {
+            Ok(true) => {
+                io.out(format!(
+                    "Created {}\nFill in the vision and the slices, then promote one at a time.\n",
+                    roadmap_path(cwd).display()
+                ));
+                return 0;
+            }
+            _ => {
+                io.err(format!("Could not read {}.\n", roadmap_path(cwd).display()));
+                return 1;
+            }
+        }
+    };
+
+    if let Some(slice) = done.or(promote) {
+        let finishing = done.is_some();
+        let result = if finishing {
+            complete_slice(&roadmap, slice)
+        } else {
+            promote_slice(&roadmap, slice)
+        };
+        let SliceChange::Changed { slice, roadmap } = result else {
+            let SliceChange::Refused { reason } = result else {
+                unreachable!("a change has already been handled");
+            };
+            io.err(format!("{reason}\n"));
+            return 1;
+        };
+        if let Err(error) = save_roadmap(cwd, &roadmap) {
+            io.err(format!(
+                "Could not write {}: {error}\n",
+                roadmap_path(cwd).display()
+            ));
+            return 1;
+        }
+        if finishing {
+            io.out(format!("'{}' is done.\n", slice.id));
+        } else {
+            io.out(format!(
+                "'{}' is now active. Open a change for it:\n  openspec new change {}\n",
+                slice.id, slice.id
+            ));
+        }
+        return 0;
+    }
+
+    io.out(format!("{}\n\n", roadmap.vision.trim()));
+    for slice in &roadmap.slices {
+        let blocked = if slice.depends_on.is_empty() {
+            String::new()
+        } else {
+            format!("  (after {})", slice.depends_on.join(", "))
+        };
+        io.out(format!(
+            "{} {}{blocked}\n    {}\n",
+            slice.status.mark(),
+            slice.id,
+            slice.summary
+        ));
+    }
+
+    match (active_slice(&roadmap), next_promotable(&roadmap)) {
+        (Some(active), _) => io.out(format!(
+            "\n'{}' is active. One slice at a time keeps the review queue to one change.\n",
+            active.id
+        )),
+        (None, Some(next)) => io.out(format!(
+            "\nNext: spectacular roadmap --promote {}\n",
+            next.id
+        )),
+        (None, None) => io.out("\nNothing left to promote.\n"),
+    }
+    0
 }
 
 /// `spectacular adr` — the project's durable decisions.

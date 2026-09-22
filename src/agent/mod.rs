@@ -9,6 +9,11 @@
 pub mod claude;
 pub mod driver;
 pub mod opencode;
+/// Running a driver's structured request. Its caller is the advisor, in
+/// stage 8; the module lands with the drivers because it is the other half of
+/// what a driver is, and splitting them across two stages would mean shipping
+/// a trait whose second method nothing could exercise.
+#[allow(dead_code)]
 pub mod structured;
 
 use driver::DriverRegistry;
@@ -36,7 +41,10 @@ mod tests {
     #[test]
     fn a_driver_is_reachable_by_id_with_its_label() {
         let registry = default_registry();
-        assert_eq!(registry.get("claude").expect("claude").label(), "Claude Code");
+        assert_eq!(
+            registry.get("claude").expect("claude").label(),
+            "Claude Code"
+        );
         assert_eq!(
             registry.get("opencode").expect("opencode").label(),
             "opencode"

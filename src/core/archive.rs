@@ -501,7 +501,10 @@ The system SHALL record who exported what.\n";
 
         // The delta must still parse, or OpenSpec's archive cannot merge it.
         assert_eq!(
-            load(&file).iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+            load(&file)
+                .iter()
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>(),
             ["Export produces a file", "Export is audited"]
         );
         assert!(!std::fs::read_to_string(&file)

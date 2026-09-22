@@ -306,7 +306,9 @@ mod tests {
     #[test]
     fn shows_non_json_output_verbatim_it_is_usually_why_a_job_failed() {
         assert_eq!(
-            ClaudeDriver.format_line("command not found: claude").as_deref(),
+            ClaudeDriver
+                .format_line("command not found: claude")
+                .as_deref(),
             Some("command not found: claude")
         );
     }

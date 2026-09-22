@@ -32,12 +32,14 @@ pub struct AgentRequest<'a> {
 /// `Research` may look things up on the web (current versions); `Think`
 /// reasons with no tools; `Quick` is a small offline task on a fast model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
 pub enum StructuredMode {
     #[default]
     Research,
     /// Reasoning with no tools. Its caller is the vision interview, in stage 8.
-    #[allow(dead_code)]
     Think,
+    /// A small offline task on a fast model. Its caller is the name proposal,
+    /// in stage 8.
     Quick,
 }
 
@@ -61,7 +63,10 @@ pub struct AgentCommand {
 
 impl AgentCommand {
     /// Builds one from anything string-shaped, which is most of the call sites.
-    pub fn new<A: Into<String>>(command: impl Into<String>, args: impl IntoIterator<Item = A>) -> Self {
+    pub fn new<A: Into<String>>(
+        command: impl Into<String>,
+        args: impl IntoIterator<Item = A>,
+    ) -> Self {
         AgentCommand {
             command: command.into(),
             args: args.into_iter().map(Into::into).collect(),

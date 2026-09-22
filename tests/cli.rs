@@ -200,20 +200,514 @@ fn a_directory_without_openspec_is_refused() {
 }
 
 #[test]
-fn a_command_in_a_project_declines_until_its_stage_lands() {
+fn the_tui_is_the_only_thing_left_that_declines() {
+    // `--print` without a terminal is the overview, and stdout here is a pipe,
+    // so the TUI branch is reached by nothing this suite can run. What it can
+    // check is that no subcommand takes the placeholder any more.
     let dir = project("project");
+    let cwd = dir.path().to_str().unwrap();
+
+    for args in [
+        vec!["pending", "--cwd", cwd],
+        vec!["jobs", "--cwd", cwd],
+        vec!["roadmap", "--cwd", cwd],
+    ] {
+        let out = run(&args);
+        assert!(
+            !stderr(&out).contains("not implemented yet"),
+            "`{}` still declines:\n{}",
+            args[0],
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn pending_says_so_when_nothing_is_waiting() {
+    let dir = project("pending-empty");
+    let out = run(&["pending", "--cwd", dir.path().to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "stderr:\n{}", stderr(&out));
+    assert_eq!(stdout(&out), "Nothing is waiting on validation.\n");
+}
+
+#[test]
+fn pending_lists_the_register_grouped_by_capability() {
+    let dir = project("pending-list");
+    std::fs::create_dir_all(dir.path().join("spec-tacular")).expect("dir");
+    std::fs::write(
+        dir.path().join("spec-tacular/pending-validation.md"),
+        "# Pending validation\n\n## data-export\n\n\
+         ### Requirement: Export completes\n\nThe system SHALL export.\n\n\
+         **Change:** add-export\n**Deferred:** 2026-09-21\n\
+         **Needs:** a deployed instance\n",
+    )
+    .expect("register");
 
     let out = run(&["pending", "--cwd", dir.path().to_str().unwrap()]);
-
-    assert_eq!(out.status.code(), Some(2), "stdout was:\n{}", stdout(&out));
-    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "stderr:\n{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("\ndata-export\n"), "{text}");
+    assert!(text.contains("  Export completes\n"), "{text}");
+    assert!(text.contains("    needs: a deployed instance\n"), "{text}");
     assert!(
-        err.contains("not implemented yet in the Rust port"),
-        "unexpected message:\n{err}"
+        text.contains("    from:  add-export (2026-09-21)\n"),
+        "{text}"
     );
     assert!(
-        err.contains("pending"),
-        "message should name the command:\n{err}"
+        text.contains("1 requirement(s) accepted but unverified"),
+        "{text}"
+    );
+}
+
+#[test]
+fn roadmap_scaffolds_on_the_first_run_and_lists_afterwards() {
+    let dir = project("roadmap");
+    let cwd = dir.path().to_str().unwrap();
+
+    let first = run(&["roadmap", "--cwd", cwd]);
+    assert_eq!(first.status.code(), Some(0), "stderr:\n{}", stderr(&first));
+    assert!(stdout(&first).starts_with("Created "), "{}", stdout(&first));
+    assert!(dir.path().join("spec-tacular/roadmap.yaml").is_file());
+
+    let second = run(&["roadmap", "--cwd", cwd]);
+    assert_eq!(second.status.code(), Some(0));
+    let text = stdout(&second);
+    assert!(text.contains("○ first-slice"), "{text}");
+    assert!(
+        text.contains("Next: spectacular roadmap --promote first-slice"),
+        "{text}"
+    );
+}
+
+#[test]
+fn roadmap_promotes_one_slice_and_refuses_the_next() {
+    let dir = project("roadmap-promote");
+    let cwd = dir.path().to_str().unwrap();
+    std::fs::create_dir_all(dir.path().join("spec-tacular")).expect("dir");
+    std::fs::write(
+        dir.path().join("spec-tacular/roadmap.yaml"),
+        "vision: A tool.\nslices:\n  - id: auth\n    summary: Sign in\n    status: planned\n\
+         \x20   dependsOn: []\n  - id: billing\n    summary: Pay\n    status: planned\n\
+         \x20   dependsOn: []\n",
+    )
+    .expect("roadmap");
+
+    let promoted = run(&["roadmap", "--promote", "auth", "--cwd", cwd]);
+    assert_eq!(promoted.status.code(), Some(0), "{}", stderr(&promoted));
+    assert!(stdout(&promoted).contains("'auth' is now active"));
+    assert!(stdout(&promoted).contains("openspec new change auth"));
+
+    // One slice at a time is the whole rule.
+    let second = run(&["roadmap", "--promote", "billing", "--cwd", cwd]);
+    assert_eq!(second.status.code(), Some(1));
+    assert!(
+        stderr(&second).contains("one slice at a time"),
+        "{}",
+        stderr(&second)
+    );
+
+    let done = run(&["roadmap", "--done", "auth", "--cwd", cwd]);
+    assert_eq!(done.status.code(), Some(0));
+    assert_eq!(stdout(&done), "'auth' is done.\n");
+    assert!(
+        std::fs::read_to_string(dir.path().join("spec-tacular/roadmap.yaml"))
+            .expect("read")
+            .contains("status: done")
+    );
+}
+
+#[test]
+fn jobs_says_so_when_there_are_none_and_names_an_id_it_cannot_find() {
+    let dir = project("jobs-empty");
+    let cwd = dir.path().to_str().unwrap();
+
+    let listed = run(&["jobs", "--cwd", cwd]);
+    assert_eq!(
+        listed.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&listed)
+    );
+    assert_eq!(stdout(&listed), "No jobs yet.\n");
+
+    let missing = run(&["jobs", "--job", "nope", "--cwd", cwd]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(stderr(&missing), "No job matching 'nope'.\n");
+}
+
+/// `spectacular run`, against a `claude` that is a shell script.
+///
+/// The registry is fixed, so the driver is faked the way a user would hit it:
+/// a `claude` earlier on PATH than the real one. Nothing here costs money, and
+/// nothing here needs the real CLI installed.
+#[cfg(unix)]
+#[test]
+fn run_dispatches_a_job_that_outlives_the_command_and_jobs_reads_it_back() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = project("run-dispatch");
+    let cwd = dir.path().to_str().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("bin dir");
+
+    // A stand-in agent that takes long enough to still be running when the
+    // dispatching process has exited, then says it is done in the driver's own
+    // stream-json.
+    let marker = dir.path().join("agent-finished");
+    let fake_claude = bin.join("claude");
+    std::fs::write(
+        &fake_claude,
+        format!(
+            "#!/bin/sh\nsleep 1\necho '{{\"type\":\"assistant\",\"message\":{{\"content\":\
+             [{{\"type\":\"text\",\"text\":\"Writing specs\"}}]}}}}'\n\
+             echo '{{\"type\":\"result\",\"result\":\"ok\"}}'\n\
+             : > {}\n",
+            marker.display()
+        ),
+    )
+    .expect("write the fake agent");
+    std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let sweep = one_change(dir.path(), false);
+    let openspec = fake_openspec(
+        dir.path(),
+        &format!(
+            r#"case "$1" in
+  instructions) echo 'WRITE THE SPECS' ;;
+  *)
+{sweep}
+;;
+esac"#
+        ),
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let dispatched = Command::new(BIN)
+        .args(["run", "specs", "-c", "add-auth", "--cwd", cwd])
+        .args(["--openspec-bin", &openspec])
+        .env("PATH", &path)
+        .output()
+        .expect("run spectacular");
+
+    assert_eq!(
+        dispatched.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&dispatched)
+    );
+    let text = stdout(&dispatched);
+    assert!(
+        text.starts_with("Started Claude Code on add-auth/specs\n"),
+        "{text}"
+    );
+    assert!(text.contains("  job:  "), "{text}");
+    assert!(
+        text.contains("Follow it with: spectacular jobs --job "),
+        "{text}"
+    );
+    // Dispatching returns at once; the agent is still working.
+    assert!(
+        !marker.exists(),
+        "run waited for the agent instead of returning"
+    );
+
+    // A second job on the same change is refused while the first runs.
+    let conflict = Command::new(BIN)
+        .args(["run", "specs", "-c", "add-auth", "--cwd", cwd])
+        .args(["--openspec-bin", &openspec])
+        .env("PATH", &path)
+        .output()
+        .expect("run spectacular");
+    assert_eq!(conflict.status.code(), Some(1));
+    assert!(
+        stderr(&conflict).contains("already has a running job"),
+        "{}",
+        stderr(&conflict)
+    );
+
+    let listed = run(&["jobs", "--cwd", cwd]);
+    assert!(
+        stdout(&listed).contains("running     add-auth/specs"),
+        "{}",
+        stdout(&listed)
+    );
+
+    // The job survived the process that started it: it finishes on its own and
+    // records its own exit code, with nothing of ours left watching.
+    let job_id = text
+        .lines()
+        .find_map(|line| line.strip_prefix("  job:  "))
+        .expect("the job id is printed")
+        .to_owned();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !marker.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        marker.exists(),
+        "the detached agent never ran to completion"
+    );
+    assert!(
+        dir.path()
+            .join(format!(".spec-tacular/jobs/{job_id}.exit"))
+            .is_file(),
+        "the wrapper must record the exit code for a parent that is gone"
+    );
+
+    let tailed = run(&["jobs", "--job", &job_id[..8], "--cwd", cwd]);
+    assert_eq!(
+        tailed.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&tailed)
+    );
+    let log = stdout(&tailed);
+    // Rendered by the driver, not dumped: the stream-json is unreadable raw.
+    assert!(log.contains("add-auth/specs  succeeded  started "), "{log}");
+    assert!(log.contains("\nWriting specs\n"), "{log}");
+    assert!(log.contains("\ndone\n"), "{log}");
+    assert!(!log.contains("\"type\""), "the raw protocol leaked:\n{log}");
+}
+
+#[cfg(unix)]
+#[test]
+fn run_is_refused_when_the_gate_is() {
+    // The background path must not bypass a check the foreground honours.
+    let dir = project("run-gate");
+    let cwd = dir.path().to_str().unwrap();
+    let openspec = fake_openspec(dir.path(), &one_change(dir.path(), false));
+
+    let out = run(&[
+        "run",
+        "design",
+        "-c",
+        "add-auth",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(out.status.code(), Some(1), "stdout:\n{}", stdout(&out));
+    assert!(stderr(&out).contains("Refused:"), "{}", stderr(&out));
+    assert!(
+        !dir.path().join(".spec-tacular/jobs").exists(),
+        "a refused run started a job"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_names_a_driver_it_does_not_have() {
+    let dir = project("run-driver");
+    let cwd = dir.path().to_str().unwrap();
+    let openspec = fake_openspec(dir.path(), &one_change(dir.path(), false));
+
+    let out = run(&[
+        "run",
+        "specs",
+        "-c",
+        "add-auth",
+        "--driver",
+        "nope",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("Unknown agent driver 'nope'")
+            && stderr(&out).contains("claude, opencode"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_dry_run_reports_the_split_and_writes_nothing() {
+    let dir = project("archive-dry");
+    let cwd = dir.path().to_str().unwrap();
+    let status = one_change(dir.path(), true);
+    let spec = dir
+        .path()
+        .join("openspec/changes/add-auth/specs/cap/spec.md");
+    std::fs::write(
+        &spec,
+        "## ADDED Requirements\n\n### Requirement: Alpha\nSHALL alpha.\n\n\
+         #### Scenario: ok\n- **WHEN** a\n- **THEN** b\n\n\
+         ### Requirement: Beta\nSHALL beta.\n",
+    )
+    .expect("spec");
+    let openspec = fake_openspec(
+        dir.path(),
+        &format!(
+            r#"case "$1" in
+  archive) echo archived ;;
+  *)
+{status}
+;;
+esac"#
+        ),
+    );
+
+    // Nothing reviewed: the archive is refused rather than merging text nobody
+    // agreed to.
+    let refused = run(&[
+        "archive",
+        "add-auth",
+        "--dry-run",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "stdout:\n{}",
+        stdout(&refused)
+    );
+    assert!(
+        stderr(&refused).contains("2 requirement(s) are neither accepted nor deferred"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(
+        stderr(&refused).contains("exactly what `--yes` does"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(stdout(&refused).contains("0 requirement(s) merge into the baseline"));
+
+    let unknown = run(&[
+        "archive",
+        "nothing-like-this",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(
+        unknown.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&unknown)
+    );
+    assert_eq!(stderr(&unknown), "No change called 'nothing-like-this'.\n");
+
+    // `-c` wins over the positional, as the TypeScript parser had it.
+    let both = run(&[
+        "archive",
+        "add-auth",
+        "-c",
+        "nothing-like-this",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(both.status.code(), Some(1));
+    assert_eq!(stderr(&both), "No change called 'nothing-like-this'.\n");
+
+    // And the delta is untouched by any of it.
+    assert!(std::fs::read_to_string(&spec)
+        .expect("read")
+        .contains("### Requirement: Beta"));
+}
+
+#[test]
+fn archive_without_a_change_says_how_to_call_it() {
+    let dir = project("archive-usage");
+    let out = run(&["archive", "--cwd", dir.path().to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stderr(&out), "Usage: spectacular archive <change>\n");
+}
+
+#[test]
+fn verify_without_a_requirement_says_how_to_call_it() {
+    let dir = project("verify-usage");
+    let out = run(&[
+        "verify",
+        "data-export",
+        "--cwd",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        stderr(&out),
+        "Usage: spectacular verify <capability> --requirement \"<name>\"\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn verify_moves_a_pending_requirement_into_the_baseline_and_revalidates() {
+    let dir = project("verify");
+    let cwd = dir.path().to_str().unwrap();
+    std::fs::create_dir_all(dir.path().join("spec-tacular")).expect("dir");
+    std::fs::write(
+        dir.path().join("spec-tacular/pending-validation.md"),
+        "# Pending validation\n\n## data-export\n\n\
+         ### Requirement: Export completes\n\nThe system SHALL export.\n\n\
+         #### Scenario: Deployed\n- **WHEN** run\n- **THEN** a file\n\n\
+         **Change:** add-export\n**Deferred:** 2026-09-21\n**Needs:** a deployment\n",
+    )
+    .expect("register");
+    let openspec = fake_openspec(dir.path(), "case \"$1\" in\n  validate) ;;\nesac");
+
+    let out = run(&[
+        "verify",
+        "data-export",
+        "--requirement",
+        "export  COMPLETES",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(out.status.code(), Some(0), "stderr:\n{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.starts_with("Verified 'Export completes' into "),
+        "{text}"
+    );
+    assert!(
+        text.contains("(the spec did not exist — fill in its Purpose)"),
+        "{text}"
+    );
+    assert!(text.ends_with("openspec validate: ok\n"), "{text}");
+
+    let spec = std::fs::read_to_string(dir.path().join("openspec/specs/data-export/spec.md"))
+        .expect("the spec was written");
+    assert!(spec.contains("### Requirement: Export completes"));
+    assert!(spec.contains("#### Scenario: Deployed"));
+    // And it is gone from the register, which now says so.
+    assert!(
+        std::fs::read_to_string(dir.path().join("spec-tacular/pending-validation.md"))
+            .expect("register")
+            .contains("Nothing is waiting on validation")
+    );
+
+    let again = run(&[
+        "verify",
+        "data-export",
+        "--requirement",
+        "Export completes",
+        "--cwd",
+        cwd,
+        "--openspec-bin",
+        &openspec,
+    ]);
+    assert_eq!(again.status.code(), Some(1));
+    assert!(
+        stderr(&again).contains("nothing pending"),
+        "{}",
+        stderr(&again)
     );
 }
 

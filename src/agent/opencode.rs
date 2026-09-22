@@ -41,7 +41,10 @@ mod tests {
 
     #[test]
     fn passes_output_through_unchanged() {
-        assert_eq!(OpencodeDriver.format_line("hello").as_deref(), Some("hello"));
+        assert_eq!(
+            OpencodeDriver.format_line("hello").as_deref(),
+            Some("hello")
+        );
         assert_eq!(OpencodeDriver.format_line("  "), None);
     }
 

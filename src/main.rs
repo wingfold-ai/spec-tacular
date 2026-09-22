@@ -6,10 +6,11 @@
 //! `--print` is not a degraded mode: it is the same model rendered without a
 //! terminal, which is what makes the overview usable in CI and over a pipe.
 //!
-//! The port lands bottom-up. `init`, `instructions`, `foundation`, `adr` and
-//! the `--print` overview are wired through the OpenSpec adapter and do their
-//! work; the background jobs and the archive half (stage 4) and the TUI
-//! (stage 5) still decline rather than pretending to work.
+//! The port lands bottom-up, and stage 4 is where the command surface closes:
+//! every subcommand now does its work, from `init` and `instructions` through
+//! the background jobs to `archive`, `pending`, `verify` and `roadmap`. Only
+//! the TUI still declines rather than pretending — it lands in stage 5, and
+//! `--print` is already the same model rendered without a terminal.
 
 mod adapter;
 mod agent;

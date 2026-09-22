@@ -221,7 +221,10 @@ mod tests {
         let dir = TempDir::new().expect("temp dir");
         let driver = fake(dir.path(), "true");
         assert!(on_path_in("fake-agent", &dir.path().display().to_string()));
-        assert!(!on_path_in("nothing-like-this", &dir.path().display().to_string()));
+        assert!(!on_path_in(
+            "nothing-like-this",
+            &dir.path().display().to_string()
+        ));
         // An absolute path is tested as a file, not searched for.
         assert!(on_path_in(&driver.script, ""));
         assert!(!on_path_in("/nonexistent-xyz/agent", ""));

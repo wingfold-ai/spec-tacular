@@ -150,7 +150,9 @@ fn new_id(change: &str, artifact: &str) -> String {
         .unwrap_or(0);
     let mut noise = nanos
         ^ (std::process::id() << 7)
-        ^ SEQ.fetch_add(0x9E37_79B9, Ordering::Relaxed).rotate_left(11);
+        ^ SEQ
+            .fetch_add(0x9E37_79B9, Ordering::Relaxed)
+            .rotate_left(11);
     let mut suffix = String::new();
     for _ in 0..4 {
         let digit = (noise % 36) as u8;
@@ -284,9 +286,12 @@ pub fn active_job_for_change(project_root: impl AsRef<Path>, change: &str) -> Op
 }
 
 /// A change already has an agent writing to it.
+///
+/// The job is boxed: this is the cold half of every `start_job` result, and a
+/// whole `Job` inline would make the common one three times the size.
 #[derive(Debug, Clone)]
 pub struct JobConflictError {
-    pub existing: Job,
+    pub existing: Box<Job>,
 }
 
 impl std::fmt::Display for JobConflictError {
@@ -320,7 +325,9 @@ pub struct StartJobOptions<'a> {
 /// output streams append to the log.
 pub fn start_job(options: StartJobOptions<'_>) -> Result<Job, JobConflictError> {
     if let Some(existing) = active_job_for_change(options.project_root, options.change) {
-        return Err(JobConflictError { existing });
+        return Err(JobConflictError {
+            existing: Box::new(existing),
+        });
     }
 
     let id = new_id(options.change, options.artifact);
@@ -344,8 +351,11 @@ pub fn start_job(options: StartJobOptions<'_>) -> Result<Job, JobConflictError> 
         log_path: log_path.display().to_string(),
     };
 
-    let child = match spawn_detached(&options, &log_path, &exit_path_for(options.project_root, &id))
-    {
+    let child = match spawn_detached(
+        &options,
+        &log_path,
+        &exit_path_for(options.project_root, &id),
+    ) {
         Ok(child) => child,
         Err(error) => {
             // A spawn that never happened failed outright; recording it as
@@ -501,6 +511,9 @@ pub fn tail_job(job: &Job, limit: usize) -> Vec<String> {
 }
 
 /// Removes finished jobs and their logs. Running ones are never touched.
+///
+/// Its caller is the jobs pane's `p`, in stage 5.
+#[allow(dead_code)]
 pub fn prune_jobs(project_root: impl AsRef<Path>) -> usize {
     let project_root = project_root.as_ref();
     let mut removed = 0;
@@ -519,6 +532,9 @@ pub fn prune_jobs(project_root: impl AsRef<Path>) -> usize {
 }
 
 /// Jobs keyed by the change they are writing to, for the overview.
+///
+/// Its caller is the overview's "an agent is writing this" marker, in stage 5.
+#[allow(dead_code)]
 pub fn active_by_change(project_root: impl AsRef<Path>) -> BTreeMap<String, Job> {
     active_jobs(project_root)
         .into_iter()
@@ -800,7 +816,9 @@ mod tests {
         .expect("start the job");
         let done = settle(dir.path(), &job.id);
         assert_eq!(done.status, JobStatus::Succeeded);
-        assert!(tail_job(&done, TAIL_LIMIT).join("\n").contains("$(echo pwned)"));
+        assert!(tail_job(&done, TAIL_LIMIT)
+            .join("\n")
+            .contains("$(echo pwned)"));
     }
 
     #[test]
@@ -875,9 +893,9 @@ mod tests {
         assert_eq!(
             list_jobs(dir.path())
                 .iter()
-                .map(|j| j.id.clone())
+                .map(|j| j.id.as_str())
                 .collect::<Vec<_>>(),
-            [running.id.clone()]
+            [running.id.as_str()]
         );
         stop(dir.path(), &running.id);
     }
@@ -993,6 +1011,40 @@ mod tests {
             exit_path_for(dir.path(), &job.id).exists(),
             "the wrapper must record the exit code for a parent that is gone"
         );
+    }
+
+    #[test]
+    fn a_long_job_on_one_change_does_not_block_reviewing_another() {
+        // The exit criterion for this stage: a job running against change A
+        // while change B is reviewed, in one process. Nothing here waits on
+        // anything the other does.
+        use crate::core::requirements::parse_spec_file;
+        use crate::core::review::{empty_review, DecisionNote, ReviewState};
+        use crate::core::session::{decide, open_session};
+
+        let dir = TempDir::new().expect("temp dir");
+        let job = start_on(dir.path(), "echo starting; sleep 30", "change-a", "apply");
+        assert_eq!(job.status, JobStatus::Running);
+
+        let spec = concat!(
+            "## ADDED Requirements\n\n",
+            "### Requirement: Alpha\nSHALL alpha.\n\n",
+            "### Requirement: Beta\nSHALL beta.\n",
+        );
+        let items = parse_spec_file(spec, "cap", "/p/specs/cap/spec.md").requirements;
+        let mut session = open_session("change-b", &items, empty_review("change-b"));
+        session = decide(session, ReviewState::Accepted, &DecisionNote::default());
+        session = decide(session, ReviewState::Accepted, &DecisionNote::default());
+
+        assert_eq!(session.summary.accepted, 2);
+        assert!(session.summary.complete);
+        // And the job is still going, untouched by any of it.
+        assert_eq!(
+            get_job(dir.path(), &job.id).map(|j| j.status),
+            Some(JobStatus::Running)
+        );
+
+        stop(dir.path(), &job.id);
     }
 
     #[test]
