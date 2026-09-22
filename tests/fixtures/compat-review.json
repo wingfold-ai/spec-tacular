@@ -1,0 +1,24 @@
+{
+  "change": "compat",
+  "schemaVersion": 1,
+  "requirements": {
+    "export#data-export": {
+      "state": "accepted",
+      "hash": "sha256:24b5cf68c3ace0a9d72e38271e2651db",
+      "reviewedAt": "2026-09-22T21:18:18.639Z"
+    },
+    "export#export-notification": {
+      "state": "rejected",
+      "hash": "sha256:a9bca925ea24a988956e9587328359d2",
+      "reviewedAt": "2026-09-22T21:18:18.639Z",
+      "note": "too vague"
+    },
+    "export#import": {
+      "state": "deferred",
+      "hash": "sha256:0000000000000000000000000000dead",
+      "reviewedAt": "2026-09-22T21:18:18.639Z",
+      "deferReason": "awaiting-deployment"
+    }
+  },
+  "cursor": "export#export-notification"
+}
