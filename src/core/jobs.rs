@@ -27,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::driver::AgentCommand;
+use crate::core::paths::display_path;
 
 /// Where a job is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,15 +178,40 @@ fn new_id(change: &str, artifact: &str) -> String {
 }
 
 /// Atomic, so a reader never sees a half-written record.
+///
+/// The temp file is unique per *write*, not per process, and that is the whole
+/// point of it. Two writers race on one record as a matter of course — the
+/// caller cancelling a job, and the thread that reaps it noticing it died — and
+/// with one temp name per process they interleave inside the same file and
+/// publish a mixture of the two, which parses as neither. `list_jobs` skips a
+/// record it cannot read, so the symptom is the job vanishing from the pane at
+/// the exact moment it was cancelled.
+///
+/// The TypeScript used `${path}.${process.pid}.tmp` and could not hit this:
+/// its two writers were callbacks on one event loop. Here the reaper is a real
+/// thread, so the name has to carry more than the pid.
 fn write_record(project_root: &Path, job: &Job) -> std::io::Result<()> {
+    static WRITE: AtomicU32 = AtomicU32::new(0);
+
     let dir = jobs_dir(project_root);
     fs::create_dir_all(&dir)?;
     let path = record_path(project_root, &job.id);
-    let tmp = dir.join(format!("{}.json.{}.tmp", job.id, std::process::id()));
+    let tmp = dir.join(format!(
+        "{}.json.{}.{}.tmp",
+        job.id,
+        std::process::id(),
+        WRITE.fetch_add(1, Ordering::Relaxed)
+    ));
     let json = serde_json::to_string_pretty(job)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     fs::write(&tmp, format!("{json}\n"))?;
-    fs::rename(&tmp, &path)
+    // Last rename wins, which is the intended semantics: whoever learned about
+    // the job most recently is who should be believed.
+    let published = fs::rename(&tmp, &path);
+    if published.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    published
 }
 
 /// Whether a pid is alive. Signal 0 tests for existence without delivering one.
@@ -342,13 +368,13 @@ pub fn start_job(options: StartJobOptions<'_>) -> Result<Job, JobConflictError> 
         driver: options.driver.to_owned(),
         command: options.command.command.clone(),
         args: options.command.args.clone(),
-        cwd: options.cwd.display().to_string(),
+        cwd: display_path(options.cwd),
         status: JobStatus::Running,
         started_at: now_iso(),
         ended_at: None,
         exit_code: None,
         pid: None,
-        log_path: log_path.display().to_string(),
+        log_path: display_path(&log_path),
     };
 
     let child = match spawn_detached(
@@ -457,6 +483,25 @@ fn reap_in_background(project_root: PathBuf, job: Job, mut child: Child) {
         });
 }
 
+/// Signals a whole process group, falling back to the one process.
+///
+/// A negative pid is the group. Killing only the direct child is the mistake
+/// this exists to stop making: a shell that spawned something — which is what
+/// every agent and every wrapper is — leaves that something running, reparented
+/// and invisible, and the caller has no handle left to find it with.
+///
+/// The fallback covers a child that never got a group of its own, and is why
+/// this reports whether anything was signalled rather than returning `()`.
+///
+/// It lives here because process lifetime is what this module is about; the
+/// foreground runners in `adapter/` and `agent/` use it for the same reason
+/// and with the same argument.
+pub fn signal_group(pid: i32, signal: i32) -> bool {
+    // SAFETY: both calls are plain `kill(2)`; neither touches this process's
+    // memory, and a failure is reported through errno as usual.
+    unsafe { libc::kill(-pid, signal) == 0 || libc::kill(pid, signal) == 0 }
+}
+
 /// Stops a running job. Returns whether anything was stopped.
 pub fn cancel_job(project_root: impl AsRef<Path>, id: &str) -> bool {
     let project_root = project_root.as_ref();
@@ -470,14 +515,7 @@ pub fn cancel_job(project_root: impl AsRef<Path>, id: &str) -> bool {
         return false;
     };
 
-    // Negative pid signals the whole process group. A detached agent spawns
-    // children of its own, and killing only the parent orphans them.
-    //
-    // SAFETY: both calls are plain `kill(2)`; neither touches this process's
-    // memory, and a failure is reported through errno as usual.
-    let stopped = unsafe { libc::kill(-pid, libc::SIGTERM) } == 0
-        || unsafe { libc::kill(pid, libc::SIGTERM) } == 0;
-    if !stopped {
+    if !signal_group(pid, libc::SIGTERM) {
         return false;
     }
 
@@ -602,13 +640,23 @@ mod tests {
     }
 
     /// Cancels a job and waits for the process to actually be gone.
+    ///
+    /// It asserts rather than giving up on the deadline: a cancel that leaves
+    /// the agent running is the bug this module exists to not have, and a
+    /// helper that shrugged at it would hide exactly that.
     fn stop(root: &Path, id: &str) {
+        let job = get_job(root, id).expect("the job to cancel is on disk");
         cancel_job(root, id);
         let deadline = Instant::now() + Duration::from_secs(10);
-        while let Some(job) = get_job(root, id) {
-            if !is_alive(job.pid) || Instant::now() > deadline {
-                break;
+        loop {
+            if !is_alive(job.pid) {
+                return;
             }
+            assert!(
+                Instant::now() < deadline,
+                "job {id} (pid {:?}) was still alive 10s after being cancelled",
+                job.pid
+            );
             std::thread::sleep(Duration::from_millis(15));
         }
     }
@@ -1011,6 +1059,81 @@ mod tests {
             exit_path_for(dir.path(), &job.id).exists(),
             "the wrapper must record the exit code for a parent that is gone"
         );
+    }
+
+    #[test]
+    fn two_threads_writing_one_record_never_publish_an_unreadable_one() {
+        // Cancelling a job and reaping it happen on different threads and land
+        // on the same file. A shared temp name let them interleave inside it,
+        // and the published record parsed as neither — so `list_jobs` skipped
+        // it and the job disappeared exactly when it was cancelled.
+        let dir = TempDir::new().expect("temp dir");
+        let job = Job {
+            id: "contended".to_owned(),
+            change: "c".to_owned(),
+            artifact: "apply".to_owned(),
+            driver: "test".to_owned(),
+            // Long enough that a torn write cannot land inside one `write(2)`.
+            command: "x".repeat(64_000),
+            args: Vec::new(),
+            cwd: dir.path().display().to_string(),
+            status: JobStatus::Running,
+            started_at: "2020-01-01T00:00:00.000Z".to_owned(),
+            ended_at: None,
+            exit_code: None,
+            pid: Some(1 << 22),
+            log_path: log_path_for(dir.path(), "contended").display().to_string(),
+        };
+
+        // One record already published, so every later read must find exactly
+        // one job. The bug shows up as *no* job: `list_jobs` skips a record it
+        // cannot parse, so counting is the assertion that catches it.
+        write_record(dir.path(), &job).expect("the first record");
+
+        let writers: Vec<_> = [JobStatus::Cancelled, JobStatus::Failed]
+            .into_iter()
+            .map(|status| {
+                let root = dir.path().to_path_buf();
+                let job = Job {
+                    status,
+                    ended_at: Some("2020-01-01T00:00:01.000Z".to_owned()),
+                    ..job.clone()
+                };
+                std::thread::spawn(move || {
+                    for _ in 0..300 {
+                        let _ = write_record(&root, &job);
+                    }
+                })
+            })
+            .collect();
+
+        // Reading throughout, not only at the end: a torn record is published
+        // for an instant and then overwritten, so a single read would miss it.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut reads = 0;
+        while writers.iter().any(|w| !w.is_finished()) && Instant::now() < deadline {
+            let jobs = list_jobs(dir.path());
+            assert_eq!(
+                jobs.len(),
+                1,
+                "a record that could not be read was published, so the job vanished"
+            );
+            assert_eq!(jobs[0].command.len(), 64_000, "a torn record was published");
+            reads += 1;
+        }
+        for writer in writers {
+            writer.join().expect("writer thread");
+        }
+        assert!(reads > 0, "the readers never ran");
+
+        // And no temp file survives to be mistaken for a job of its own.
+        let mut left: Vec<String> = fs::read_dir(jobs_dir(dir.path()))
+            .expect("jobs dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["contended.json"]);
     }
 
     #[test]

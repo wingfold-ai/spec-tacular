@@ -316,6 +316,60 @@ fn roadmap_promotes_one_slice_and_refuses_the_next() {
     );
 }
 
+/// A project opened as `.` must not print `./spec-tacular/...`.
+///
+/// Rust's `Path::join` keeps every component; Node's `path.join` normalizes
+/// the `.` away, so the TypeScript printed the shorter spelling for the same
+/// project. `core::paths::display_path` is what closes that, and this runs the
+/// commands from inside the project so `--cwd .` is the real shape.
+#[test]
+fn a_project_opened_as_dot_prints_paths_the_way_the_typescript_did() {
+    let dir = project("dot-paths");
+    std::fs::create_dir_all(dir.path().join("spec-tacular")).expect("dir");
+    std::fs::write(
+        dir.path().join("spec-tacular/pending-validation.md"),
+        "# Pending validation\n\n## cap\n\n### Requirement: R\n\nBody.\n\n         **Change:** c\n**Deferred:** 2026-09-21\n**Needs:** a deployment\n",
+    )
+    .expect("register");
+
+    let in_project = |args: &[&str]| {
+        Command::new(BIN)
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .expect("run spectacular")
+    };
+
+    let pending = in_project(&["pending", "--cwd", "."]);
+    assert!(pending.status.success(), "stderr:\n{}", stderr(&pending));
+    assert!(
+        stdout(&pending).contains("Register: spec-tacular/pending-validation.md\n"),
+        "got:\n{}",
+        stdout(&pending)
+    );
+    assert!(
+        !stdout(&pending).contains("./spec-tacular"),
+        "a `./` leaked"
+    );
+
+    let roadmap = in_project(&["roadmap", "--cwd", "."]);
+    assert!(roadmap.status.success(), "stderr:\n{}", stderr(&roadmap));
+    assert_eq!(
+        stdout(&roadmap).lines().next(),
+        Some("Created spec-tacular/roadmap.yaml"),
+        "got:\n{}",
+        stdout(&roadmap)
+    );
+
+    // And an absolute project is untouched, so the helper only removes what
+    // Node would have removed.
+    let absolute = run(&["pending", "--cwd", dir.path().to_str().unwrap()]);
+    assert!(stdout(&absolute).contains(&format!(
+        "Register: {}/spec-tacular/pending-validation.md\n",
+        dir.path().display()
+    )));
+}
+
 #[test]
 fn jobs_says_so_when_there_are_none_and_names_an_id_it_cannot_find() {
     let dir = project("jobs-empty");

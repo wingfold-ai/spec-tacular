@@ -17,6 +17,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use super::types::{ChangeEntry, ChangeOrError, OpenSpecBatchStatus, OpenSpecChangeStatus};
+use crate::core::jobs::signal_group;
 
 /// Anything that went wrong reaching OpenSpec, with the one line of advice
 /// that usually fixes it.
@@ -244,18 +245,30 @@ impl OpenSpecAdapter {
             // The timeout below drops the child; without this it would go on
             // running, detached, holding the project's lock files.
             .kill_on_drop(true)
+            // And its own process group, so the timeout can reach what it
+            // started. `kill_on_drop` reaches the direct child only, which for
+            // a command that is a shell — or that shells out — is the wrapper
+            // and not the work.
+            .process_group(0)
             .spawn()
             .map_err(|err| self.spawn_error(&err))?;
+
+        // Read before the wait consumes the child. The group id is the child's
+        // pid, and a group outlives its leader as long as it has members.
+        let pid = child.id().and_then(|pid| i32::try_from(pid).ok());
 
         let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(err)) => return Err(self.spawn_error(&err)),
             Err(_) => {
+                if let Some(pid) = pid {
+                    signal_group(pid, libc::SIGKILL);
+                }
                 return Err(OpenSpecError::new(format!(
                     "openspec {} timed out after {}ms.",
                     args.join(" "),
                     self.timeout.as_millis()
-                )))
+                )));
             }
         };
 
@@ -372,10 +385,35 @@ mod tests {
     #[tokio::test]
     async fn a_command_that_never_returns_times_out() {
         let dir = temp();
-        let adapter = adapter(&dir, "sleep 30").with_timeout(Duration::from_millis(150));
+        // The fake starts something and waits, the way a real `openspec` that
+        // shells out would: the grandchild is what a naive kill leaves behind.
+        let marker = dir.path().join("still-running");
+        let adapter = adapter(
+            &dir,
+            &format!("sh -c 'sleep 30; : > {}' &\nwait", marker.display()),
+        )
+        .with_timeout(Duration::from_millis(150));
         let err = adapter.version().await.expect_err("an error");
         assert_eq!(err.message, "openspec --version timed out after 150ms.");
         assert!(err.hint.is_none());
+
+        // And the timeout took the whole group with it. Without that the sleep
+        // outlives the suite, holding the project's lock files and reading as
+        // a command still in flight.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut gone = false;
+        while !gone && std::time::Instant::now() < deadline {
+            let listing = std::process::Command::new("ps")
+                .args(["-eo", "args"])
+                .output()
+                .expect("ps");
+            gone = !String::from_utf8_lossy(&listing.stdout)
+                .contains(&dir.path().display().to_string());
+            if !gone {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        assert!(gone, "the timed-out command left a process behind");
     }
 
     #[tokio::test]

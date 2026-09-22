@@ -12,6 +12,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::driver::{AgentDriver, StructuredMode, StructuredRequest};
+use crate::core::jobs::signal_group;
 
 /// How long a structured request may take before it is abandoned.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(180);
@@ -92,7 +93,11 @@ pub async fn run_structured(
         .stderr(std::process::Stdio::piped())
         // The child must not outlive the request: an abandoned advisor is a
         // process nobody will ever read the output of.
-        .kill_on_drop(true);
+        .kill_on_drop(true)
+        // `kill_on_drop` reaches the direct child and nothing it started, so
+        // the child gets a process group of its own for the timeout to signal.
+        // A group, not a session: this one is meant to die with us.
+        .process_group(0);
 
     let child = command.spawn().map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -102,14 +107,20 @@ pub async fn run_structured(
         }
     })?;
 
+    // Read before the wait consumes the child: the group id is its pid.
+    let pid = child.id().and_then(|pid| i32::try_from(pid).ok());
+
     let timeout = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Err(_) => {
+            if let Some(pid) = pid {
+                signal_group(pid, libc::SIGKILL);
+            }
             return Err(format!(
                 "{} did not answer within {}s",
                 driver.label(),
                 timeout.as_secs()
-            ))
+            ));
         }
         Ok(Err(err)) => return Err(err.to_string()),
         Ok(Ok(output)) => output,
@@ -273,7 +284,13 @@ mod tests {
     #[test]
     fn a_driver_that_never_answers_is_abandoned_rather_than_waited_for() {
         let dir = TempDir::new().expect("temp dir");
-        let driver = fake(dir.path(), "sleep 30");
+        // A shell that starts something and waits, which is the shape of every
+        // real agent: the grandchild is what a naive kill leaves behind.
+        let marker = dir.path().join("still-running");
+        let driver = fake(
+            dir.path(),
+            &format!("sh -c 'sleep 30; : > {}' &\nwait", marker.display()),
+        );
         let err = runtime()
             .block_on(run_structured(
                 &driver,
@@ -287,6 +304,36 @@ mod tests {
             ))
             .expect_err("the timeout fires");
         assert!(err.contains("did not answer within"), "{err}");
+
+        // And nothing it started is still running. `kill_on_drop` reaches the
+        // direct child only, so without a process group of its own the `sleep`
+        // would outlive the whole test suite.
+        assert!(
+            no_survivors(dir.path()),
+            "the abandoned advisor left a process behind"
+        );
+    }
+
+    /// Whether every process the fake started is gone.
+    ///
+    /// The fake writes its marker only if it runs to completion, so a marker
+    /// that never appears is the assertion passing. Waiting the full sleep
+    /// would make the test take 30s; waiting a beat and checking the process
+    /// table directly is both faster and more direct.
+    fn no_survivors(dir: &Path) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let listing = std::process::Command::new("ps")
+                .args(["-eo", "args"])
+                .output()
+                .expect("ps");
+            let text = String::from_utf8_lossy(&listing.stdout);
+            if !text.contains(&dir.display().to_string()) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
     }
 
     #[test]

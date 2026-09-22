@@ -48,6 +48,7 @@ pub mod jobs;
 pub mod mark;
 pub mod markdown;
 pub mod naming;
+pub mod paths;
 pub mod pending;
 pub mod pipeline;
 #[allow(dead_code)]

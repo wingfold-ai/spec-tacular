@@ -24,6 +24,7 @@ use crate::core::foundation::{foundation_dir, is_unanswered, load_foundation};
 use crate::core::gate::{foundation_gate, gate_for};
 use crate::core::init::{init_project, schema_dir, SCHEMA_NAME};
 use crate::core::jobs::{cancel_job, list_jobs, start_job, tail_job, StartJobOptions, TAIL_LIMIT};
+use crate::core::paths::display_path;
 use crate::core::pending::{load_register, register_path};
 use crate::core::pipeline::{build_pipeline, sort_by_progress, ChangePipeline, ReviewByArtifact};
 use crate::core::roadmap::{
@@ -103,7 +104,7 @@ pub async fn run_overview(
     io: &mut Streams<'_>,
 ) -> Result<u8, OpenSpecError> {
     let loaded = load_pipelines(adapter, cwd).await?;
-    let root = cwd.display().to_string();
+    let root = display_path(cwd);
     io.out(format!(
         "{}\n",
         render_overview(
@@ -125,7 +126,7 @@ pub fn run_init(cwd: &Path, force: bool, io: &mut Streams<'_>) -> u8 {
         io.err(format!(
             "{SCHEMA_NAME} is already installed at {}.\n\
              Re-run with --force to replace it (local edits to it will be lost).\n",
-            installed.display()
+            display_path(&installed)
         ));
         return 1;
     }
@@ -145,7 +146,7 @@ pub fn run_init(cwd: &Path, force: bool, io: &mut Streams<'_>) -> u8 {
 
     io.out(format!(
         "Installed the {SCHEMA_NAME} schema to {}\n",
-        result.schema_dir.display()
+        display_path(&result.schema_dir)
     ));
     for file in &result.files {
         io.out(format!("  {file}\n"));
@@ -153,7 +154,7 @@ pub fn run_init(cwd: &Path, force: bool, io: &mut Streams<'_>) -> u8 {
     if !result.foundation_created.is_empty() {
         io.out(format!(
             "\nScaffolded the Foundation at {}\n",
-            foundation_dir(cwd).display()
+            display_path(foundation_dir(cwd))
         ));
         for file in &result.foundation_created {
             io.out(format!("  {file}\n"));
@@ -223,7 +224,7 @@ pub async fn check_gate(
             io.err(format!(
                 "\nAnswer them in {}/spec-tacular/foundation, then try again.\n\
                  See what is outstanding with: spectacular foundation\n",
-                cwd.display()
+                display_path(cwd)
             ));
             return Ok(Gate::Refused(1));
         }
@@ -245,7 +246,7 @@ pub async fn check_gate(
         }
         io.err(format!(
             "\nReview it first: spectacular --cwd {}, select {change}, press enter.\n",
-            cwd.display()
+            display_path(cwd)
         ));
         return Ok(Gate::Refused(1));
     }
@@ -376,7 +377,7 @@ pub async fn run_agent(
         driver: driver.id(),
         command: driver.build(&AgentRequest {
             prompt: &prompt,
-            cwd: &cwd.display().to_string(),
+            cwd: &display_path(cwd),
         }),
         cwd,
     }) {
@@ -504,7 +505,7 @@ pub async fn dispatch(
         driver: driver.id(),
         command: driver.build(&AgentRequest {
             prompt: &prompt,
-            cwd: &cwd.display().to_string(),
+            cwd: &display_path(cwd),
         }),
         cwd,
     })
@@ -577,11 +578,12 @@ pub async fn run_archive(
     match prepare_archive(cwd, change, &queue.requirements) {
         Ok(prepared) => {
             for file in &prepared.rewritten {
-                io.out(format!("  rewrote {file}\n"));
+                io.out(format!("  rewrote {}\n", display_path(file)));
             }
             for file in &prepared.removed {
                 io.out(format!(
-                    "  removed {file} (every requirement in it deferred)\n"
+                    "  removed {} (every requirement in it deferred)\n",
+                    display_path(file)
                 ));
             }
         }
@@ -621,7 +623,7 @@ pub fn run_pending(cwd: &Path, io: &mut Streams<'_>) -> u8 {
     io.out(format!(
         "\n{} requirement(s) accepted but unverified — not in the baseline.\nRegister: {}\n",
         entries.len(),
-        register_path(cwd).display()
+        display_path(register_path(cwd))
     ));
     0
 }
@@ -658,7 +660,7 @@ pub async fn run_verify(
     io.out(format!(
         "Verified '{}' into {}\n",
         entry.name,
-        spec_file.display()
+        display_path(&spec_file)
     ));
     if created {
         io.out("  (the spec did not exist — fill in its Purpose)\n");
@@ -695,12 +697,15 @@ pub fn run_roadmap(
             Ok(true) => {
                 io.out(format!(
                     "Created {}\nFill in the vision and the slices, then promote one at a time.\n",
-                    roadmap_path(cwd).display()
+                    display_path(roadmap_path(cwd))
                 ));
                 return 0;
             }
             _ => {
-                io.err(format!("Could not read {}.\n", roadmap_path(cwd).display()));
+                io.err(format!(
+                    "Could not read {}.\n",
+                    display_path(roadmap_path(cwd))
+                ));
                 return 1;
             }
         }
@@ -723,7 +728,7 @@ pub fn run_roadmap(
         if let Err(error) = save_roadmap(cwd, &roadmap) {
             io.err(format!(
                 "Could not write {}: {error}\n",
-                roadmap_path(cwd).display()
+                display_path(roadmap_path(cwd))
             ));
             return 1;
         }
@@ -797,7 +802,7 @@ pub fn run_foundation(cwd: &Path, io: &mut Streams<'_>) -> u8 {
     if items.is_empty() {
         io.err(format!(
             "No Foundation at {}.\nRun `spectacular init` to scaffold it.\n",
-            foundation_dir(cwd).display()
+            display_path(foundation_dir(cwd))
         ));
         return 1;
     }
