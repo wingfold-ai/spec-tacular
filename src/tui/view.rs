@@ -10,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
+use super::acp::{render_acp_block, render_permission};
 use super::app::{change_warnings, App, Hits, PromptStep, Screen, Target};
 use super::document::render_document;
 use super::foundation::render_foundation;
@@ -33,6 +34,16 @@ const CHANGES_WIDTH: u16 = 34;
 
 /// Draws the whole frame, and reports where the clickable things went.
 pub fn render(app: &App, frame: &mut Frame<'_>) -> Hits {
+    let mut hits = render_screen(app, frame);
+    // Over whatever is up: an agent asking permission. Its buttons come
+    // first, so a click on one is not taken by what is drawn beneath.
+    let mut overlay = Hits::new();
+    render_permission(frame, frame.area(), app, &mut overlay);
+    overlay.append(&mut hits);
+    overlay
+}
+
+fn render_screen(app: &App, frame: &mut Frame<'_>) -> Hits {
     let area = frame.area();
     let mut hits = Hits::new();
     frame.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
@@ -353,6 +364,12 @@ fn render_change(
             &format!("! {warning}"),
             Style::default().fg(theme::WARN),
         );
+    }
+
+    // An ACP session at work: what it says, its tools, its diffs.
+    if let Some(acp) = app.acp_working() {
+        render_acp_block(frame, &mut flow, app, acp, hits);
+        return;
     }
 
     // An agent at work: what it is doing, live.

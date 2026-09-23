@@ -20,6 +20,7 @@
 //! ctrl+c is a key the application handles, never a signal that kills it:
 //! it goes back or cancels one level, and `q` is what quits.
 
+pub mod acp;
 pub mod app;
 pub mod document;
 pub mod editor;
@@ -87,6 +88,9 @@ pub fn run(root: PathBuf, openspec_bin: Option<PathBuf>, driver: &str) -> u8 {
     // blocking threads, which by then are either finishing a small file
     // write or holding the cancelled request's answer, and return at once.
     drop(runtime);
+    // An ACP turn cut short by quitting is recorded as cancelled by a
+    // thread of its own; its record is on disk before the process goes.
+    crate::core::jobs::flush_recorders();
     match result {
         Ok(()) => 0,
         Err(error) => {
@@ -108,16 +112,28 @@ async fn next_event(events: &mut Option<EventStream>) -> Option<io::Result<Event
 
 async fn event_loop(ports: Arc<dyn Ports>) -> io::Result<()> {
     let mut tui = Tui::enter()?;
-    let (tx, mut rx) = mpsc::unbounded_channel::<Msg>();
     let (mut app, first) = App::new(ports.as_ref());
+    let result = drive(&mut tui, &mut app, first, ports).await;
+    // An ACP session lives in this process, unlike a job: it ends here.
+    app.shutdown();
+    result
+}
+
+async fn drive(
+    tui: &mut Tui,
+    app: &mut App,
+    first: Vec<Effect>,
+    ports: Arc<dyn Ports>,
+) -> io::Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Msg>();
     let mut events = Some(EventStream::new());
     let mut tick = interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut poll = interval(POLL);
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
     // Closing the terminal window, or being asked to stop, quits like `q`:
-    // the guard restores the terminal on the way out, and jobs, being
-    // detached, carry on.
+    // the guard restores the terminal on the way out, jobs, being detached,
+    // carry on, and an ACP session ends with the TUI.
     let mut term = signal(SignalKind::terminate())?;
     let mut hup = signal(SignalKind::hangup())?;
 
@@ -151,8 +167,7 @@ async fn event_loop(ports: Arc<dyn Ports>) -> io::Result<()> {
         }
         if dirty {
             let mut hits = Vec::new();
-            tui.terminal
-                .draw(|frame| hits = view::render(&app, frame))?;
+            tui.terminal.draw(|frame| hits = view::render(app, frame))?;
             app.hits = hits;
         }
         // Every branch below decides afresh whether the next pass redraws.

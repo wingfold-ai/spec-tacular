@@ -21,10 +21,12 @@ use std::time::Duration;
 
 use crate::adapter::openspec::{is_openspec_project, OpenSpecAdapter};
 use crate::adapter::types::OpenSpecChangeStatus;
+use crate::agent::acp::run::{AcpRun, RunStart, StartRun};
+use crate::agent::acp::{agent_mode, AgentMode};
 use crate::agent::default_registry;
 use crate::agent::driver::StructuredMode;
 use crate::agent::structured::{advisor_unavailable, driver_ask, StructuredOptions};
-use crate::commands::{dispatch, load_pipelines};
+use crate::commands::{dispatch, feedback_prompt, load_pipelines, prepare_dispatch};
 use crate::core::advisor::{AfterAnswer, Ask, Coached, FoundationAdvisor, Meta};
 use crate::core::change_review::{load_change_review, spec_files_of};
 use crate::core::concreteness::{load_lint_config, LintConfig};
@@ -64,6 +66,17 @@ pub struct JobsView {
     pub job_lines: Vec<String>,
     /// The last non-blank lines of the agent running on the selected change.
     pub running_lines: Vec<String>,
+}
+
+/// How `w` and a redraft reach an agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DraftMode {
+    /// Over ACP: a session in the TUI, its events live, its permission
+    /// requests answered here. `label` names the agent in the running block.
+    Acp { label: String },
+    /// As detached jobs. `why` says why not ACP, when ACP would have been
+    /// used but its agent could not be found — for the notice.
+    Jobs { why: Option<String> },
 }
 
 /// Set to anything non-empty, this turns every model request off: no
@@ -235,6 +248,32 @@ pub trait Ports: Send + Sync {
         feedback: Option<&str>,
     ) -> PortFuture<Result<String, String>>;
 
+    /// How drafting reaches an agent. Read once, when the app starts.
+    fn draft_mode(&self) -> DraftMode;
+    /// Starts an ACP session drafting one artifact — behind the same gates
+    /// as [`Ports::dispatch`], with the developer's feedback for a redraft
+    /// that cannot continue a session. `Unavailable` means the agent would
+    /// not start, and the work can still go to a job.
+    fn start_acp(
+        &self,
+        change: &str,
+        artifact: &str,
+        feedback: Option<&str>,
+    ) -> PortFuture<RunStart>;
+    /// A redraft as the next turn of a live session: only the feedback,
+    /// since the agent already has the rest.
+    fn follow_up(
+        &self,
+        run: &AcpRun,
+        artifact: &str,
+        feedback: &str,
+    ) -> PortFuture<Result<(), String>> {
+        let run = run.clone();
+        let artifact = artifact.to_owned();
+        let prompt = feedback_prompt(&artifact, feedback);
+        Box::pin(async move { run.follow_up(&artifact, prompt).await })
+    }
+
     /// Opens a change's review queue — its requirements, then its design
     /// decisions — resuming where the last session stopped. `None` when it
     /// has no specs yet. A future: it reads every spec file of the change.
@@ -348,6 +387,8 @@ pub struct ProjectPorts {
     interviewer: VisionInterviewer,
     /// Name proposals: `quick` requests.
     names: Option<Ask>,
+    /// ACP or jobs, and the ACP agent's command.
+    agent_mode: AgentMode,
 }
 
 impl ProjectPorts {
@@ -400,6 +441,7 @@ impl ProjectPorts {
             note,
             advisor,
             names,
+            agent_mode: agent_mode(driver),
         }
     }
 
@@ -486,6 +528,55 @@ impl Ports for ProjectPorts {
                 &driver,
                 feedback.as_deref(),
             )
+            .await
+        })
+    }
+
+    fn draft_mode(&self) -> DraftMode {
+        match &self.agent_mode {
+            AgentMode::Jobs(why) => DraftMode::Jobs { why: why.clone() },
+            AgentMode::Acp(command) => DraftMode::Acp {
+                label: match default_registry().get(&self.driver) {
+                    // The driver's own agent, unless the command was swapped
+                    // for another.
+                    Ok(driver) if std::env::var(crate::agent::acp::ACP_COMMAND_ENV).is_err() => {
+                        driver.label().to_owned()
+                    }
+                    _ => command.command.clone(),
+                },
+            },
+        }
+    }
+
+    fn start_acp(
+        &self,
+        change: &str,
+        artifact: &str,
+        feedback: Option<&str>,
+    ) -> PortFuture<RunStart> {
+        let AgentMode::Acp(command) = self.agent_mode.clone() else {
+            return Box::pin(async { RunStart::Unavailable("ACP is off".to_owned()) });
+        };
+        let adapter = self.adapter.clone();
+        let root = self.root.clone();
+        let change = change.to_owned();
+        let artifact = artifact.to_owned();
+        let feedback = feedback.map(str::to_owned);
+        Box::pin(async move {
+            let prompt =
+                match prepare_dispatch(&adapter, &root, &change, &artifact, feedback.as_deref())
+                    .await
+                {
+                    Ok(prompt) => prompt,
+                    Err(refused) => return RunStart::Refused(refused),
+                };
+            AcpRun::start(StartRun {
+                root,
+                change,
+                artifact,
+                command,
+                prompt,
+            })
             .await
         })
     }
