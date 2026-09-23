@@ -483,6 +483,180 @@ fn reap_in_background(project_root: PathBuf, job: Job, mut child: Child) {
         });
 }
 
+/// What [`record_job`] needs to know: a job someone else runs.
+pub struct RecordJobOptions<'a> {
+    pub project_root: &'a Path,
+    pub change: &'a str,
+    pub artifact: &'a str,
+    pub driver: &'a str,
+    pub command: AgentCommand,
+    pub cwd: &'a Path,
+    /// The process doing the work, so [`list_jobs`] can tell it died.
+    pub pid: Option<u32>,
+    /// A job of the same work this one follows — the previous turn of one
+    /// session — which does not count as another writer even if its record
+    /// has not caught up with its end yet.
+    pub follows: Option<&'a str>,
+}
+
+/// Records a job that is not started here — an ACP turn, run by a process
+/// the TUI talks to rather than one [`start_job`] detached — so the job pane
+/// and `spectacular jobs` list it like any other, and one writer per change
+/// still holds across both kinds.
+///
+/// The record says `running` with the agent's pid; a [`JobRecorder`] over it
+/// appends the log and writes the outcome. Should the recorder never get to —
+/// the machine went down — [`list_jobs`] reconciles it to `interrupted` once
+/// the pid is gone, as for any job.
+pub fn record_job(options: RecordJobOptions<'_>) -> Result<Job, JobConflictError> {
+    let busy = active_jobs(options.project_root)
+        .into_iter()
+        .find(|j| j.change == options.change && Some(j.id.as_str()) != options.follows);
+    if let Some(existing) = busy {
+        return Err(JobConflictError {
+            existing: Box::new(existing),
+        });
+    }
+    let id = new_id(options.change, options.artifact);
+    let log_path = log_path_for(options.project_root, &id);
+    let _ = fs::create_dir_all(jobs_dir(options.project_root));
+    let _ = fs::write(&log_path, "");
+    let job = Job {
+        id,
+        change: options.change.to_owned(),
+        artifact: options.artifact.to_owned(),
+        driver: options.driver.to_owned(),
+        command: options.command.command,
+        args: options.command.args,
+        cwd: display_path(options.cwd),
+        status: JobStatus::Running,
+        started_at: now_iso(),
+        ended_at: None,
+        exit_code: None,
+        pid: options.pid,
+        log_path: display_path(&log_path),
+    };
+    let _ = write_record(options.project_root, &job);
+    Ok(job)
+}
+
+/// What a [`JobRecorder`]'s thread is asked to do.
+enum Record {
+    Line(String),
+    Finish(JobStatus),
+}
+
+/// Appends to a recorded job's log and writes its outcome, on a thread of its
+/// own — the caller is the TUI's loop, which must never wait on a file.
+///
+/// Lines are written in the order they are given. [`JobRecorder::finish`]
+/// writes the outcome; dropped without one, the job is recorded as
+/// `cancelled` — the TUI quit, or dropped the session, mid-turn. Neither
+/// waits for the thread: the thread is handed to [`flush_recorders`], which
+/// the TUI calls on its way out, so every record is on disk before the
+/// process that owns it exits — without the loop ever blocking on a write.
+pub struct JobRecorder {
+    tx: Option<std::sync::mpsc::Sender<Record>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl JobRecorder {
+    /// A recorder over `job`, a record under `project_root`.
+    pub fn new(project_root: &Path, job: Job) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Record>();
+        let root = project_root.to_path_buf();
+        let thread = std::thread::Builder::new()
+            .name(format!("record-{}", job.id))
+            .spawn(move || {
+                let mut log = File::options().append(true).open(&job.log_path).ok();
+                let mut outcome = None;
+                while let Ok(record) = rx.recv() {
+                    match record {
+                        Record::Line(line) => {
+                            if let Some(log) = log.as_mut() {
+                                let _ = writeln!(log, "{line}");
+                            }
+                        }
+                        Record::Finish(status) => {
+                            outcome = Some(status);
+                            break;
+                        }
+                    }
+                }
+                let status = outcome.unwrap_or_else(|| {
+                    if let Some(log) = log.as_mut() {
+                        let _ = writeln!(log, "spec-tacular: the session ended mid-turn");
+                    }
+                    JobStatus::Cancelled
+                });
+                let _ = write_record(
+                    &root,
+                    &Job {
+                        status,
+                        ended_at: Some(now_iso()),
+                        ..job
+                    },
+                );
+            })
+            .ok();
+        Self {
+            tx: Some(tx),
+            thread,
+        }
+    }
+
+    /// Appends one line to the log.
+    pub fn line(&self, line: impl Into<String>) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Record::Line(line.into()));
+        }
+    }
+
+    /// Records the outcome. Written on the recorder's thread; see
+    /// [`flush_recorders`].
+    pub fn finish(mut self, status: JobStatus) {
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(Record::Finish(status));
+        }
+        self.hand_over();
+    }
+
+    /// Closes the channel — the thread writes what it has and ends — and
+    /// leaves the thread for [`flush_recorders`] to wait on.
+    fn hand_over(&mut self) {
+        self.tx = None;
+        if let Some(thread) = self.thread.take() {
+            lock_recorders().push(thread);
+        }
+    }
+}
+
+impl Drop for JobRecorder {
+    fn drop(&mut self) {
+        self.hand_over();
+    }
+}
+
+/// Recorder threads that may still be writing.
+static RECORDERS: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn lock_recorders() -> std::sync::MutexGuard<'static, Vec<std::thread::JoinHandle<()>>> {
+    RECORDERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Waits for every finished or dropped [`JobRecorder`] to have written its
+/// record. The TUI calls it after its loop has ended; tests call it before
+/// reading a record back.
+pub fn flush_recorders() {
+    let threads = std::mem::take(&mut *lock_recorders());
+    for thread in threads {
+        let _ = thread.join();
+    }
+}
+
 /// Signals a whole process group, falling back to the one process.
 ///
 /// A negative pid is the group. Killing only the direct child is the mistake

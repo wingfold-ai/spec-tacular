@@ -468,17 +468,27 @@ pub fn run_jobs(cwd: &Path, job_id: Option<&str>, cancel: bool, io: &mut Streams
     0
 }
 
-/// `w` in the TUI: the same gates as `spectacular run`, reported as a line.
-///
-/// It lives here rather than in the TUI so the two paths into an agent cannot
-/// drift: whatever `run` refuses, this refuses, in the same order. Its caller
-/// is the overview's `w`.
-pub async fn dispatch(
+/// The prompt of a follow-up turn on a live ACP session: the redraft. The
+/// agent already has the context and wrote the draft itself, so this is only
+/// what the developer asked for — the same words [`compose_prompt`] adds to a
+/// full prompt when the redraft has to start a new session.
+pub fn feedback_prompt(artifact: &str, feedback: &str) -> String {
+    format!(
+        "# Revision requested\n\nThe developer read the {artifact} you drafted and asked for \
+         these changes:\n\n> {}\n\n\
+         Revise the existing file in place. Keep what they did not ask to change.\n",
+        quote(feedback)
+    )
+}
+
+/// The gates `spectacular run` applies, then the prompt it would run on —
+/// what both of the TUI's paths into an agent start from, the detached job
+/// ([`dispatch`]) and the ACP session. `Err` is the line to show.
+pub async fn prepare_dispatch(
     adapter: &OpenSpecAdapter,
     cwd: &Path,
     change: &str,
     artifact: &str,
-    driver_id: &str,
     feedback: Option<&str>,
 ) -> Result<String, String> {
     let loaded = load_pipelines(adapter, cwd)
@@ -498,12 +508,28 @@ pub async fn dispatch(
     if let Some(reason) = gate_for(pipeline, artifact).reason() {
         return Err(format!("Refused: {reason}"));
     }
+    compose_prompt(adapter, cwd, artifact, change, feedback)
+        .await
+        .map_err(|error| error.describe())
+}
 
+/// `w` in the TUI, as a detached job: the same gates as `spectacular run`,
+/// reported as a line.
+///
+/// It lives here rather than in the TUI so the two paths into an agent cannot
+/// drift: whatever `run` refuses, this refuses, in the same order. Its caller
+/// is the overview's `w` when there is no ACP agent to talk to.
+pub async fn dispatch(
+    adapter: &OpenSpecAdapter,
+    cwd: &Path,
+    change: &str,
+    artifact: &str,
+    driver_id: &str,
+    feedback: Option<&str>,
+) -> Result<String, String> {
     let registry = default_registry();
     let driver = registry.get(driver_id).map_err(|err| err.to_string())?;
-    let prompt = compose_prompt(adapter, cwd, artifact, change, feedback)
-        .await
-        .map_err(|error| error.describe())?;
+    let prompt = prepare_dispatch(adapter, cwd, change, artifact, feedback).await?;
     start_job(StartJobOptions {
         project_root: cwd,
         change,
@@ -1266,6 +1292,15 @@ esac"#,
             .await
             .expect("prompt");
         assert!(!plain.contains("# Revision requested"));
+    }
+
+    #[test]
+    fn a_follow_up_redraft_is_only_the_feedback() {
+        let prompt = feedback_prompt("proposal", "Too vague.\nName the capabilities.");
+        assert!(prompt.starts_with("# Revision requested"));
+        assert!(prompt.contains("the proposal you drafted"));
+        assert!(prompt.contains("> Too vague.\n> Name the capabilities."));
+        assert!(prompt.contains("Revise the existing file in place."));
     }
 
     #[test]
