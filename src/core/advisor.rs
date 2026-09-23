@@ -17,8 +17,9 @@
 //! nothing about which agent answers — and is tested without one. The whole
 //! of the TypeScript `core/advisor.ts` is here: the types, the prompts, the
 //! parsers, the sidecar and the follow-ups written into the Foundation files.
-//! What stage 8 adds is the other end of `Ask` — a driver's structured
-//! request — and the TUI's real ports handing it to a [`FoundationAdvisor`].
+//! The other end of `Ask` is a driver's structured request
+//! (`agent::structured::driver_ask`), which the TUI's real ports hand to a
+//! [`FoundationAdvisor`]; the tests hand it a scripted model.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -403,7 +404,7 @@ pub fn build_coach_prompt(questions: &[GuidedQuestion], question: &GuidedQuestio
 
 /// `String(value ?? '')`, trimmed: what the TypeScript made of a field that
 /// should have been a string.
-fn text_of(value: Option<&Value>) -> String {
+pub(crate) fn text_of(value: Option<&Value>) -> String {
     match value {
         None | Some(Value::Null) => String::new(),
         Some(Value::String(s)) => s.trim().to_owned(),
@@ -412,7 +413,7 @@ fn text_of(value: Option<&Value>) -> String {
 }
 
 /// The records of a list, anything else in it ignored.
-fn records(value: Option<&Value>) -> Vec<&serde_json::Map<String, Value>> {
+pub(crate) fn records(value: Option<&Value>) -> Vec<&serde_json::Map<String, Value>> {
     value
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(Value::as_object).collect())
@@ -430,7 +431,7 @@ fn strip_section(text: &str) -> String {
     text.to_owned()
 }
 
-fn parse_options(raw: Option<&Value>) -> Vec<AdviceOption> {
+pub(crate) fn parse_options(raw: Option<&Value>) -> Vec<AdviceOption> {
     let options: Vec<AdviceOption> = records(raw)
         .into_iter()
         .map(|o| AdviceOption {
