@@ -18,11 +18,12 @@ wait for a subprocess before anything appears.
 
 **Size.** The TypeScript build needed **127 MB** of `node_modules`, plus a Bun
 or Node runtime, present and at the right version. The Rust build is a **single
-static binary of about 4 MB** — `x86_64-unknown-linux-musl`, stripped, nothing
+static binary of about 6 MB** — `x86_64-unknown-linux-musl`, nothing
 dynamically linked. You copy it onto a machine and it runs. (It was 0.8 MB
-through stage 2, before anything ran a subprocess; the async runtime that drives
-OpenSpec, the background jobs and the TUI's event loop, and the TUI itself, are
-the rest. Two orders of magnitude is still the point.)
+through stage 2, before anything ran a subprocess, and about 4 MB through stage
+8; the async runtime that drives OpenSpec, the background jobs and the TUI's
+event loop, the TUI itself, and from stage 9 the ACP SDK, are the rest. Two
+orders of magnitude is still the point.)
 
 **Distribution.** "Install Bun, then install this" is a worse first step than
 "download this file". A static binary is also what makes a release workflow
@@ -74,6 +75,16 @@ src/
   agent/         driver.rs, claude.rs, opencode.rs, structured.rs
                  (structured: one-shot requests, and `driver_ask` — the real
                  `Ask`, in research, think or quick mode)
+    acp/         the interactive agent layer (see "ACP" below):
+                   mod.rs     which agent to talk to, and whether to
+                              (`SPECTACULAR_AGENT_MODE`,
+                              `SPECTACULAR_ACP_COMMAND`)
+                   client.rs  one agent process and its session, over the
+                              `agent-client-protocol` SDK
+                   events.rs  `session/update` as the few things shown
+                              (`AcpEvent`), permission requests, the log
+                   run.rs     a session drafting one change, each turn
+                              recorded as a job
   render/        text.rs, requirement.rs — shared by `--print` and the TUI
   tui/           the Ratatui shell:
                    mod.rs       the tokio event loop (keys, mouse, resize,
@@ -92,6 +103,9 @@ src/
                                 pasted), interviewed one question at a time,
                                 split into slices you review, its keys and
                                 drawing
+                   acp.rs       drafting over ACP: the session's state, its
+                                events, the running block, the permission
+                                overlay, cancel, the same-session redraft
                    jobs.rs      the job pane; guide.rs the help and empty states
                    ports.rs     the `Ports` trait (the TypeScript `TuiInput`)
                                 and its real implementation, with the advisor,
@@ -106,7 +120,13 @@ src/
                                 specs, the sidecar and the Foundation)
                    tests/       the end-to-end tests that drive the app by
                                 keystroke: the harness, then one file per
-                                TypeScript suite
+                                TypeScript suite, and acp.rs against the
+                                scripted ACP agent
+tests/
+  cli.rs         the binary, end to end
+  support/       fake_acp_agent.rs — a scripted ACP agent (a second binary,
+                 `fake-acp-agent`, built with the tests; never shipped in
+                 use, never costs anything)
 ```
 
 The TUI is the Elm shape Ratatui suits. `App` holds what the TypeScript's
@@ -140,7 +160,7 @@ reviewable on its own.
 | 6 | `rust/06-review-document` | TUI review screen, document viewer, editor integration |
 | 7 | `rust/07-guided-setup` | guided setup: the ground-rules screen (intro, one question at a time, options, follow-ups, help, derived answers, done), Start → ground rules → overview routing, `core::advisor` complete behind an injected model |
 | 8 | `rust/08-ai-advisor-vision` | AI advisor: the real ports reach a model (structured requests in research/think/quick mode, `SPECTACULAR_NO_ADVISOR`), follow-ups/options/derived answers/help live, name proposals, the vision screen (describe or paste, interview, slices review, roadmap and first change), Start → ground rules → vision routing |
-| 9 | `rust/09-acp` | ACP agent integration: permission prompts in the UI, live tool/diff events, session resume |
+| 9 | `rust/09-acp` | ACP agent integration: `w` and the redraft talk to the agent over ACP (`agent::acp`, `tui::acp`) — its reply, tool calls and diffs streamed into the running block, permission requests answered in an overlay, `x` cancelling through `session/cancel`, a redraft continuing the same session, every turn recorded as a job; detached jobs kept for `spectacular run` and as the fall-back |
 | 10 | `rust/10-release` | CI workflow, release build, README |
 
 ### The stacked-PR workflow
@@ -266,6 +286,12 @@ the TypeScript's `child.on('exit')` did. Nothing about detachment changes:
 `spectacular run` still exits immediately, the agent still has its own session
 through `setsid`, and the `.exit` file the wrapper writes is still how an
 outcome is recovered when no spec-tacular process is left to see it.
+
+**`q` asks once while an ACP turn is running.** Everywhere else `q` quits
+the start screen and the overview without asking, because jobs outlive the
+TUI. An ACP session does not: quitting ends it. With a turn running, the
+first `q` says so ("… q again quits and cancels it") and only a second `q`
+quits; any other key keeps the session.
 
 **ctrl+c never quits.** The TypeScript TUI quit on ctrl+c from the start
 screen and the overview, and cancelled one level everywhere else. Here it only
@@ -431,6 +457,88 @@ is longer than 80 columns, the TypeScript's `yaml` package folds it over
 several lines and `core::roadmap::save_roadmap` does not. Both are the same
 YAML value, so this only shows in a diff of the file.
 
+## ACP
+
+Stage 9 makes the Agent Client Protocol the TUI's interactive agent layer.
+A job hands an agent a prompt and reads its output back from a file:
+one-way, headless, pre-approved. An ACP session is a conversation over the
+agent's stdio: its reply streams as it is written, its tool calls arrive as
+structured events with the diffs they make, it asks before it writes and a
+person answers, and the session stays open, so a redraft is a follow-up in
+the same conversation rather than a stranger starting over.
+
+**Which agent.** `opencode` speaks ACP itself (`opencode acp`). Claude Code
+needs its adapter: `claude-agent-acp` when it is on `PATH`, else `npx
+--no-install @agentclientprotocol/claude-agent-acp` — `--no-install`, so the
+TUI never downloads a package behind your back. `SPECTACULAR_ACP_COMMAND`
+replaces either with any command line. `SPECTACULAR_AGENT_MODE=jobs` turns
+ACP off. Otherwise ACP is used whenever the command resolves; when it does
+not, drafting goes to a detached job and the notice says why
+(`… (as a background job: `claude-agent-acp` is not installed)`). An agent
+that is found but will not start or open a session falls back the same way,
+for that draft.
+
+**The client** (`agent::acp::client`) spawns the command in the project, in
+a process group of its own, and speaks JSON-RPC over its pipes through the
+`agent-client-protocol` crate (pure Rust): `initialize` (no file-system or
+terminal capabilities are advertised — both Claude's adapter and opencode
+read and write with their own tools, restricted by their own permission
+checks, so the client needs neither), `session/new` in the project
+directory, then `session/prompt` per turn. The connection runs on a task of
+its own; a prompt returns at once and its end arrives as an event, so cancels
+and permission answers get through while a turn runs. `session/update` is
+mapped to a small `AcpEvent`: reply and reasoning chunks, tool calls (title,
+kind, status, diffs as `+added −removed` line counts, locations), the plan,
+the session's cost when the agent reports it (`usage_update`), and the stop
+reason. `session/request_permission` is parked with its responder and
+surfaced with the agent's own options, normalised to allow once, allow
+always, deny, deny always — so `1` is always "allow once". `session/cancel`
+answers any open request as cancelled, as the protocol requires. Unknown
+notifications (Claude's adapter sends `_auth/status_update`) are ignored.
+Dropping the last handle, closing the session, or the runtime going away
+kills the agent's whole group (`core::jobs::signal_group`): `npx …` is a tree
+of processes, and killing only the direct child leaves the rest running.
+
+**Recorded as jobs** (`agent::acp::run`). Every turn — the first draft and
+each redraft on the same session — is a job record under
+`.spec-tacular/jobs/` with driver `acp`, the agent's pid, `running` until the
+turn ends and then `succeeded`, `cancelled` or `failed`, and a log of the
+rendered events (the reply's lines, a line per tool call when its title,
+state or diff changes, the plan, each permission asked and how it was
+answered, the session's cost, how it ended). So `ctrl+j` and `spectacular
+jobs` list them, and the one-writer-per-change rule holds across both kinds:
+an ACP draft is refused while a detached job writes to the change, and the
+other way round. The log is written by a thread of its own; the TUI never
+waits on a file for it.
+
+**In the TUI** (`tui::acp`). "✦ Let an agent draft it" (`w`) and "↻ Redraft
+with feedback" open a session and the change's running block shows it
+live: the last six lines of the reply (or "thinking…"), the plan's current
+step, the last five tool calls with a status glyph (`○` pending, `◐`
+running, `✓` done, `✗` failed) and their diffs (`± proposal.md +42 −0`), the
+elapsed time and the cost. A permission request is an overlay — "Claude Code
+wants to write openspec/changes/…/proposal.md — 1 allow once · 2 allow
+always · 3 deny", its options clickable — that blocks only that decision:
+the rest of the UI carries on, and the number keys answer it everywhere a
+number is not text being typed (while you type, the overlay moves to the top
+and says to click or answer from the overview). `x`, "Cancel  x", or the job
+pane's `x` then `y` on the session's turn send `session/cancel`; the session
+outlives a cancelled turn. When the turn ends the overview is re-read and the
+draft opens, as a job's does. The redraft is the next prompt on the live
+session — only the feedback (`commands::feedback_prompt`), since the agent
+already has the context and wrote the draft — or, when the agent is gone, a
+new session with the full prompt and the feedback block. Drafting the next
+artifact ("✓ Looks good — draft the specs") starts a fresh session: a new
+artifact is a new task, with the context it needs composed for it.
+
+**What stays on jobs.** `spectacular run` always dispatches a detached job,
+because a job outlives the process that started it and an ACP session, being
+a conversation with the TUI, does not. Quitting the TUI ends a live session
+(its turn is recorded as `cancelled`); with a turn running, the first `q` says
+so and a second quits. The running block says it too: detached jobs are the
+way to keep work going after you quit. `SPECTACULAR_AGENT_MODE=jobs` gives
+the TUI the stage-8 behaviour, and the fall-backs above use it.
+
 ## Environment
 
 | Variable | Effect |
@@ -439,6 +547,8 @@ YAML value, so this only shows in a diff of the file.
 | `SPECTACULAR_ADVISOR_MODEL` | The model for the advisor (research) and the vision interview (think) with the claude driver. Default `sonnet`. |
 | `SPECTACULAR_QUICK_MODEL` | The model for name proposals (quick). Default `haiku`. |
 | `SPECTACULAR_CLAUDE_ARGS` | Extra arguments for the claude driver's jobs. |
+| `SPECTACULAR_AGENT_MODE` | `acp` (the default) or `jobs`: how the TUI's `w` and redraft reach an agent. With `acp`, ACP is used when its command resolves, else a detached job with a notice saying why. `spectacular run` always uses a job. |
+| `SPECTACULAR_ACP_COMMAND` | The ACP agent's command line, split on whitespace, instead of the driver's default (`opencode acp`; `claude-agent-acp`, else `npx --no-install @agentclientprotocol/claude-agent-acp`). |
 
 Without the variable, the advisor is on when the chosen driver (`--driver`,
 default `claude`) answers structured requests and its binary is on `PATH`;
