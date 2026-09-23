@@ -487,6 +487,10 @@ pub struct App {
     pub draft_mode: DraftMode,
     /// The ACP session drafting, while there is one ([`super::acp`]).
     pub acp: Option<AcpState>,
+    /// ACP turns that have ended, with how, until their records on disk say
+    /// so too: a job list read in between must not bring them back as
+    /// running.
+    pub settled: Vec<(String, JobStatus)>,
     /// `q` was pressed once while an ACP turn was running: a second quits,
     /// and cancels it.
     pub confirm_quit: bool,
@@ -541,6 +545,7 @@ impl App {
             vision_screen: None,
             draft_mode: ports.draft_mode(),
             acp: None,
+            settled: Vec::new(),
             confirm_quit: false,
         };
         let jobs = app.read_jobs(ports, false);
@@ -1029,6 +1034,7 @@ impl App {
                 poll,
             } => {
                 let before = std::mem::replace(&mut self.jobs, view.jobs);
+                self.overlay_settled();
                 // Lines are only taken if nothing moved while they were being
                 // read; if it did, the read that move asked for is on its way.
                 if job_index == self.job_index {

@@ -30,7 +30,7 @@ use super::theme;
 use super::widgets::{buttons_height, clip, render_buttons, spinner_line, Button, Flow};
 use crate::agent::acp::events::{AcpEvent, PermissionAsk, PlanStep, Stop, ToolCallView};
 use crate::agent::acp::run::{AcpRun, RunStart};
-use crate::core::jobs::Job;
+use crate::core::jobs::{Job, JobStatus};
 
 /// How many lines of the agent's reply the running block shows.
 pub const TEXT_LINES: usize = 6;
@@ -396,6 +396,27 @@ impl App {
         if let Some(job) = run.job() {
             for listed in self.jobs.iter_mut().filter(|j| j.id == job.id) {
                 listed.status = job.status;
+            }
+            if job.status != JobStatus::Running {
+                self.settled.retain(|(id, _)| *id != job.id);
+                self.settled.push((job.id, job.status));
+            }
+        }
+    }
+
+    /// A job list read from disk, corrected for the turns this session saw
+    /// end whose records were not written yet when it was read — so a read
+    /// that raced the recorder does not put a finished turn back as a
+    /// job-shaped running block. An entry is dropped once the disk agrees.
+    pub(super) fn overlay_settled(&mut self) {
+        let jobs = &self.jobs;
+        self.settled.retain(|(id, _)| {
+            jobs.iter()
+                .any(|j| j.id == *id && j.status == JobStatus::Running)
+        });
+        for job in &mut self.jobs {
+            if let Some((_, status)) = self.settled.iter().find(|(id, _)| *id == job.id) {
+                job.status = *status;
             }
         }
     }
