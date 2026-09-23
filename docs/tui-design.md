@@ -60,6 +60,16 @@ attention.
 Decision-by-decision rather than requirement-by-requirement. Adds `p` — promote
 to a global ADR.
 
+### Vision
+A new project's way in, after the ground rules. The developer describes what
+they are building in their own words — typed or pasted; an interview asks one
+question at a time, each with its reason and, where natural, options with one
+recommended ("What I understood so far" above it shows the model's reading);
+it ends when the model has enough or the developer says so; then the vision is
+split into 3–8 slices, reviewed as a checklist before anything is written. The
+first kept slice becomes the first change. "Not a new project" leaves for a
+single change and is never offered again.
+
 ### Jobs
 Running and finished jobs, streamed output, cancel. `Ctrl-J` toggles it as an
 overlay from anywhere, so you can glance at an `apply` mid-review without losing
@@ -88,11 +98,11 @@ Verify one here and it merges into the main specs.
 | `?` | context-sensitive help |
 | `q` | back, or quit at the top level (the start screen and the overview) |
 
-What the TUI binds today (stages 5 to 7):
+What the TUI binds today (stages 5 to 8):
 
 | Where | Keys |
 | --- | --- |
-| Start screen | `←`/`→`/`↑`/`↓`/`tab` choose a button · `enter`/`space` press it · click · `q` quit |
+| Start screen | `←`/`→`/`↑`/`↓`/`tab` choose a button · `enter`/`space` press it · click · `q` quit. A new project with its ground rules settled is offered "Describe your vision" (or "Continue your vision" once started) |
 | Overview | `j`/`k`/`↑`/`↓` select a change (or click) · `←`/`→`/`tab` choose a next-step button · `enter` press it · `n` new change (refused until the ground rules are settled) · `w` let an agent draft the next artifact · `e` write it yourself in `$EDITOR` · `v` read the latest draft · `f` the ground rules, at the first open question · `r` review · `h` start screen · `?` help · `q` quit |
 | Review | `a` accept · `r` reject (asks why; empty is allowed) · `d` defer (asks what would verify it; required) · `s` skip · `e` edit in `$EDITOR` at the item's line, then re-read (an edit after a decision is drift) · `m` then `1`–`9` mark a flagged value as an example · `n`/`j`/`↓` next · `p`/`k`/`↑` previous — `p` promotes instead on a global design decision · `?` help (any key closes it) · `q`/`ctrl+c` back to the overview, saved |
 | Review prompt | type · `enter` confirm · `backspace` · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
@@ -100,9 +110,14 @@ What the TUI binds today (stages 5 to 7):
 | Ground rules: intro | `enter` begin (or click "▶ Begin") · `ctrl+c` back to the overview |
 | Ground rules: a question | type an answer · `enter` save what is typed, pick the selected option, keep an answer that is there, or — empty, nothing chosen — ask for help (without an advisor it says to type or skip) · `↑`/`↓` choose a row (or click one: an option is picked, "?" asks for help) · `tab` skip, as does typing `skip`/`later`/`pass` · `?` on an empty line, or typing `help`/`not sure`/`idk`, asks for help · `←`/`→` previous, next question · `ctrl+e` the question in `$EDITOR` · `ctrl+d` dismiss a follow-up or simpler question as not relevant · `backspace` · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` back, saved |
 | Ground rules: after an answer, while the advisor looks at it | `enter`/`tab` continue without waiting · `ctrl+c` back |
-| Ground rules: done | `enter` continue to the overview · `←`/`↑` revisit the last answer · `ctrl+c` back |
+| Ground rules: done | `enter` continue — to the vision on a new project, else the overview · `←`/`↑` revisit the last answer · `ctrl+c` back (the same way) |
+| Vision: describe | type, or paste (bracketed paste, line breaks kept) · `enter` continue (at least ten characters; without a model the description is saved as the vision and a single change is described next) · `ctrl+n` not a new project — describe a single change instead (or click the button) · `backspace` · `ctrl+u` · `ctrl+w` · `ctrl+c` back to the start screen |
+| Vision: a question | `↑`/`↓` choose an option or "✎ Write my own answer" (or click: an option answers with it) · type, or paste · `enter` answer with what is typed or the selected option · `tab`, or typing `skip`/`pass`/`later`/`idk`/`not sure`, skips it · typing `done`/`enough`/`finish`, `ctrl+d`, or "That's enough — make the slices" ends the interview · `ctrl+c` back |
+| Vision: the model is working | `ctrl+c` back (it keeps working; its answer is there when you return) |
+| Vision: a request failed | `enter` ask again · `ctrl+c` back |
+| Vision: the slices | `↑`/`↓`/`j`/`k` move (or click) · `space`/`x` keep or drop · `enter` write the roadmap and create the first slice's change · `ctrl+c` back |
 | Redraft feedback | type · `enter` redraft (not when empty) · `ctrl+c` cancel |
-| New-change prompt | type · `enter` next / create · `tab` next suggested name · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
+| New-change prompt | type · `enter` next / create · `tab` next suggested name (the model's proposals arrive under the input — "✦ proposing a better name…", then "suggestions: … (tab cycles)" — and never overwrite a name you already edited) · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
 | Help | any key closes it |
 | Job pane | `j`/`k`/`↑`/`↓` select (or click) · `x` cancel the selected job, then `y` · `p` clear finished jobs · `q`/`ctrl+c`/`ctrl+j` close |
 
