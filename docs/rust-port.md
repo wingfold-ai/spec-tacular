@@ -1,8 +1,9 @@
 # The Rust port
 
-spec-tacular was written in TypeScript on Bun. It is being rewritten in Rust on
-Ratatui. The TypeScript implementation stays on the `claude/vibrant-fermat-s72fcs`
-branch as the reference; nothing on it is deleted until the port is at parity.
+spec-tacular was written in TypeScript on Bun, and has been rewritten in Rust
+on Ratatui. **The port is complete**: all ten stages below are done. The
+TypeScript implementation stays on the `claude/vibrant-fermat-s72fcs` branch,
+for history and as the reference the compatibility tests were generated from.
 
 ## Why
 
@@ -12,7 +13,7 @@ Four reasons, in the order they started to hurt.
 you open to check where a change is and close again, dozens of times a day, and
 a three-second pause turns that into something you avoid. The Rust binary
 answers `--help` in **under a millisecond** and draws the TUI's first frame
-**about 15 ms** after launch, at **about 4 MB** resident — it draws first and
+**about 14 ms** after launch, at **about 5 MB** resident — it draws first and
 asks OpenSpec about the project in the background, rather than making you
 wait for a subprocess before anything appears.
 
@@ -150,18 +151,20 @@ arrangement.
 The port lands as a stack of pull requests, each branched from the last, each
 reviewable on its own.
 
-| # | Branch | Contents |
-| --- | --- | --- |
-| 1 | `rust/01-skeleton` | Cargo project, CLI parsing, docs, `--help` |
-| 2 | `rust/02-core` | markdown/requirement parsing, review state and drift, session, revision bundle, pipeline, gate, concreteness linter, foundation, decisions/ADRs, requirement rendering |
-| 3 | `rust/03-adapter-commands` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
-| 4 | `rust/04-jobs-agents` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
-| 5 | `rust/05-tui-shell` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane, describe-then-name new change, `$EDITOR` (ctrl+c never quits) |
-| 6 | `rust/06-review-document` | TUI review screen, document viewer, editor integration |
-| 7 | `rust/07-guided-setup` | guided setup: the ground-rules screen (intro, one question at a time, options, follow-ups, help, derived answers, done), Start → ground rules → overview routing, `core::advisor` complete behind an injected model |
-| 8 | `rust/08-ai-advisor-vision` | AI advisor: the real ports reach a model (structured requests in research/think/quick mode, `SPECTACULAR_NO_ADVISOR`), follow-ups/options/derived answers/help live, name proposals, the vision screen (describe or paste, interview, slices review, roadmap and first change), Start → ground rules → vision routing |
-| 9 | `rust/09-acp` | ACP agent integration: `w` and the redraft talk to the agent over ACP (`agent::acp`, `tui::acp`) — its reply, tool calls and diffs streamed into the running block, permission requests answered in an overlay, `x` cancelling through `session/cancel`, a redraft continuing the same session, every turn recorded as a job; detached jobs kept for `spectacular run` and as the fall-back |
-| 10 | `rust/10-release` | CI workflow, release build, README |
+All ten are done.
+
+| # | Branch | PR | Contents |
+| --- | --- | --- | --- |
+| 1 | `rust/01-skeleton` | #1 | Cargo project, CLI parsing, docs, `--help` |
+| 2 | `rust/02-core` | #2 | markdown/requirement parsing, review state and drift, session, revision bundle, pipeline, gate, concreteness linter, foundation, decisions/ADRs, requirement rendering |
+| 3 | `rust/03-adapter-commands` | #3 | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
+| 4 | `rust/04-jobs-agents` | #4 | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
+| 5 | `rust/05-tui-shell` | #5 | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane, describe-then-name new change, `$EDITOR` (ctrl+c never quits) |
+| 6 | `rust/06-review-document` | #6 | TUI review screen, document viewer, editor integration |
+| 7 | `rust/07-guided-setup` | #7 | guided setup: the ground-rules screen (intro, one question at a time, options, follow-ups, help, derived answers, done), Start → ground rules → overview routing, `core::advisor` complete behind an injected model |
+| 8 | `rust/08-ai-advisor-vision` | #8 | AI advisor: the real ports reach a model (structured requests in research/think/quick mode, `SPECTACULAR_NO_ADVISOR`), follow-ups/options/derived answers/help live, name proposals, the vision screen (describe or paste, interview, slices review, roadmap and first change), Start → ground rules → vision routing |
+| 9 | `rust/09-acp` | #9 | ACP agent integration: `w` and the redraft talk to the agent over ACP (`agent::acp`, `tui::acp`) — its reply, tool calls and diffs streamed into the running block, permission requests answered in an overlay, `x` cancelling through `session/cancel`, a redraft continuing the same session, every turn recorded as a job; detached jobs kept for `spectacular run` and as the fall-back |
+| 10 | `rust/10-release` | #10 | CI (fmt, clippy, tests on stable and the 1.88 MSRV with the real OpenSpec CLI, a static release build), the tag-driven release workflow (Linux musl x86_64/aarch64, macOS x86_64/aarch64, SHA-256 sums), the README, `Cargo.toml` metadata |
 
 ### The stacked-PR workflow
 
@@ -183,6 +186,28 @@ so the stack stays a stack.
 Stages are not merged as they are approved; the whole stack merges bottom-up
 once it is green, so `main` never carries a half-ported binary.
 
+## What changed vs the TypeScript
+
+In short — each is explained under "Deliberate differences" below:
+
+- One static binary (6 MB) instead of Bun plus 127 MB of `node_modules`; the
+  schema is compiled in. First frame in ~14 ms instead of 2.9 s, drawn before
+  OpenSpec has answered.
+- `ctrl+c` never quits; `q` does. `ctrl+j` opens the job pane from anywhere.
+- Drafting in the TUI is a conversation over ACP — live reply, tool calls and
+  diffs, permission prompts, cancel, redraft in the same session — where the
+  TypeScript detached a job. Jobs remain for `spectacular run`.
+- Flags are scoped to their subcommand; `--version` exists; a failed install
+  says what failed instead of printing a stack trace.
+- No file I/O or model call on the drawing thread; stale answers are dropped
+  by request number; abandoned model requests die with the TUI, process group
+  and all.
+- Several reference bugs are not reproduced ("AI is off" on the vision
+  screen, a two-tone logo, unseen review notices, late name proposals landing
+  on the wrong change, an interview that slices behind your back).
+- Requirement ids, hashes and the review sidecar are byte-compatible with the
+  TypeScript (`core/compat.rs`), so a project moves between them freely.
+
 ## Building
 
 Normally:
@@ -197,7 +222,35 @@ cargo build --release
 
 Every dependency is pure Rust. Nothing in the tree compiles C, and nothing may
 be added that does — partly to keep cross-compilation free, partly because of
-the next section.
+the next section. The minimum supported Rust is 1.88 (`rust-version` in
+`Cargo.toml`, set by ratatui 0.30); CI runs the test suite on it and on stable.
+
+### CI and releases
+
+`.github/workflows/ci.yml` runs on every pull request and every push to
+`main`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test` on stable and on 1.88, and a static release build. The test job
+installs the OpenSpec CLI with npm and sets `SPECTACULAR_TEST_REQUIRE_OPENSPEC`,
+so the one test against the real `openspec` fails rather than skips if it is
+missing. Everything else runs against stand-ins; no test runs a real agent.
+The runners have a C toolchain, so build scripts link through `cc` as usual
+and `scripts/no-cc.sh` is not used; the crate itself still links with
+`rust-lld` as configured below.
+
+`.github/workflows/release.yml` runs on a pushed tag `v*`. To cut a release:
+
+```sh
+# bump `version` in Cargo.toml (and Cargo.lock: cargo build), merge, then
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+It refuses a tag that does not match `Cargo.toml`'s version, builds
+`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` (cross-compiled
+with `rust-lld`, checked under qemu) on Linux and `x86_64-apple-darwin` and
+`aarch64-apple-darwin` on macOS, packs each stripped binary with the README
+and the licence as `spectacular-<tag>-<target>.tar.gz`, and publishes them
+with a `SHA256SUMS` file as a GitHub release. A tag with a hyphen
+(`v1.0.0-rc.1`) is published as a pre-release.
 
 ### Building without a C toolchain
 
@@ -213,7 +266,8 @@ linker = "rust-lld"
 rustflags = ["-C", "target-feature=+crt-static", "-C", "link-self-contained=yes"]
 ```
 
-That needs `rustup target add x86_64-unknown-linux-musl` and nothing from the
+(`aarch64-unknown-linux-musl` is configured the same way, which is how the
+release workflow cross-compiles it.) That needs `rustup target add x86_64-unknown-linux-musl` and nothing from the
 system — no `cc`, no `ld`, no libc headers — and it is also what produces the
 static release binary. If you do have a C toolchain, `cargo build --target
 x86_64-unknown-linux-gnu` still works; nothing in the source depends on either.
@@ -235,6 +289,30 @@ target's linker at it. It is a no-op when `cc` exists, and it touches nothing
 outside `target/`. Installing a real toolchain (`build-essential` on Debian and
 Ubuntu) is better in every way; the script is there so a missing compiler is
 not a blocker.
+
+### Trying the TUI against the scripted agent
+
+`fake-acp-agent` (`tests/support/fake_acp_agent.rs`) is what the tests draft
+with, and it drives the real binary too — useful for checking the ACP flow by
+hand without spending anything on a real agent. It writes the file the prompt
+names: the `Write to: <path>` line of OpenSpec's instructions, which is in
+every prompt `commands::compose_prompt` builds (or a `write: <relative path>`
+line, which is what the TUI tests' fake ports send).
+
+```sh
+cargo build --release          # builds spectacular and fake-acp-agent
+cd /path/to/an/openspec/project
+SPECTACULAR_NO_ADVISOR=1 \
+SPECTACULAR_ACP_COMMAND="$OLDPWD/target/x86_64-unknown-linux-musl/release/fake-acp-agent --record /tmp/acp.log" \
+  "$OLDPWD/target/x86_64-unknown-linux-musl/release/spectacular"
+```
+
+Press `w` on a change: the running block streams, the permission overlay
+asks, and after `1` the draft opens; `f` redrafts in the same session.
+`--script slow` works until `x` cancels it, `--script crash` dies mid-turn;
+`--record` logs what the agent saw (`initialize`, `session …`, `prompt 2
+<same session>`, `permission allow_once`, `wrote …`). The command line is
+split on whitespace, so the path must not contain spaces.
 
 ## Deliberate differences from the TypeScript version
 
