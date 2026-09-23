@@ -6,11 +6,9 @@
 //! `--print` is not a degraded mode: it is the same model rendered without a
 //! terminal, which is what makes the overview usable in CI and over a pipe.
 //!
-//! The port lands bottom-up, and stage 4 is where the command surface closes:
-//! every subcommand now does its work, from `init` and `instructions` through
-//! the background jobs to `archive`, `pending`, `verify` and `roadmap`. Only
-//! the TUI still declines rather than pretending — it lands in stage 5, and
-//! `--print` is already the same model rendered without a terminal.
+//! The port lands bottom-up. Stage 4 closed the command surface — every
+//! subcommand does its work — and stage 5 replaced the last placeholder: with
+//! no subcommand, on a terminal, `spectacular` opens the TUI, set up or not.
 
 mod adapter;
 mod agent;

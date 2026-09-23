@@ -7,8 +7,8 @@
 //!
 //! Nothing here does any work. Dispatch decides *which* command was asked for
 //! and whether the project is one spec-tacular can act on; what each command
-//! does lives in `commands.rs`, over `core/` and `adapter/`. Every subcommand
-//! now does its work; only the TUI still declines rather than pretending.
+//! does lives in `commands.rs`, over `core/` and `adapter/`, and the TUI in
+//! `tui/`.
 
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
@@ -229,6 +229,11 @@ where
         return 1;
     }
 
+    // Before the streams below are locked: the TUI owns the terminal.
+    if tui {
+        return crate::tui::run(cwd, cli.openspec_bin.clone(), &cli.driver);
+    }
+
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
     let mut out = stdout.lock();
@@ -308,9 +313,8 @@ where
             ));
             report(result, &mut io)
         }
-        // The TUI is stage 5. Everything it would show is already here — the
-        // overview below is the same model, rendered without a terminal.
-        None if tui => not_implemented("the TUI", 5),
+        // Without a terminal (or with --print): the overview the TUI draws,
+        // as text — the same model, rendered without a terminal.
         None => {
             let Some(runtime) = runtime(&mut io) else {
                 return 1;
@@ -357,15 +361,6 @@ fn report(result: Result<u8, OpenSpecError>, io: &mut Streams<'_>) -> u8 {
             1
         }
     }
-}
-
-/// Every command declines the same way until its stage lands.
-fn not_implemented(what: &str, stage: u8) -> u8 {
-    let _ = writeln!(
-        std::io::stderr(),
-        "spectacular {what}: not implemented yet in the Rust port (stage {stage})"
-    );
-    2
 }
 
 #[cfg(test)]
@@ -464,8 +459,8 @@ mod tests {
 
     #[test]
     fn every_verb_now_runs_rather_than_declining() {
-        // Stage 4 is the last one that removes a placeholder from a
-        // subcommand. Only the TUI still declines, and it is not a subcommand.
+        // Stage 4 removed the last placeholder from a subcommand, and stage 5
+        // the one from the TUI.
         let help = Cli::command().render_help().to_string();
         assert!(!help.contains("not implemented"), "{help}");
     }
