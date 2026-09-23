@@ -11,16 +11,18 @@ Four reasons, in the order they started to hurt.
 **Startup.** `spectacular` took **2.9 s** to reach a first frame. This is a tool
 you open to check where a change is and close again, dozens of times a day, and
 a three-second pause turns that into something you avoid. The Rust binary
-answers `--help` in **under a millisecond** and opens the TUI as fast as the
-terminal can clear.
+answers `--help` in **under a millisecond** and draws the TUI's first frame
+**about 15 ms** after launch, at **about 4 MB** resident — it draws first and
+asks OpenSpec about the project in the background, rather than making you
+wait for a subprocess before anything appears.
 
 **Size.** The TypeScript build needed **127 MB** of `node_modules`, plus a Bun
 or Node runtime, present and at the right version. The Rust build is a **single
-static binary under 3 MB** — `x86_64-unknown-linux-musl`, stripped, nothing
+static binary of about 4 MB** — `x86_64-unknown-linux-musl`, stripped, nothing
 dynamically linked. You copy it onto a machine and it runs. (It was 0.8 MB
 through stage 2, before anything ran a subprocess; the async runtime that drives
-OpenSpec, and will drive the background jobs and the TUI's event loop, is the
-rest. Two orders of magnitude is still the point.)
+OpenSpec, the background jobs and the TUI's event loop, and the TUI itself, are
+the rest. Two orders of magnitude is still the point.)
 
 **Distribution.** "Install Bun, then install this" is a worse first step than
 "download this file". A static binary is also what makes a release workflow
@@ -66,8 +68,32 @@ src/
                  verify, roadmap, guide, naming, advisor, vision
   agent/         driver.rs, claude.rs, opencode.rs, structured.rs
   render/        text.rs, requirement.rs — shared by `--print` and the TUI
-  tui/           the Ratatui shell
+  tui/           the Ratatui shell:
+                   mod.rs       the tokio event loop (keys, mouse, resize,
+                                a 70 ms animation tick, a 2 s job poll)
+                   app.rs       the state, and events → state + effects
+                   view.rs      drawing: pure functions of `&App`
+                   home.rs      the start screen; logo.rs its wordmark
+                   jobs.rs      the job pane; guide.rs the help and empty states
+                   ports.rs     the `Ports` trait (the TypeScript `TuiInput`)
+                                and its real implementation
+                   terminal.rs  raw mode, alternate screen, mouse — and always
+                                restoring them (Drop guard, panic hook)
+                   editor.rs    `$VISUAL`/`$EDITOR`/nano/vim/vi at a line
+                   widgets.rs, theme.rs, input.rs
+                   fake.rs, tests.rs   an in-memory `Ports` and the end-to-end
+                                tests that drive the app by keystroke
 ```
+
+The TUI is the Elm shape Ratatui suits. `App` holds what the TypeScript's
+Solid signals held; a key, a click, a tick or a message goes in, the state
+changes, and what comes out is a list of `Effect`s — work to spawn on the
+runtime (an OpenSpec call, a dispatch), or the editor to run. The loop spawns
+them and feeds their results back as messages. Drawing is a pure function of
+`&App` that also reports where each clickable thing landed, which is all a
+mouse click needs. Nothing in `app.rs` waits, draws or touches a terminal, so
+the tests drive the whole interface against a fake `Ports` and assert on a
+`TestBackend` frame.
 
 It mirrors the TypeScript tree one-for-one, deliberately: while both exist,
 being able to open the same filename in each is worth more than a tidier
@@ -84,7 +110,7 @@ reviewable on its own.
 | 2 | `rust/02-core` | markdown/requirement parsing, review state and drift, session, revision bundle, pipeline, gate, concreteness linter, foundation, decisions/ADRs, requirement rendering |
 | 3 | `rust/03-adapter-commands` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
 | 4 | `rust/04-jobs-agents` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
-| 5 | `rust/05-tui` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane (ctrl+c never quits) |
+| 5 | `rust/05-tui-shell` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane, describe-then-name new change, `$EDITOR` (ctrl+c never quits) |
 | 6 | `rust/06-review` | TUI review screen, document viewer, editor integration |
 | 7 | `rust/07-setup` | guided setup: project stages, ground-rules screen, describe-then-name new change |
 | 8 | `rust/08-advisor` | AI advisor: structured requests, follow-ups/options/derived answers/help, name proposals, vision interview and slicing, draft opens when done, redraft with feedback |
@@ -167,7 +193,7 @@ not a blocker.
 ## Deliberate differences from the TypeScript version
 
 The port is meant to be a faithful one — the help text, the exit codes and the
-messages are reproduced rather than reinvented. Six places knowingly differ.
+messages are reproduced rather than reinvented. These places knowingly differ.
 
 **Flags are scoped to the subcommand they belong to.** The TypeScript parser
 scanned the whole command line into one flat struct, so every flag was accepted
@@ -214,6 +240,58 @@ the TypeScript's `child.on('exit')` did. Nothing about detachment changes:
 `spectacular run` still exits immediately, the agent still has its own session
 through `setsid`, and the `.exit` file the wrapper writes is still how an
 outcome is recovered when no spec-tacular process is left to see it.
+
+**ctrl+c never quits.** The TypeScript TUI quit on ctrl+c from the start
+screen and the overview, and cancelled one level everywhere else. Here it only
+ever cancels or goes back one level — the new-change prompt, the help, the job
+pane, a pending "cancel this job?" — and where there is no level left, on the
+start screen and the overview, it says that `q` quits. `q` quits from those two
+without asking: jobs run detached and outlive the TUI, so there is nothing to
+confirm. A reflex keystroke should never be the thing that ends a session;
+that is the whole design (docs/tui-design.md), and with crossterm in raw mode
+it is a key like any other rather than a signal. SIGTERM and SIGHUP — the
+terminal window closing — quit cleanly, terminal restored.
+
+**ctrl+j opens the job pane from anywhere**, the start screen included; the
+TypeScript only listened for it on the overview. The pane also takes `p`,
+which clears finished jobs (`core::jobs::prune_jobs`, which stage 4 ported for
+it).
+
+**The first frame does not wait for OpenSpec.** The TypeScript awaited
+`loadPipelines` before mounting the app, so the first frame arrived after an
+`openspec status` subprocess. Here the start screen draws at once with
+"Reading the project…" where its buttons go, and they appear when the answer
+does; `q` works meanwhile.
+
+**Stand-ins until the screens they need land.** Stage 5 ships the shell, not
+every screen, and says so rather than pretending:
+
+- *The ground rules* (stage 7): Start sets the folder up and opens the
+  overview, whose banner counts the answered questions; `f`, "Ground rules"
+  and "Continue ground rules" open the next unanswered question in `$EDITOR`
+  at its line — the same file the ground-rules screen will edit.
+- *The vision interview* (stage 8): a new project at the vision step is
+  offered "Start your first change" instead of "Describe your vision", and the
+  overview shows the first-change guide.
+- *The review screen and the document viewer* (stage 6): `r` on a change with
+  specs says the review arrives in stage 6; `v` and "Read the …" are absent,
+  exactly as they were in the TypeScript when no `readArtifact` was wired; and
+  the running-agent block says you will be told when the draft is done rather
+  than that it opens for you.
+- *Name proposals from a model* (stage 8): the name is the instant one from
+  the description's own words; `Ports::propose_names` is the hook, and the
+  prompt already shows suggestions, tab-cycles them and never overwrites a
+  name being edited.
+
+**The logo is coloured per letter.** The TypeScript passed the gradient to
+opentui's `ascii_font` meaning one colour per letter, but opentui applies a
+colour array to a font's *tones* — the block face's fill and shadow — so what
+it drew was two-tone. The glyphs are the same `block` and `tiny` shapes; the
+gradient drifts across the letters as the code intended.
+
+**Button rows wrap.** A row of buttons too wide for its panel continues on the
+next line instead of being squeezed, as a flex row that is allowed to wrap
+would.
 
 ## What is not being ported
 
