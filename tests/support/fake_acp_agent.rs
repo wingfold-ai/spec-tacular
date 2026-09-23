@@ -17,7 +17,11 @@
 //! - `crash`: streams a line and exits mid-turn.
 //!
 //! The file to write is named in the first prompt of a session, on a line
-//! `write: <path relative to the session's cwd>`; later prompts in the same
+//! `write: <path relative to the session's cwd>` (what the TUI tests' fake
+//! ports put in their prompts) or `Write to: <path>` (what OpenSpec's
+//! instructions say, so the real binary's prompt drives it too — an
+//! absolute path, or a glob such as `specs/**/*.md`, whose wildcards become
+//! `example` and `spec`). Later prompts in the same
 //! session revise that file, quoting their feedback into it. A prompt for a
 //! session this process did not create is refused with an error — which is
 //! how a test knows a redraft really reused its session.
@@ -145,13 +149,17 @@ impl Agent {
     /// One turn of the `draft` script. The stop reason.
     fn draft(&mut self, prompt: &str) -> &'static str {
         if self.prompts == 1 {
-            self.target = prompt
-                .lines()
-                .find_map(|l| l.strip_prefix("write: "))
-                .map(|s| s.trim().to_owned());
+            // An absolute path inside the session's cwd is shown as the
+            // relative one, as a real agent's tool titles are.
+            self.target = target_in(prompt).map(|t| {
+                Path::new(&t)
+                    .strip_prefix(&self.cwd)
+                    .map(|rel| rel.to_string_lossy().into_owned())
+                    .unwrap_or(t)
+            });
         }
         let Some(target) = self.target.clone() else {
-            self.say("No `write:` line in the prompt — nothing to do.");
+            self.say("No `write:` or `Write to:` line in the prompt — nothing to do.");
             return "end_turn";
         };
         let path = self.cwd.join(&target);
@@ -344,6 +352,21 @@ impl Agent {
             }
         }
     }
+}
+
+/// The file a prompt asks for: a `write: <relative path>` line, or the
+/// `Write to: <path>` line of OpenSpec's instructions. A glob is made
+/// concrete — `**` becomes `example`, `*` becomes `spec` — so a specs prompt
+/// writes `specs/example/spec.md`.
+fn target_in(prompt: &str) -> Option<String> {
+    prompt.lines().find_map(|line| {
+        let line = line.trim();
+        let path = line
+            .strip_prefix("write: ")
+            .or_else(|| line.strip_prefix("Write to: "))?
+            .trim();
+        (!path.is_empty()).then(|| path.replace("**", "example").replace('*', "spec"))
+    })
 }
 
 fn main() {
