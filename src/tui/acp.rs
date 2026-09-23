@@ -389,8 +389,20 @@ impl App {
         effects
     }
 
+    /// The turn's job as this session knows it, into the job list now —
+    /// its record on disk is written a moment later, and until the list is
+    /// read again it would still say the turn is running.
+    fn settle_turn_job(&mut self, run: &AcpRun) {
+        if let Some(job) = run.job() {
+            for listed in self.jobs.iter_mut().filter(|j| j.id == job.id) {
+                listed.status = job.status;
+            }
+        }
+    }
+
     /// The turn is over: say how, and let the draft open as a job's does.
     fn turn_ended(&mut self, ports: &dyn Ports, run: &AcpRun, stop: Stop) -> Vec<Effect> {
+        self.settle_turn_job(run);
         let Some(acp) = self.acp.as_mut() else {
             return Vec::new();
         };
@@ -422,6 +434,9 @@ impl App {
         let Some(acp) = self.acp.take() else {
             return Vec::new();
         };
+        if let Some(run) = &acp.run {
+            self.settle_turn_job(run);
+        }
         if let Some(why) = why {
             self.notice = Some(format!("{} stopped: {why}", acp.label));
         }

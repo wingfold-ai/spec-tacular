@@ -128,6 +128,9 @@ fn a_denied_write_is_not_written_and_says_so() {
          without writing the proposal",
     );
     assert_eq!(ui.app.screen, Screen::Overview);
+    // The turn's record is still being written: it must not come back as
+    // a job-shaped "running" block meanwhile.
+    ui.expect_not("is drafting");
     assert!(written(&ui).is_none());
     assert!(ui.ports.agent_log().contains("permission reject_once"));
     // The step is still to draft it.

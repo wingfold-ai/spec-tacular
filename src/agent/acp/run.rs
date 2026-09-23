@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::mpsc;
 
 use super::client::AcpSession;
-use super::events::{log_line, AcpEvent, ChoiceKind, PermissionChoice, Stop};
+use super::events::{log_line, AcpEvent, ChoiceKind, PermissionChoice, Stop, ToolLog};
 use crate::agent::driver::AgentCommand;
 use crate::core::jobs::{
     active_job_for_change, record_job, Job, JobRecorder, JobStatus, RecordJobOptions,
@@ -57,6 +57,8 @@ struct Turn {
     finished: bool,
     /// The session's cost so far, as last reported.
     cost: Option<String>,
+    /// The turn's tool calls, as its log has told them so far.
+    tools: ToolLog,
 }
 
 struct Inner {
@@ -184,6 +186,7 @@ impl AcpRun {
             partial: String::new(),
             finished: false,
             cost: None,
+            tools: ToolLog::default(),
         });
         inner.session.prompt(prompt)
     }
@@ -240,6 +243,25 @@ impl AcpRun {
         let rest = std::mem::take(&mut turn.partial);
         if !rest.trim().is_empty() {
             recorder.line(rest.trim_end());
+        }
+        match event {
+            AcpEvent::Tool(update) => {
+                if let Some(line) = turn.tools.line(update) {
+                    recorder.line(line);
+                }
+                return;
+            }
+            AcpEvent::Permission(ask) => {
+                let what = ask
+                    .tool
+                    .title
+                    .as_deref()
+                    .or_else(|| turn.tools.title(&ask.tool.id))
+                    .unwrap_or(&ask.tool.id);
+                recorder.line(format!("? permission asked: {what}"));
+                return;
+            }
+            _ => {}
         }
         if matches!(event, AcpEvent::TurnEnded(_) | AcpEvent::Closed(_)) {
             if let Some(cost) = turn.cost.take() {

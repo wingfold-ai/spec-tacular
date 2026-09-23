@@ -438,23 +438,63 @@ pub fn permission_ask(id: u64, request: &RequestPermissionRequest, cwd: &Path) -
     }
 }
 
+/// A turn's tool calls as its log tells them: one line when a call is first
+/// heard of, and another only when its title, its state or its diff
+/// changes — agents send many updates that change nothing worth a line, and
+/// most of them name the call only by its id.
+#[derive(Debug, Default)]
+pub struct ToolLog {
+    calls: Vec<ToolCallView>,
+}
+
+impl ToolLog {
+    /// The line `update` is worth, if any: `✓ Write proposal.md  ± proposal.md +3 −1`.
+    pub fn line(&mut self, update: &ToolUpdate) -> Option<String> {
+        let (before, now) = match self.calls.iter_mut().find(|c| c.id == update.id) {
+            Some(call) => {
+                let before = call.clone();
+                call.apply(update);
+                (Some(before), call.clone())
+            }
+            None => {
+                let call = ToolCallView::new(update);
+                self.calls.push(call.clone());
+                (None, call)
+            }
+        };
+        let changed = before
+            .is_none_or(|b| b.title != now.title || b.state != now.state || b.diffs != now.diffs);
+        if !changed {
+            return None;
+        }
+        let title = if now.title.is_empty() {
+            now.id.as_str()
+        } else {
+            now.title.as_str()
+        };
+        let mut line = format!("{} {title}", now.state.glyph());
+        for diff in &now.diffs {
+            line.push_str(&format!("  {}", diff.summary()));
+        }
+        Some(line)
+    }
+
+    /// The title a call is known by, if it has one.
+    pub fn title(&self, id: &str) -> Option<&str> {
+        self.calls
+            .iter()
+            .find(|c| c.id == id && !c.title.is_empty())
+            .map(|c| c.title.as_str())
+    }
+}
+
 /// How an event reads in the job's log, one line or none. Reply text is
-/// not here: it arrives in pieces, and [`super::run`] joins it into lines.
+/// not here: it arrives in pieces, and [`super::run`] joins it into lines;
+/// nor are tool calls, which a [`ToolLog`] follows.
 pub fn log_line(event: &AcpEvent) -> Option<String> {
     match event {
         // Cumulative, and sent often: the turn's last is logged at its end.
-        AcpEvent::Text(_) | AcpEvent::Thought(_) | AcpEvent::Cost(_) => None,
-        AcpEvent::Tool(tool) => {
-            let mut line = format!(
-                "{} {}",
-                tool.state.map_or("·", ToolState::glyph),
-                tool.title.as_deref().unwrap_or(&tool.id)
-            );
-            for diff in tool.diffs.iter().flatten() {
-                line.push_str(&format!("  {}", diff.summary()));
-            }
-            Some(line)
-        }
+        AcpEvent::Text(_) | AcpEvent::Thought(_) | AcpEvent::Cost(_) | AcpEvent::Tool(_) => None,
         AcpEvent::Plan(steps) => Some(format!(
             "plan: {}",
             steps
@@ -463,10 +503,8 @@ pub fn log_line(event: &AcpEvent) -> Option<String> {
                 .collect::<Vec<_>>()
                 .join(" · ")
         )),
-        AcpEvent::Permission(ask) => Some(format!(
-            "? permission asked: {}",
-            ask.tool.title.as_deref().unwrap_or(&ask.tool.id)
-        )),
+        // Logged by [`super::run`], which knows the call's title.
+        AcpEvent::Permission(_) => None,
         AcpEvent::TurnEnded(stop) => Some(match stop {
             Stop::EndTurn => "done".to_owned(),
             Stop::Cancelled => "cancelled".to_owned(),
@@ -639,10 +677,24 @@ mod tests {
     }
 
     #[test]
-    fn the_log_reads_tools_plans_and_endings() {
-        let tool = AcpEvent::Tool(ToolUpdate {
-            id: "t".to_owned(),
-            title: Some("Write proposal.md".to_owned()),
+    fn the_tool_log_names_calls_by_title_and_skips_updates_that_change_nothing() {
+        let mut log = ToolLog::default();
+        let first = ToolUpdate {
+            id: "toolu_1".to_owned(),
+            title: Some("Terminal".to_owned()),
+            state: Some(ToolState::Pending),
+            ..ToolUpdate::default()
+        };
+        assert_eq!(log.line(&first).as_deref(), Some("○ Terminal"));
+        let titled = ToolUpdate {
+            id: "toolu_1".to_owned(),
+            title: Some("ls -R".to_owned()),
+            ..ToolUpdate::default()
+        };
+        assert_eq!(log.line(&titled).as_deref(), Some("○ ls -R"));
+        assert_eq!(log.line(&titled), None, "nothing changed");
+        let done = ToolUpdate {
+            id: "toolu_1".to_owned(),
             state: Some(ToolState::Done),
             diffs: Some(vec![DiffStat {
                 path: "x/proposal.md".to_owned(),
@@ -650,11 +702,22 @@ mod tests {
                 removed: 1,
             }]),
             ..ToolUpdate::default()
-        });
+        };
         assert_eq!(
-            log_line(&tool).as_deref(),
-            Some("✓ Write proposal.md  ± proposal.md +3 −1")
+            log.line(&done).as_deref(),
+            Some("✓ ls -R  ± proposal.md +3 −1")
         );
+        assert_eq!(log.title("toolu_1"), Some("ls -R"));
+        let bare = ToolUpdate {
+            id: "toolu_2".to_owned(),
+            ..ToolUpdate::default()
+        };
+        assert_eq!(log.line(&bare).as_deref(), Some("○ toolu_2"));
+        assert_eq!(log.title("toolu_2"), None);
+    }
+
+    #[test]
+    fn the_log_reads_plans_and_endings() {
         assert_eq!(
             log_line(&AcpEvent::TurnEnded(Stop::EndTurn)).as_deref(),
             Some("done")

@@ -542,7 +542,13 @@ impl Ports for ProjectPorts {
                     Ok(driver) if std::env::var(crate::agent::acp::ACP_COMMAND_ENV).is_err() => {
                         driver.label().to_owned()
                     }
-                    _ => command.command.clone(),
+                    // The program's own name, not the path it was found at.
+                    _ => std::path::Path::new(&command.command)
+                        .file_name()
+                        .map_or_else(
+                            || command.command.clone(),
+                            |name| name.to_string_lossy().into_owned(),
+                        ),
                 },
             },
         }

@@ -374,10 +374,11 @@ fn render_change(
 
     // An agent at work: what it is doing, live.
     if let Some(job) = app.running() {
-        let driver = if job.driver == "claude" {
-            "Claude Code"
-        } else {
-            job.driver.as_str()
+        let driver = match job.driver.as_str() {
+            "claude" => "Claude Code",
+            // Another spec-tacular's session, seen through its record.
+            crate::agent::acp::run::ACP_DRIVER => "An ACP agent",
+            other => other,
         };
         flow.blank();
         flow.line(
