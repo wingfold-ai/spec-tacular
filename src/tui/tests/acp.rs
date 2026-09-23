@@ -237,7 +237,13 @@ fn a_redraft_is_the_next_prompt_on_the_same_session() {
     ui.type_text("mention cancellations");
     ui.press(KeyCode::Enter);
     assert_eq!(ui.app.screen, Screen::Overview);
-    ui.expect("same session (fake-session");
+    // The notice lasts as long as the turn, and the scripted agent — asking
+    // nothing, since it was allowed always — can finish the turn inside the
+    // keypress's settle on a busy machine. The session is proven below
+    // either way, from the agent's own log.
+    if ui.app.acp.as_ref().is_some_and(|a| a.turn) {
+        ui.expect("same session (fake-session");
+    }
     ui.wait_until("the redraft to open", |app| {
         app.screen == Screen::Document && app.acp.as_ref().is_some_and(|a| !a.turn)
     });

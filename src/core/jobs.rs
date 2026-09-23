@@ -650,9 +650,15 @@ fn lock_recorders() -> std::sync::MutexGuard<'static, Vec<std::thread::JoinHandl
 /// Waits for every finished or dropped [`JobRecorder`] to have written its
 /// record. The TUI calls it after its loop has ended; tests call it before
 /// reading a record back.
+///
+/// The lock is held while joining, so a second caller waits for the threads
+/// the first one took rather than finding the list empty and returning while
+/// they still write — which parallel tests, each flushing its own record, did.
+/// A handed-over thread only writes a file and never takes this lock, so the
+/// wait is short and cannot deadlock.
 pub fn flush_recorders() {
-    let threads = std::mem::take(&mut *lock_recorders());
-    for thread in threads {
+    let mut threads = lock_recorders();
+    for thread in threads.drain(..) {
         let _ = thread.join();
     }
 }
