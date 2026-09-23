@@ -4,6 +4,12 @@
 //! agents are stubbed at the port boundary, while the Foundation is real
 //! files in a temp dir — so what the guided setup reads and writes is the
 //! real thing, and only the subprocesses are pretend.
+//!
+//! A change added with [`FakePorts::add_spec_change`] is real files too — a
+//! proposal, spec files, a design — with a status pointing at them, the way
+//! OpenSpec would have reported it. Its review queue, sidecar, marked
+//! examples and promotions go through the same `core` functions the real
+//! ports use, against those files; only `openspec status` is pretend.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -13,21 +19,39 @@ use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 
-use super::ports::{jobs_view, JobsView, PortFuture, Ports, Snapshot};
-use crate::adapter::types::{OpenSpecArtifact, OpenSpecArtifactStatus, OpenSpecChangeStatus};
+use super::ports::{jobs_view, promote, read_document, JobsView, PortFuture, Ports, Snapshot};
+use crate::adapter::types::{
+    OpenSpecArtifact, OpenSpecArtifactPaths, OpenSpecArtifactStatus, OpenSpecChangeStatus,
+};
+use crate::core::change_review::{load_change_review, spec_files_of, specs_artifact_id};
+use crate::core::concreteness::LintConfig;
+use crate::core::decisions::Decision;
 use crate::core::foundation::{guided_questions, scaffold_foundation, GuidedQuestion};
 use crate::core::guide::{project_stage, ProjectStage};
 use crate::core::jobs::{Job, JobStatus};
+use crate::core::mark::mark_example_in_file;
 use crate::core::pipeline::{build_pipeline, ChangePipeline, ReviewByArtifact};
+use crate::core::requirements::ReviewItem;
+use crate::core::review::save_review;
 use crate::core::roadmap::{load_roadmap, Roadmap};
-use crate::core::session::ReviewSession;
+use crate::core::session::{open_session, ReviewSession};
 use crate::core::vision::is_greenfield;
 
 const ORDER: [&str; 4] = ["proposal", "specs", "design", "tasks"];
 
 /// A change whose artifacts in `written` exist, the next one ready.
 pub fn change_with(name: &str, written: &[&str]) -> ChangePipeline {
-    let artifacts = ORDER
+    build_pipeline(&status_with(name, written, None), &ReviewByArtifact::new())
+}
+
+/// The status OpenSpec would report for [`change_with`] — rooted in `root`,
+/// with each artifact's paths, when the change is real files.
+fn status_with(name: &str, written: &[&str], root: Option<&Path>) -> OpenSpecChangeStatus {
+    let change_root = match root {
+        Some(root) => root.join("openspec/changes").join(name),
+        None => PathBuf::from(format!("/tmp/{name}")),
+    };
+    let artifacts: Vec<OpenSpecArtifact> = ORDER
         .iter()
         .enumerate()
         .map(|(i, id)| OpenSpecArtifact {
@@ -51,17 +75,54 @@ pub fn change_with(name: &str, written: &[&str]) -> ChangePipeline {
             },
         })
         .collect();
-    build_pipeline(
-        &OpenSpecChangeStatus {
-            change_name: name.to_owned(),
-            schema_name: "spec-tacular".to_owned(),
-            change_root: format!("/tmp/{name}"),
-            apply_requires: vec!["tasks".to_owned()],
-            artifacts,
-            ..OpenSpecChangeStatus::default()
-        },
-        &ReviewByArtifact::new(),
-    )
+    let artifact_paths = artifacts
+        .iter()
+        .map(|a| {
+            let resolved = change_root.join(&a.output_path).display().to_string();
+            let existing = if a.id == "specs" {
+                spec_files(&change_root.join("specs"))
+            } else if Path::new(&resolved).exists() {
+                vec![resolved.clone()]
+            } else {
+                Vec::new()
+            };
+            (
+                a.id.clone(),
+                OpenSpecArtifactPaths {
+                    output_path: a.output_path.clone(),
+                    resolved_output_path: resolved,
+                    existing_output_paths: existing,
+                },
+            )
+        })
+        .collect();
+    OpenSpecChangeStatus {
+        change_name: name.to_owned(),
+        schema_name: "spec-tacular".to_owned(),
+        change_root: change_root.display().to_string(),
+        apply_requires: vec!["tasks".to_owned()],
+        artifacts,
+        artifact_paths,
+        ..OpenSpecChangeStatus::default()
+    }
+}
+
+/// Every `spec.md` under `dir`, as OpenSpec's glob would find them.
+fn spec_files(dir: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(spec_files(&path));
+        } else if path.file_name().is_some_and(|n| n == "spec.md") {
+            out.push(path.display().to_string());
+        }
+    }
+    out.sort();
+    out
 }
 
 /// A job record, as the runner would have written it.
@@ -103,6 +164,11 @@ pub struct FakePorts {
     /// Log lines per job id; a job with none has "no output yet".
     pub tails: Mutex<BTreeMap<String, Vec<String>>>,
     pub names: Mutex<Names>,
+    /// Changes that are real files: name → the artifacts written.
+    pub real: Mutex<BTreeMap<String, Vec<String>>>,
+    /// Drafts an agent "wrote", by `change/artifact`.
+    pub docs: Mutex<BTreeMap<String, String>>,
+    pub lint: LintConfig,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -123,6 +189,9 @@ impl FakePorts {
             cancelled: Mutex::default(),
             tails: Mutex::default(),
             names: Mutex::new(Names::None),
+            real: Mutex::default(),
+            docs: Mutex::default(),
+            lint: LintConfig::empty(),
         }
     }
 
@@ -149,6 +218,86 @@ impl FakePorts {
 
     pub fn add_change(&self, pipeline: ChangePipeline) {
         lock(&self.changes).push(pipeline);
+    }
+
+    /// A change that is real files: a proposal, one spec file per
+    /// `(capability, content)`, and a design when there is one.
+    pub fn add_spec_change(&self, name: &str, specs: &[(&str, &str)], design: Option<&str>) {
+        let dir = self.dir.path().join("openspec/changes").join(name);
+        fs::create_dir_all(&dir).expect("change dir");
+        fs::write(
+            dir.join("proposal.md"),
+            format!("# {name}\n\n## Why\n\nBecause.\n"),
+        )
+        .expect("proposal");
+        for (capability, content) in specs {
+            let spec = dir.join("specs").join(capability);
+            fs::create_dir_all(&spec).expect("spec dir");
+            fs::write(spec.join("spec.md"), content).expect("spec");
+        }
+        let mut written = vec!["proposal".to_owned(), "specs".to_owned()];
+        if let Some(design) = design {
+            fs::write(dir.join("design.md"), design).expect("design");
+            written.push("design".to_owned());
+        }
+        lock(&self.real).insert(name.to_owned(), written);
+        let pipeline = self.real_pipeline(name).expect("just added");
+        lock(&self.changes).push(pipeline);
+    }
+
+    /// Copies a directory of spec files in as a change's specs — for a
+    /// fixture taken from a real project.
+    pub fn add_fixture_change(&self, name: &str, fixture: &Path) {
+        let specs = self
+            .dir
+            .path()
+            .join("openspec/changes")
+            .join(name)
+            .join("specs");
+        copy_dir(fixture, &specs);
+        self.add_spec_change(name, &[], None);
+    }
+
+    fn real_status(&self, name: &str) -> Option<OpenSpecChangeStatus> {
+        let written = lock(&self.real).get(name).cloned()?;
+        let written: Vec<&str> = written.iter().map(String::as_str).collect();
+        Some(status_with(name, &written, Some(self.dir.path())))
+    }
+
+    /// A real change's pipeline, its review summary read from the sidecar —
+    /// what `commands::load_pipelines` does.
+    fn real_pipeline(&self, name: &str) -> Option<ChangePipeline> {
+        let status = self.real_status(name)?;
+        let mut reviews = ReviewByArtifact::new();
+        if let Some(specs) = specs_artifact_id(&status) {
+            if !spec_files_of(&status).is_empty() {
+                let summary = load_change_review(self.dir.path(), &status, false).summary;
+                reviews.insert(specs.to_owned(), summary);
+            }
+        }
+        Some(build_pipeline(&status, &reviews))
+    }
+
+    /// Pretends an agent finished writing `artifact` of `change`: its job
+    /// succeeds, the draft exists, and the pipeline has moved on.
+    pub fn finish_job(&self, change: &str, artifact: &str, content: &str) {
+        for job in lock(&self.jobs)
+            .iter_mut()
+            .filter(|j| j.change == change && j.artifact == artifact)
+        {
+            if job.status == JobStatus::Running {
+                job.status = JobStatus::Succeeded;
+            }
+        }
+        lock(&self.docs).insert(format!("{change}/{artifact}"), content.to_owned());
+        let at = ORDER
+            .iter()
+            .position(|a| *a == artifact)
+            .map_or(0, |i| i + 1);
+        let written = &ORDER[..at];
+        for pipeline in lock(&self.changes).iter_mut().filter(|p| p.name == change) {
+            *pipeline = change_with(change, written);
+        }
     }
 
     pub fn add_job(&self, job: Job, tail: &[&str]) {
@@ -184,7 +333,10 @@ impl Ports for FakePorts {
     }
 
     fn reload(&self) -> PortFuture<Result<Snapshot, String>> {
-        let pipelines = lock(&self.changes).clone();
+        let pipelines = lock(&self.changes)
+            .iter()
+            .map(|p| self.real_pipeline(&p.name).unwrap_or_else(|| p.clone()))
+            .collect();
         Box::pin(async move {
             Ok(Snapshot {
                 pipelines,
@@ -216,8 +368,16 @@ impl Ports for FakePorts {
         before - jobs.len()
     }
 
-    fn dispatch(&self, change: &str, artifact: &str) -> PortFuture<Result<String, String>> {
-        lock(&self.dispatched).push(format!("{change}/{artifact}"));
+    fn dispatch(
+        &self,
+        change: &str,
+        artifact: &str,
+        feedback: Option<&str>,
+    ) -> PortFuture<Result<String, String>> {
+        lock(&self.dispatched).push(match feedback {
+            Some(feedback) => format!("{change}/{artifact} ({feedback})"),
+            None => format!("{change}/{artifact}"),
+        });
         let id = format!("job-{}", lock(&self.jobs).len() + 1);
         self.add_job(
             job(&id, change, artifact, JobStatus::Running),
@@ -230,8 +390,77 @@ impl Ports for FakePorts {
         Box::pin(async move { Ok(message) })
     }
 
-    fn open_review(&self, _change: &str) -> Option<ReviewSession> {
-        None
+    fn open_review(&self, change: &str) -> PortFuture<Option<ReviewSession>> {
+        let session = self.real_status(change).and_then(|status| {
+            if spec_files_of(&status).is_empty() {
+                return None;
+            }
+            let queue = load_change_review(self.dir.path(), &status, true);
+            let items: Vec<ReviewItem> = queue.requirements.into_iter().map(|r| r.item).collect();
+            Some(open_session(change, &items, queue.review))
+        });
+        Box::pin(async move { session })
+    }
+
+    fn save_session(&self, session: &ReviewSession) -> Result<(), String> {
+        save_review(self.dir.path(), &session.review).map_err(|e| e.to_string())
+    }
+
+    fn reparse(&self, change: &str) -> PortFuture<Vec<ReviewItem>> {
+        let items = self
+            .real_status(change)
+            .map(|status| {
+                load_change_review(self.dir.path(), &status, true)
+                    .requirements
+                    .into_iter()
+                    .map(|r| r.item)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Box::pin(async move { items })
+    }
+
+    fn mark_example(
+        &self,
+        requirement: &ReviewItem,
+        value: &str,
+    ) -> PortFuture<Result<(), String>> {
+        let result = mark_example_in_file(requirement, value).map(|_| ());
+        Box::pin(async move { result })
+    }
+
+    fn promote(&self, change: &str, decision: &Decision) -> PortFuture<Result<String, String>> {
+        let result = promote(self.dir.path(), change, decision);
+        Box::pin(async move { result })
+    }
+
+    fn lint_config(&self) -> LintConfig {
+        self.lint.clone()
+    }
+
+    fn read_artifact(
+        &self,
+        change: &str,
+        artifact: &str,
+    ) -> PortFuture<Result<(PathBuf, String), String>> {
+        let drafted = lock(&self.docs)
+            .get(&format!("{change}/{artifact}"))
+            .cloned();
+        let result = match drafted {
+            Some(content) => Ok((
+                PathBuf::from(format!("/tmp/{change}/{artifact}.md")),
+                content,
+            )),
+            None => {
+                let file = self
+                    .real_status(change)
+                    .and_then(|s| s.artifact_paths.get(artifact).cloned())
+                    .map(|p| p.resolved_output_path)
+                    .unwrap_or_default();
+                read_document(&file, artifact)
+            }
+        };
+        Box::pin(async move { result })
     }
 
     fn stage(&self) -> ProjectStage {
@@ -283,6 +512,19 @@ impl Ports for FakePorts {
                 Some(Box::pin(async move { names }))
             }
             Names::Later(rx) => Some(Box::pin(async move { rx.await.unwrap_or_default() })),
+        }
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("fixture dir");
+    for entry in fs::read_dir(from).expect("fixture").flatten() {
+        let path = entry.path();
+        let target = to.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir(&path, &target);
+        } else {
+            fs::copy(&path, &target).expect("fixture file");
         }
     }
 }

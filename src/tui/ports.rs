@@ -21,13 +21,19 @@ use crate::adapter::openspec::{is_openspec_project, OpenSpecAdapter};
 use crate::adapter::types::OpenSpecChangeStatus;
 use crate::agent::default_registry;
 use crate::commands::{dispatch, load_pipelines};
+use crate::core::change_review::{load_change_review, spec_files_of};
+use crate::core::concreteness::{load_lint_config, LintConfig};
+use crate::core::decisions::{promote_decision, replace_decision_body, Decision, PromoteOptions};
 use crate::core::foundation::{guided_questions, scaffold_foundation, GuidedQuestion};
 use crate::core::guide::{project_stage, schema_installed, ProjectStage};
 use crate::core::init::init_project;
 use crate::core::jobs::{cancel_job, list_jobs, prune_jobs, tail_job, Job, JobStatus, TAIL_LIMIT};
+use crate::core::mark::mark_example_in_file;
 use crate::core::pipeline::ChangePipeline;
+use crate::core::requirements::ReviewItem;
+use crate::core::review::save_review;
 use crate::core::roadmap::{load_roadmap, Roadmap};
-use crate::core::session::ReviewSession;
+use crate::core::session::{open_session, ReviewSession};
 use crate::core::vision::is_greenfield;
 
 /// Work that waits on something slower than a file read.
@@ -122,13 +128,42 @@ pub trait Ports: Send + Sync {
     /// Removes finished jobs and their logs; how many went.
     fn prune_jobs(&self) -> usize;
 
-    /// Starts an agent on one artifact in the background, behind the gate.
+    /// Starts an agent on one artifact in the background, behind the gate —
+    /// with the developer's feedback on the existing draft, for a redraft.
     /// `Ok` and `Err` both carry the line to show.
-    fn dispatch(&self, change: &str, artifact: &str) -> PortFuture<Result<String, String>>;
+    fn dispatch(
+        &self,
+        change: &str,
+        artifact: &str,
+        feedback: Option<&str>,
+    ) -> PortFuture<Result<String, String>>;
 
-    /// Opens a change's review queue. The review screen is stage 6; until it
-    /// lands the real implementation answers `None`.
-    fn open_review(&self, change: &str) -> Option<ReviewSession>;
+    /// Opens a change's review queue — its requirements, then its design
+    /// decisions — resuming where the last session stopped. `None` when it
+    /// has no specs yet. A future: it reads every spec file of the change.
+    fn open_review(&self, change: &str) -> PortFuture<Option<ReviewSession>>;
+    /// Persists a session's decisions and cursor. Synchronous on purpose:
+    /// every decision is written before the next key is read, in order, so a
+    /// crash mid-review loses nothing — and it is one small JSON file.
+    fn save_session(&self, session: &ReviewSession) -> Result<(), String>;
+    /// Re-parses a change's queue from disk, after the files changed under
+    /// the session: an edit, a marked example, a promotion.
+    fn reparse(&self, change: &str) -> PortFuture<Vec<ReviewItem>>;
+    /// Wraps a flagged value of a requirement in `{{example: …}}`, in its file.
+    fn mark_example(&self, requirement: &ReviewItem, value: &str)
+        -> PortFuture<Result<(), String>>;
+    /// Lifts a global design decision to a project-wide ADR, leaving a
+    /// reference in `design.md`. `Ok` carries the ADR's name: `ADR-0001`.
+    fn promote(&self, change: &str, decision: &Decision) -> PortFuture<Result<String, String>>;
+    /// Per-project linter tuning, read once when the app starts.
+    fn lint_config(&self) -> LintConfig;
+    /// A written, single-file artifact: its path and its content, for reading
+    /// it in full. Specs span a file per capability, so they are refused.
+    fn read_artifact(
+        &self,
+        change: &str,
+        artifact: &str,
+    ) -> PortFuture<Result<(PathBuf, String), String>>;
 
     /// Where the project is in getting started, re-derived from disk.
     fn stage(&self) -> ProjectStage;
@@ -242,17 +277,101 @@ impl Ports for ProjectPorts {
         prune_jobs(&self.root)
     }
 
-    fn dispatch(&self, change: &str, artifact: &str) -> PortFuture<Result<String, String>> {
+    fn dispatch(
+        &self,
+        change: &str,
+        artifact: &str,
+        feedback: Option<&str>,
+    ) -> PortFuture<Result<String, String>> {
         let adapter = self.adapter.clone();
         let root = self.root.clone();
         let driver = self.driver.clone();
         let change = change.to_owned();
         let artifact = artifact.to_owned();
-        Box::pin(async move { dispatch(&adapter, &root, &change, &artifact, &driver, None).await })
+        let feedback = feedback.map(str::to_owned);
+        Box::pin(async move {
+            dispatch(
+                &adapter,
+                &root,
+                &change,
+                &artifact,
+                &driver,
+                feedback.as_deref(),
+            )
+            .await
+        })
     }
 
-    fn open_review(&self, _change: &str) -> Option<ReviewSession> {
-        None
+    fn open_review(&self, change: &str) -> PortFuture<Option<ReviewSession>> {
+        let status = self.statuses().get(change).cloned();
+        let root = self.root.clone();
+        Box::pin(blocking(None, move || {
+            let status = status?;
+            let queue = queue_for(&root, &status)?;
+            let items: Vec<ReviewItem> = queue.requirements.into_iter().map(|r| r.item).collect();
+            Some(open_session(&status.change_name, &items, queue.review))
+        }))
+    }
+
+    fn save_session(&self, session: &ReviewSession) -> Result<(), String> {
+        save_review(&self.root, &session.review)
+            .map_err(|error| format!("Could not save the review: {error}"))
+    }
+
+    fn reparse(&self, change: &str) -> PortFuture<Vec<ReviewItem>> {
+        let status = self.statuses().get(change).cloned();
+        let root = self.root.clone();
+        Box::pin(blocking(Vec::new(), move || {
+            status
+                .and_then(|status| queue_for(&root, &status))
+                .map(|queue| queue.requirements.into_iter().map(|r| r.item).collect())
+                .unwrap_or_default()
+        }))
+    }
+
+    fn mark_example(
+        &self,
+        requirement: &ReviewItem,
+        value: &str,
+    ) -> PortFuture<Result<(), String>> {
+        let requirement = requirement.clone();
+        let value = value.to_owned();
+        Box::pin(blocking(
+            Err("Could not mark the example".to_owned()),
+            move || mark_example_in_file(&requirement, &value).map(|_| ()),
+        ))
+    }
+
+    fn promote(&self, change: &str, decision: &Decision) -> PortFuture<Result<String, String>> {
+        let root = self.root.clone();
+        let change = change.to_owned();
+        let decision = decision.clone();
+        Box::pin(blocking(
+            Err("Could not promote the decision".to_owned()),
+            move || promote(&root, &change, &decision),
+        ))
+    }
+
+    fn lint_config(&self) -> LintConfig {
+        load_lint_config(&self.root)
+    }
+
+    fn read_artifact(
+        &self,
+        change: &str,
+        artifact: &str,
+    ) -> PortFuture<Result<(PathBuf, String), String>> {
+        let file = self
+            .statuses()
+            .get(change)
+            .and_then(|s| s.artifact_paths.get(artifact))
+            .map(|p| p.resolved_output_path.clone())
+            .unwrap_or_default();
+        let artifact = artifact.to_owned();
+        Box::pin(blocking(
+            Err(format!("{artifact} has not been written yet")),
+            move || read_document(&file, &artifact),
+        ))
     }
 
     fn stage(&self) -> ProjectStage {
@@ -319,4 +438,48 @@ impl Ports for ProjectPorts {
                 .map_err(|error| error.describe())
         })
     }
+}
+
+/// Runs file work on a blocking thread, never on the one that draws. Only a
+/// panic in `work` gets `fallback`.
+async fn blocking<T: Send + 'static>(fallback: T, work: impl FnOnce() -> T + Send + 'static) -> T {
+    tokio::task::spawn_blocking(work).await.unwrap_or(fallback)
+}
+
+/// A change's review queue with its decisions riding along, so reviewing a
+/// change walks its requirements and then its design in one pass. `None`
+/// while it has no spec files.
+fn queue_for(
+    root: &Path,
+    status: &OpenSpecChangeStatus,
+) -> Option<crate::core::change_review::ChangeReviewQueue> {
+    if spec_files_of(status).is_empty() {
+        return None;
+    }
+    Some(load_change_review(root, status, true))
+}
+
+/// Promotes, then leaves the reference behind — the TypeScript `promote`.
+pub fn promote(root: &Path, change: &str, decision: &Decision) -> Result<String, String> {
+    let promoted = promote_decision(
+        root,
+        decision,
+        &PromoteOptions {
+            change: Some(change.to_owned()),
+            supersedes: None,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    replace_decision_body(decision, &promoted.reference)?;
+    Ok(format!("ADR-{:04}", promoted.adr.number))
+}
+
+/// A single-file artifact's content, or why it cannot be read.
+pub fn read_document(file: &str, artifact: &str) -> Result<(PathBuf, String), String> {
+    if file.is_empty() || file.contains('*') {
+        return Err(format!("{artifact} is not a single document"));
+    }
+    std::fs::read_to_string(file)
+        .map(|content| (PathBuf::from(file), content))
+        .map_err(|_| format!("{artifact} has not been written yet"))
 }

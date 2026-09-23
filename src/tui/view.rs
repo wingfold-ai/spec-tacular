@@ -11,9 +11,11 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use super::app::{change_warnings, App, Hits, PromptStep, Screen, Target};
+use super::document::render_document;
 use super::guide::{first_change_lines, help_lines};
 use super::home::render_home;
 use super::jobs::{render_job_pane, summarize_jobs};
+use super::review::render_review;
 use super::theme;
 use super::widgets::{
     buttons_height, clip, dim, panel, panel_inner, render_buttons, render_key_bar, short_path,
@@ -40,7 +42,9 @@ pub fn render(app: &App, frame: &mut Frame<'_>) -> Hits {
 
     let mut flow = Flow::new(area);
     render_header(frame, flow.take(1), app);
-    if let Some(step) = app.step() {
+    // Setup steps until there is a change — never over a review, which has
+    // its own sense of where you are.
+    if let Some(step) = app.step().filter(|_| app.screen != Screen::Review) {
         let steps = setup_steps(app.greenfield);
         let row = flow.take(1);
         frame.render_widget(Paragraph::new(stepper_line(step, &steps)), inset(row, 1));
@@ -52,7 +56,11 @@ pub fn render(app: &App, frame: &mut Frame<'_>) -> Hits {
         render_job_pane(frame, panel_inner(body), app, &mut hits);
         return hits;
     }
-    render_overview(frame, body, app, &mut hits);
+    match app.screen {
+        Screen::Review => render_review(frame, body, app),
+        Screen::Document => render_document(frame, body, app, &mut hits),
+        Screen::Home | Screen::Overview => render_overview(frame, body, app, &mut hits),
+    }
     hits
 }
 
@@ -64,9 +72,21 @@ fn inset(area: Rect, by: u16) -> Rect {
     }
 }
 
-/// `spec-tacular  ~/project                              jobs: 1 running`.
+/// `spec-tacular  ~/project › change › specs          jobs: 1 running`.
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let area = inset(area, 1);
+    let crumb = match app.screen {
+        Screen::Review => app
+            .review
+            .as_ref()
+            .map(|r| format!(" › {} › specs", r.session.change)),
+        Screen::Document => app
+            .doc
+            .as_ref()
+            .map(|d| format!(" › {} › {}", d.change, d.artifact)),
+        Screen::Home | Screen::Overview => None,
+    }
+    .unwrap_or_default();
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -76,7 +96,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  {}", short_path(&app.root, 50)),
+                format!("  {}{crumb}", short_path(&app.root, 50)),
                 Style::default().fg(theme::DIM),
             ),
         ])),
@@ -378,7 +398,7 @@ fn render_change(
         flow.blank();
         flow.wrapped(
             frame,
-            "You are told here when it is done. Keep working meanwhile.",
+            "It opens here for you to read when it is done. Keep working meanwhile.",
             Style::default().fg(theme::TEXT),
         );
         flow.blank();

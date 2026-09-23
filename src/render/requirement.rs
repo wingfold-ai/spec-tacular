@@ -113,7 +113,7 @@ pub fn render_counts(summary: &ReviewSummary) -> String {
 /// A ground rule and a design decision are both reviewed as bare items, but
 /// telling a reviewer they are looking at a "requirement" when they are looking
 /// at a Foundation answer is how a tool loses their trust.
-fn noun(item: &ReviewedItem) -> &'static str {
+pub fn noun(item: &ReviewedItem) -> &'static str {
     if item.item.is_requirement() {
         "requirement"
     } else if item.item.capability.starts_with("foundation/") {

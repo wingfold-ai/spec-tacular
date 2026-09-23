@@ -69,6 +69,29 @@ static SCOPE_MARKER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\*\*Scope:\s*(local|global)\s*\*\*").expect("built-in pattern")
 });
 
+/// A decision body's `**Scope: …**` marker; `local` when there is none.
+fn scope_of(body: &str) -> DecisionScope {
+    SCOPE_MARKER
+        .captures(body)
+        .map(|caps| match caps[1].to_ascii_lowercase().as_str() {
+            "global" => DecisionScope::Global,
+            _ => DecisionScope::Local,
+        })
+        .unwrap_or(DecisionScope::Local)
+}
+
+impl Decision {
+    /// The decision a review item is, if it is one: a `design` item with no
+    /// spec detail. The review queue carries decisions as plain
+    /// [`ReviewItem`]s, so the scope is re-read from the body it came with.
+    pub fn from_item(item: &ReviewItem) -> Option<Self> {
+        (item.capability == "design" && !item.is_requirement()).then(|| Self {
+            scope: scope_of(&item.text),
+            item: item.clone(),
+        })
+    }
+}
+
 /// Parses the Decisions section of a design document.
 ///
 /// Scope defaults to `local` when unmarked: promoting something project-wide
@@ -117,13 +140,7 @@ pub fn parse_decisions(content: &str, file: &str) -> Vec<Decision> {
         }
 
         let body = body_lines.join("\n").trim().to_owned();
-        let scope = SCOPE_MARKER
-            .captures(&body)
-            .map(|caps| match caps[1].to_ascii_lowercase().as_str() {
-                "global" => DecisionScope::Global,
-                _ => DecisionScope::Local,
-            })
-            .unwrap_or(DecisionScope::Local);
+        let scope = scope_of(&body);
 
         let base = slugify(&name);
         let count = seen.entry(base.clone()).or_insert(0);
@@ -493,6 +510,20 @@ Nothing much.
                 ("Unmarked decision", DecisionScope::Local),
             ]
         );
+    }
+
+    #[test]
+    fn a_review_item_is_read_back_as_the_decision_it_came_from() {
+        for decision in parse_default() {
+            assert_eq!(Decision::from_item(&decision.item), Some(decision));
+        }
+        // A requirement is not a decision, whatever its capability.
+        let spec = crate::core::requirements::parse_spec_file(
+            "## ADDED Requirements\n\n### Requirement: A\nSHALL a.\n",
+            "design",
+            "/p/specs/design/spec.md",
+        );
+        assert_eq!(Decision::from_item(&spec.requirements[0]), None);
     }
 
     #[test]

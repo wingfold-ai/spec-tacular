@@ -92,9 +92,10 @@ impl Button {
     }
 
     /// Border plus two columns of padding on each side, as the TypeScript's
-    /// box model produced.
+    /// box model produced. Measured in terminal cells, not characters: a
+    /// label with an emoji in it is one cell wider than it is long.
     pub fn width(&self) -> u16 {
-        u16::try_from(self.label.chars().count().saturating_add(6)).unwrap_or(u16::MAX)
+        u16::try_from(Span::raw(self.label.as_str()).width().saturating_add(6)).unwrap_or(u16::MAX)
     }
 }
 
