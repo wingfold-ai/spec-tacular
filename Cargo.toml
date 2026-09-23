@@ -3,9 +3,14 @@ name = "spec-tacular"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "A terminal UI for spec-driven development built on OpenSpec"
-repository = "https://github.com/marius-hoegger/spec-tacular"
+description = "A terminal UI for spec-driven development built on OpenSpec: every requirement reviewed before it is built"
+repository = "https://github.com/mhoegger/spec-tacular"
 readme = "README.md"
+keywords = ["openspec", "tui", "spec-driven", "ratatui", "agents"]
+categories = ["command-line-utilities", "development-tools"]
+# The oldest toolchain CI runs the test suite with (.github/workflows/ci.yml).
+# ratatui 0.30 needs 1.88; nothing in this crate needs newer.
+rust-version = "1.88"
 
 [[bin]]
 name = "spectacular"

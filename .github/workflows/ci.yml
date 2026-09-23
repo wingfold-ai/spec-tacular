@@ -1,0 +1,113 @@
+name: CI
+
+# Every push to main, and every pull request (whatever its base, so each
+# stacked PR is checked against the branch below it).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # .cargo/config.toml builds for x86_64-unknown-linux-musl, linked with
+  # rust-lld and a self-contained sysroot. The runners have a C toolchain, so
+  # build scripts and proc-macros link through `cc` as usual; scripts/no-cc.sh
+  # is only for machines without one and is not used here.
+  MUSL: x86_64-unknown-linux-musl
+  # The oldest toolchain the suite is run with; Cargo.toml's rust-version.
+  MSRV: "1.88"
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --target "$MUSL"
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: clippy
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.toolchain }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, msrv]
+    env:
+      # The real-openspec smoke test fails instead of skipping.
+      SPECTACULAR_TEST_REQUIRE_OPENSPEC: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          toolchain=${{ matrix.toolchain }}
+          [ "$toolchain" = msrv ] && toolchain=$MSRV
+          rustup toolchain install "$toolchain" --profile minimal --target "$MUSL"
+          rustup default "$toolchain"
+          rustc --version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      # The one test that talks to the real OpenSpec CLI; everything else in
+      # the suite uses stand-ins, and no test ever runs a real agent.
+      - name: Install the OpenSpec CLI
+        run: |
+          npm install --global @fission-ai/openspec@1.13.1
+          openspec --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: test-${{ matrix.toolchain }}
+      - run: cargo test --locked
+
+  release-build:
+    name: release build (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target "$MUSL"
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: release
+      - run: cargo build --locked --release --target "$MUSL" --bin spectacular
+      - name: Check the binary is static and runs
+        run: |
+          bin="target/$MUSL/release/spectacular"
+          file "$bin"
+          file "$bin" | grep -q 'static'
+          ls -l "$bin"
+          "$bin" --version
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spectacular-${{ env.MUSL }}
+          path: target/${{ env.MUSL }}/release/spectacular
+          retention-days: 7

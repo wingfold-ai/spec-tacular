@@ -938,16 +938,22 @@ esac"#
 ///
 /// SKIPPED when the CLI is not installed, and says so: the rest of the suite
 /// runs against a stand-in on purpose, but a contract with another program is
-/// worth checking against that program at least once.
+/// worth checking against that program at least once. CI installs it and sets
+/// `SPECTACULAR_TEST_REQUIRE_OPENSPEC`, which turns the skip into a failure,
+/// so a runner that lost `openspec` cannot pass by quietly skipping.
 #[test]
 fn smoke_the_real_openspec_cli_when_it_is_installed() {
+    let skip = |why: &str| {
+        if std::env::var_os("SPECTACULAR_TEST_REQUIRE_OPENSPEC").is_some_and(|v| !v.is_empty()) {
+            panic!("{why}, and SPECTACULAR_TEST_REQUIRE_OPENSPEC is set");
+        }
+        eprintln!("SKIPPED: {why}");
+    };
     let Ok(output) = Command::new("openspec").arg("--version").output() else {
-        eprintln!("SKIPPED: `openspec` is not on PATH");
-        return;
+        return skip("`openspec` is not on PATH");
     };
     if !output.status.success() {
-        eprintln!("SKIPPED: `openspec --version` failed");
-        return;
+        return skip("`openspec --version` failed");
     }
 
     let dir = TempDir::new("real-openspec");
