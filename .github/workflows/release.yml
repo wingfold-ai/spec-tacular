@@ -4,9 +4,16 @@ name: Release
 # static Linux binaries (musl, x86_64 and aarch64), macOS binaries (x86_64 and
 # Apple silicon), each as a tar.gz with the README and the licence, and a
 # SHA256SUMS file. A tag with a hyphen (`v1.0.0-rc.1`) makes a pre-release.
+#
+# A pull request that changes this workflow or the linker setup runs the
+# build and every check as a dry run, packaged as `dev`; only a tag publishes.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .cargo/config.toml
 
 permissions:
   contents: read
@@ -35,11 +42,12 @@ jobs:
           - { target: x86_64-apple-darwin, os: macos-15 }
     env:
       TARGET: ${{ matrix.target }}
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check the tag matches Cargo.toml
+        if: github.ref_type == 'tag'
         shell: bash
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
@@ -61,7 +69,8 @@ jobs:
         run: cargo build --locked --release --target "$TARGET" --bin spectacular
 
       # The release profile already strips (Cargo.toml `strip = true`); this
-      # checks it did, and that the binary starts.
+      # checks it did, and that every binary starts: aarch64 Linux under qemu,
+      # x86_64 macOS under Rosetta on the Apple-silicon runner.
       - name: Check the binary
         shell: bash
         run: |
@@ -73,6 +82,14 @@ jobs:
               file "$bin" | grep -q 'static' || { echo "::error::not static"; exit 1; }
               file "$bin" | grep -q 'stripped' || { echo "::error::not stripped"; exit 1; }
               ;;
+            *-apple-darwin)
+              # `file` does not say whether a Mach-O is stripped; the symbol
+              # table does. Unstripped, it holds tens of thousands of
+              # symbols; stripped, only what the dynamic linker needs.
+              symbols=$(nm -U "$bin" 2>/dev/null | wc -l | tr -d ' ')
+              echo "defined symbols: $symbols"
+              [ "$symbols" -lt 1000 ] || { echo "::error::not stripped ($symbols symbols)"; exit 1; }
+              ;;
           esac
           case "$TARGET" in
             x86_64-unknown-linux-musl|aarch64-apple-darwin)
@@ -81,6 +98,9 @@ jobs:
               sudo apt-get update -qq
               sudo apt-get install -y -qq qemu-user
               qemu-aarch64 "$bin" --version ;;
+            x86_64-apple-darwin)
+              sudo softwareupdate --install-rosetta --agree-to-license
+              arch -x86_64 "$bin" --version ;;
           esac
 
       - name: Package
@@ -109,6 +129,7 @@ jobs:
   release:
     name: publish the release
     needs: build
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

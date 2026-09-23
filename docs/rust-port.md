@@ -250,7 +250,10 @@ with `rust-lld`, checked under qemu) on Linux and `x86_64-apple-darwin` and
 `aarch64-apple-darwin` on macOS, packs each stripped binary with the README
 and the licence as `spectacular-<tag>-<target>.tar.gz`, and publishes them
 with a `SHA256SUMS` file as a GitHub release. A tag with a hyphen
-(`v1.0.0-rc.1`) is published as a pre-release.
+(`v1.0.0-rc.1`) is published as a pre-release. Each binary is checked for
+being stripped and is run once — aarch64 Linux under qemu, x86_64 macOS under
+Rosetta. A pull request that touches the workflow or `.cargo/config.toml`
+runs all of it as a dry run, without publishing.
 
 ### Building without a C toolchain
 
