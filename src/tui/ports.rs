@@ -174,6 +174,10 @@ pub trait Ports: Send + Sync {
 
     /// Where the project is in getting started, re-derived from disk.
     fn stage(&self) -> ProjectStage;
+    /// The same, read off the loop's thread — what the ground rules re-read
+    /// after every answer, so the stepper moves on as soon as the last one
+    /// is saved.
+    fn read_stage(&self) -> PortFuture<ProjectStage>;
     /// Whether the project starts from nothing — no baseline specs yet.
     fn greenfield(&self) -> bool;
     fn roadmap(&self) -> Option<Roadmap>;
@@ -410,6 +414,14 @@ impl Ports for ProjectPorts {
     fn stage(&self) -> ProjectStage {
         let count = self.statuses().len();
         project_stage(&self.root, count)
+    }
+
+    fn read_stage(&self) -> PortFuture<ProjectStage> {
+        let count = self.statuses().len();
+        let root = self.root.clone();
+        Box::pin(blocking(ProjectStage::NoOpenspec, move || {
+            project_stage(&root, count)
+        }))
     }
 
     fn greenfield(&self) -> bool {

@@ -292,6 +292,9 @@ pub enum Msg {
         generation: u64,
         questions: Vec<GuidedQuestion>,
         meta: Meta,
+        /// Where the project stands, re-derived with them: the last answer
+        /// moves it past the ground rules.
+        stage: ProjectStage,
     },
     /// The advisor looked at the answer to the question `label` names.
     Advised {
@@ -996,7 +999,8 @@ impl App {
                 generation,
                 questions,
                 meta,
-            } => self.foundation_read(ports, generation, questions, meta),
+                stage,
+            } => self.foundation_read(ports, generation, questions, meta, stage),
             Msg::Advised {
                 token,
                 label,

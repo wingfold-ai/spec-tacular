@@ -412,6 +412,21 @@ fn the_done_panel_goes_back_to_the_last_answer_with_left() {
 }
 
 #[test]
+fn the_stepper_ticks_off_the_ground_rules_as_soon_as_the_last_is_answered() {
+    let mut ui = begun(None);
+    ui.expect("2. Ground rules");
+    for i in 0..19 {
+        ui.type_text(&format!("answer {i}"));
+        ui.press(KeyCode::Enter);
+    }
+    // Still on the screen, on the done panel — not only after leaving it.
+    assert_eq!(ui.app.screen, Screen::Foundation);
+    ui.expect("✓ All 19 ground rules are answered.");
+    ui.expect("✓ Set up  ──  ✓ Ground rules  ──  3. First change");
+    ui.expect_not("2. Ground rules");
+}
+
+#[test]
 fn without_an_advisor_help_says_so_and_is_not_offered() {
     let mut ui = begun(None);
     ui.expect("AI suggestions off: none in this test");
@@ -529,6 +544,7 @@ fn a_stale_read_of_the_questions_is_dropped() {
             generation: older,
             questions: Vec::new(),
             meta: Default::default(),
+            stage: crate::core::guide::ProjectStage::NoOpenspec,
         },
     );
     ui.run(effects);

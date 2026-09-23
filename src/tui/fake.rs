@@ -480,6 +480,12 @@ impl Ports for FakePorts {
         project_stage(self.dir.path(), lock(&self.changes).len())
     }
 
+    fn read_stage(&self) -> PortFuture<ProjectStage> {
+        let count = lock(&self.changes).len();
+        let root = self.path();
+        Box::pin(async move { project_stage(&root, count) })
+    }
+
     fn greenfield(&self) -> bool {
         is_greenfield(self.dir.path())
     }

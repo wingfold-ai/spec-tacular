@@ -42,6 +42,7 @@ use super::widgets::{
 };
 use crate::core::advisor::{AdviceOption, AfterAnswer, Coached, Meta, QuestionMeta};
 use crate::core::foundation::GuidedQuestion;
+use crate::core::guide::ProjectStage;
 use crate::render::requirement::wrap;
 
 /// Typed instead of an answer, these ask for help.
@@ -360,11 +361,13 @@ impl App {
         self.latest.foundation = generation;
         let questions = ports.questions();
         let meta = ports.advisor_meta();
+        let stage = ports.read_stage();
         Effect::Spawn(Box::pin(async move {
             Msg::FoundationRead {
                 generation,
                 questions: questions.await,
                 meta: meta.await,
+                stage: stage.await,
             }
         }))
     }
@@ -376,6 +379,7 @@ impl App {
         generation: u64,
         questions: Vec<GuidedQuestion>,
         meta: Meta,
+        stage: ProjectStage,
     ) -> Vec<Effect> {
         // A newer read is on its way; whatever this one would have settled
         // is still pending in the state, for that one.
@@ -384,6 +388,9 @@ impl App {
         }
         self.ground.questions = questions;
         self.ground.meta = meta;
+        // As the TypeScript's refreshFoundation did: the stepper and the
+        // banner follow every answer, not only leaving the screen.
+        self.stage = stage;
         let mut effects = Vec::new();
         if let Some(opening) = self.ground.opening.take() {
             let here = matches!(self.screen, Screen::Home | Screen::Overview);
