@@ -32,14 +32,13 @@ pub struct AgentRequest<'a> {
 /// `Research` may look things up on the web (current versions); `Think`
 /// reasons with no tools; `Quick` is a small offline task on a fast model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(dead_code)]
 pub enum StructuredMode {
+    /// The Foundation advisor: follow-ups, options, help.
     #[default]
     Research,
-    /// Reasoning with no tools. Its caller is the vision interview, in stage 8.
+    /// Reasoning with no tools: the vision interview.
     Think,
-    /// A small offline task on a fast model. Its caller is the name proposal,
-    /// in stage 8.
+    /// A small offline task on a fast model: proposing a change's name.
     Quick,
 }
 

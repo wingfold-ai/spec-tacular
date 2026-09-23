@@ -25,8 +25,9 @@ use ratatui::layout::{Position, Rect};
 use super::document::Document;
 use super::foundation::{FoundationScreen, GroundRules};
 use super::input::{edit_line, is_cancel, is_ctrl, is_enter};
-use super::ports::{JobsView, PortFuture, Ports, Snapshot};
+use super::ports::{JobsView, PortFuture, Ports, Snapshot, VisionAnswer};
 use super::review::Review;
+use super::vision::{StepKind, VisionButton, VisionScreen, VisionState};
 use crate::core::advisor::{AfterAnswer, Coached, Meta};
 use crate::core::concreteness::LintConfig;
 use crate::core::foundation::GuidedQuestion;
@@ -38,10 +39,11 @@ use crate::core::jobs::{Job, JobStatus};
 use crate::core::naming::name_from_description;
 use crate::core::pipeline::{ChangePipeline, StageState};
 use crate::core::requirements::ReviewItem;
-use crate::core::roadmap::Roadmap;
+use crate::core::roadmap::{Roadmap, Slice};
 use crate::core::session::ReviewSession;
+use crate::core::vision::ProposedSlice;
 
-/// Which screen is up. The vision interview joins this in stage 8.
+/// Which screen is up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     /// The logo, where the project stands, and one obvious next step.
@@ -55,6 +57,9 @@ pub enum Screen {
     Document,
     /// The ground rules, one question at a time ([`super::foundation`]).
     Foundation,
+    /// A new project's vision: described, interviewed, sliced
+    /// ([`super::vision`]).
+    Vision,
 }
 
 /// Which half of the new-change prompt is showing.
@@ -117,6 +122,8 @@ pub enum HomeAction {
     NewChange,
     FirstChange,
     GroundRules,
+    DescribeVision,
+    ContinueVision,
 }
 
 impl HomeAction {
@@ -128,6 +135,8 @@ impl HomeAction {
             HomeAction::NewChange => "New change",
             HomeAction::FirstChange => "Start your first change",
             HomeAction::GroundRules => "Ground rules",
+            HomeAction::DescribeVision => "Describe your vision",
+            HomeAction::ContinueVision => "Continue your vision",
         }
     }
 }
@@ -167,6 +176,12 @@ pub enum Target {
     GroundRow(usize),
     /// The ground rules' one button: Begin, or Continue.
     GroundButton,
+    /// One of the vision screen's buttons.
+    VisionButton(VisionButton),
+    /// A row of the interview's choice list.
+    VisionRow(usize),
+    /// A proposed slice.
+    SliceRow(usize),
 }
 
 /// Where each clickable thing was drawn last frame.
@@ -273,7 +288,13 @@ pub enum Msg {
         change: String,
         result: Result<PathBuf, String>,
     },
-    Names(Vec<String>),
+    /// Better names for the change being described.
+    Names {
+        /// Which proposal this answers: one for an earlier description is
+        /// dropped.
+        generation: u64,
+        names: Vec<String>,
+    },
     /// The jobs as [`App::read_jobs`] asked for them, for the selection that
     /// was current then.
     JobsRead {
@@ -319,6 +340,25 @@ pub enum Msg {
         name: String,
         removed: bool,
     },
+    /// A step of the vision interview came back.
+    Vision {
+        generation: u64,
+        kind: StepKind,
+        answer: VisionAnswer,
+    },
+    /// The vision and the roadmap were written; the first slice to start.
+    VisionConfirmed {
+        generation: u64,
+        kept: Vec<ProposedSlice>,
+        result: Result<Option<Slice>, String>,
+    },
+    /// The first slice's change was created.
+    VisionCreated {
+        generation: u64,
+        name: String,
+        notice: String,
+        result: Result<(), String>,
+    },
 }
 
 /// The newest request of each kind whose answer replaces state wholesale.
@@ -338,6 +378,10 @@ pub struct Latest {
     pub doc: u64,
     /// The newest read of the ground rules.
     pub foundation: u64,
+    /// The newest request for better names.
+    pub names: u64,
+    /// The newest request of the vision interview.
+    pub vision: u64,
 }
 
 impl Latest {
@@ -410,6 +454,10 @@ pub struct App {
     pub ground: GroundRules,
     /// The ground-rules screen, on [`Screen::Foundation`].
     pub foundation: Option<FoundationScreen>,
+    /// The vision and the model's work on it, across visits.
+    pub vision: VisionState,
+    /// The vision screen, on [`Screen::Vision`].
+    pub vision_screen: Option<VisionScreen>,
 }
 
 impl App {
@@ -453,6 +501,12 @@ impl App {
                 ..GroundRules::default()
             },
             foundation: None,
+            vision: VisionState {
+                session: ports.vision_session(),
+                note: ports.vision_note(),
+                ..VisionState::default()
+            },
+            vision_screen: None,
         };
         let jobs = app.read_jobs(ports, false);
         let first = app.reload(ports, None, None, None);
@@ -585,18 +639,28 @@ impl App {
     }
 
     /// The start screen's buttons, before Quit. The first is the next step.
-    ///
-    /// A project at the vision step is offered its first change: the vision
-    /// interview is stage 8, and a change is what it ends in anyway.
     pub fn home_actions(&self) -> Vec<HomeAction> {
         match self.stage {
             ProjectStage::NoOpenspec | ProjectStage::NoFoundation => vec![HomeAction::Start],
             ProjectStage::Foundation { .. } => {
                 vec![HomeAction::ContinueGroundRules, HomeAction::OpenProject]
             }
-            ProjectStage::Vision | ProjectStage::NoChanges => {
-                vec![HomeAction::FirstChange, HomeAction::GroundRules]
+            ProjectStage::Vision => {
+                let started = self
+                    .vision
+                    .session
+                    .as_ref()
+                    .is_some_and(|s| !s.vision.is_empty());
+                vec![
+                    if started {
+                        HomeAction::ContinueVision
+                    } else {
+                        HomeAction::DescribeVision
+                    },
+                    HomeAction::GroundRules,
+                ]
             }
+            ProjectStage::NoChanges => vec![HomeAction::FirstChange, HomeAction::GroundRules],
             ProjectStage::Working => vec![
                 HomeAction::OpenProject,
                 HomeAction::NewChange,
@@ -648,9 +712,10 @@ impl App {
             || self.prompt.as_ref().is_some_and(|p| p.naming)
             || (self.screen == Screen::Overview && self.running().is_some())
             || self.ground_animating()
+            || self.vision_animating()
     }
 
-    fn taken(&self) -> Vec<String> {
+    pub(super) fn taken(&self) -> Vec<String> {
         self.pipelines.iter().map(|p| p.name.clone()).collect()
     }
 
@@ -661,6 +726,12 @@ impl App {
         match event {
             Event::Key(key) => self.on_key(ports, key),
             Event::Mouse(mouse) => self.on_mouse(ports, mouse),
+            Event::Paste(text) => {
+                if self.screen == Screen::Vision && !self.jobs_open {
+                    self.vision_paste(text);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -731,6 +802,7 @@ impl App {
             Screen::Review => self.review_key(ports, key),
             Screen::Document => self.document_key(ports, key),
             Screen::Foundation => self.foundation_key(ports, key),
+            Screen::Vision => self.vision_key(ports, key),
         }
     }
 
@@ -781,6 +853,9 @@ impl App {
             Target::DocButton(i) => self.press_doc(ports, i),
             Target::DocText => Vec::new(),
             Target::GroundRow(_) | Target::GroundButton => self.foundation_click(ports, target),
+            Target::VisionButton(_) | Target::VisionRow(_) | Target::SliceRow(_) => {
+                self.vision_click(ports, target)
+            }
         }
     }
 
@@ -953,7 +1028,15 @@ impl App {
                     Vec::new()
                 }
             },
-            Msg::Names(proposed) => {
+            Msg::Names {
+                generation,
+                names: proposed,
+            } => {
+                // A proposal for an earlier description — the prompt was
+                // cancelled and started again — is not about this change.
+                if generation < self.latest.names {
+                    return Vec::new();
+                }
                 let Some(prompt) = self.prompt.as_mut() else {
                     return Vec::new();
                 };
@@ -1013,6 +1096,22 @@ impl App {
                 result,
             } => self.coached(ports, token, &label, result),
             Msg::Dismissed { name, removed } => self.dismissed(ports, &name, removed),
+            Msg::Vision {
+                generation,
+                kind,
+                answer,
+            } => self.vision_answered(ports, generation, kind, answer),
+            Msg::VisionConfirmed {
+                generation,
+                kept,
+                result,
+            } => self.vision_confirmed(ports, generation, kept, result),
+            Msg::VisionCreated {
+                generation,
+                name,
+                notice,
+                result,
+            } => self.vision_created(ports, generation, name, notice, result),
         }
     }
 
@@ -1075,6 +1174,10 @@ impl App {
                 self.start_new_change();
                 Vec::new()
             }
+            HomeAction::DescribeVision | HomeAction::ContinueVision => {
+                self.open_vision();
+                Vec::new()
+            }
         }
     }
 
@@ -1082,7 +1185,7 @@ impl App {
         self.screen = Screen::Overview;
     }
 
-    fn enter_home(&mut self) {
+    pub(super) fn enter_home(&mut self) {
         // Remounted, as the TypeScript's was: focus on the next step, and the
         // logo types itself in again.
         self.screen = Screen::Home;
@@ -1199,10 +1302,15 @@ impl App {
                 prompt.draft = quick.clone();
                 prompt.quick = quick;
                 prompt.name_edited = false;
+                // Taken whether or not there is a model to ask: a proposal
+                // still on its way for an earlier description is older than
+                // this one either way.
+                let generation = self.latest.issue();
+                self.latest.names = generation;
                 match ports.propose_names(&text, &taken) {
                     Some(work) => {
                         prompt.naming = true;
-                        vec![spawn(work, Msg::Names)]
+                        vec![spawn(work, move |names| Msg::Names { generation, names })]
                     }
                     None => Vec::new(),
                 }
@@ -1263,7 +1371,7 @@ impl App {
         }
     }
 
-    fn start_new_change(&mut self) {
+    pub(super) fn start_new_change(&mut self) {
         if !self.foundation_settled() {
             self.notice = Some("Settle the ground rules first — f continues them".to_owned());
             return;

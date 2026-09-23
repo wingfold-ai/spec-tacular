@@ -287,8 +287,8 @@ pub async fn run_instructions(
 /// Context bundle plus OpenSpec's instructions — exactly what a job runs on.
 ///
 /// `feedback` is a redraft: the developer read the draft and said what to
-/// change. No flag reaches it yet — the CLI surface is unchanged — because the
-/// UI that collects feedback is the review screen, and that is stage 8. It is a
+/// change. No flag reaches it — the CLI surface is unchanged — because the UI
+/// that collects feedback is the document viewer's "redraft with feedback". It is a
 /// parameter rather than a later edit so the text a redraft is built from is
 /// written and tested once.
 pub async fn compose_prompt(

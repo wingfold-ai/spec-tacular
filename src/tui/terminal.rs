@@ -12,7 +12,9 @@ use std::io::{self, Stdout};
 use std::sync::Once;
 
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
@@ -62,7 +64,15 @@ impl Drop for Tui {
 
 fn take_over() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)
+    // Bracketed paste: a pasted text arrives as one event rather than as
+    // keystrokes, so its line breaks are text and not a string of enters.
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste,
+        Hide
+    )
 }
 
 /// Undoes [`take_over`]. Every step is attempted even if one fails, and
@@ -71,6 +81,7 @@ fn take_over() -> io::Result<()> {
 pub fn restore() {
     let _ = execute!(
         io::stdout(),
+        DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen,
         Show

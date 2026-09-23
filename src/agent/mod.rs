@@ -9,11 +9,8 @@
 pub mod claude;
 pub mod driver;
 pub mod opencode;
-/// Running a driver's structured request. Its caller is the advisor, in
-/// stage 8; the module lands with the drivers because it is the other half of
-/// what a driver is, and splitting them across two stages would mean shipping
-/// a trait whose second method nothing could exercise.
-#[allow(dead_code)]
+/// Running a driver's structured request — the model behind the advisor,
+/// the vision interview and the name proposal.
 pub mod structured;
 
 use driver::DriverRegistry;

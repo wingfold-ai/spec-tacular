@@ -19,7 +19,10 @@ use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 
-use super::ports::{jobs_view, promote, read_document, JobsView, PortFuture, Ports, Snapshot};
+use super::ports::{
+    ask_names, jobs_view, promote, read_document, run_vision_step, JobsView, PortFuture, Ports,
+    Snapshot, VisionAnswer, VisionStep,
+};
 use crate::adapter::types::{
     OpenSpecArtifact, OpenSpecArtifactPaths, OpenSpecArtifactStatus, OpenSpecChangeStatus,
 };
@@ -36,9 +39,11 @@ use crate::core::mark::mark_example_in_file;
 use crate::core::pipeline::{build_pipeline, ChangePipeline, ReviewByArtifact};
 use crate::core::requirements::ReviewItem;
 use crate::core::review::save_review;
-use crate::core::roadmap::{load_roadmap, Roadmap};
+use crate::core::roadmap::{load_roadmap, Roadmap, Slice};
 use crate::core::session::{open_session, ReviewSession};
-use crate::core::vision::is_greenfield;
+use crate::core::vision::{
+    is_greenfield, load_session, ProposedSlice, VisionInterviewer, VisionSession,
+};
 
 const ORDER: [&str; 4] = ["proposal", "specs", "design", "tasks"];
 
@@ -147,13 +152,24 @@ pub fn job(id: &str, change: &str, artifact: &str, status: JobStatus) -> Job {
     }
 }
 
-/// How the fake answers a request for better names.
+/// How the fake's model answers a request for better names. The answer goes
+/// through the real [`ask_names`] — the prompt, and the filter over what
+/// comes back — so only the model is pretend.
 pub enum Names {
     /// No model: the instant name is all there is.
     None,
+    /// The model's best name, then its alternatives.
     Now(Vec<String>),
     /// Held until the test sends them — for a proposal that arrives late.
     Later(oneshot::Receiver<Vec<String>>),
+}
+
+/// The model's answer to a name prompt, as the schema shapes it.
+fn names_answer(names: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "name": names.first().cloned().unwrap_or_default(),
+        "alternatives": names.iter().skip(1).collect::<Vec<_>>(),
+    })
 }
 
 /// See the module docs.
@@ -174,6 +190,11 @@ pub struct FakePorts {
     pub lint: LintConfig,
     /// The advisor, with a scripted model behind it; `None` is no advisor.
     pub advisor: Option<FoundationAdvisor>,
+    /// The vision interview, with a scripted model behind it; `None` is no
+    /// model — the description is kept without an interview.
+    pub vision: Option<VisionInterviewer>,
+    /// Every prompt the name model was sent.
+    pub name_prompts: std::sync::Arc<Mutex<Vec<String>>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -198,7 +219,25 @@ impl FakePorts {
             docs: Mutex::default(),
             lint: LintConfig::empty(),
             advisor: None,
+            vision: None,
+            name_prompts: std::sync::Arc::default(),
         }
+    }
+
+    /// With a vision interview whose model is `ask`.
+    pub fn with_vision(mut self, ask: Ask) -> Self {
+        self.vision = Some(VisionInterviewer::new(self.path(), ask));
+        self
+    }
+
+    /// The interviewer, real or — with no model — one whose model refuses.
+    fn interviewer(&self) -> VisionInterviewer {
+        self.vision.clone().unwrap_or_else(|| {
+            VisionInterviewer::new(
+                self.path(),
+                std::sync::Arc::new(|_, _| Box::pin(async { Err("no model".to_owned()) })),
+            )
+        })
     }
 
     /// With an advisor whose model is `ask` — the real `core::advisor`
@@ -578,18 +617,59 @@ impl Ports for FakePorts {
 
     fn propose_names(
         &self,
-        _description: &str,
-        _taken: &[String],
+        description: &str,
+        taken: &[String],
     ) -> Option<PortFuture<Vec<String>>> {
         let names = std::mem::replace(&mut *lock(&self.names), Names::None);
-        match names {
-            Names::None => None,
+        let seen = std::sync::Arc::clone(&self.name_prompts);
+        let answer: PortFuture<Vec<String>> = match names {
+            Names::None => return None,
             Names::Now(names) => {
                 *lock(&self.names) = Names::Now(names.clone());
-                Some(Box::pin(async move { names }))
+                Box::pin(async move { names })
             }
-            Names::Later(rx) => Some(Box::pin(async move { rx.await.unwrap_or_default() })),
-        }
+            Names::Later(rx) => Box::pin(async move { rx.await.unwrap_or_default() }),
+        };
+        let answer = std::sync::Arc::new(Mutex::new(Some(answer)));
+        let ask: Ask = std::sync::Arc::new(move |prompt, _schema| {
+            lock(&seen).push(prompt);
+            let answer = lock(&answer).take();
+            Box::pin(async move {
+                match answer {
+                    Some(names) => Ok(names_answer(&names.await)),
+                    None => Err("asked twice".to_owned()),
+                }
+            })
+        });
+        Some(Box::pin(ask_names(
+            ask,
+            description.to_owned(),
+            taken.to_vec(),
+        )))
+    }
+
+    fn vision_note(&self) -> Option<String> {
+        self.vision
+            .is_none()
+            .then(|| "none in this test".to_owned())
+    }
+
+    fn vision_session(&self) -> Option<VisionSession> {
+        load_session(self.dir.path())
+    }
+
+    fn vision(&self, step: VisionStep) -> PortFuture<VisionAnswer> {
+        let interviewer = self.interviewer();
+        Box::pin(async move { run_vision_step(&interviewer, step).await })
+    }
+
+    fn confirm_vision(
+        &self,
+        vision: &str,
+        kept: &[ProposedSlice],
+    ) -> PortFuture<Result<Option<Slice>, String>> {
+        let result = self.interviewer().confirm(vision, kept);
+        Box::pin(async move { result })
     }
 }
 

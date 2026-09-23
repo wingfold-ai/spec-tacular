@@ -16,7 +16,7 @@ use crate::core::advisor::Ask;
 use crate::core::foundation::{foundation_dir, guided_questions, GuidedQuestion};
 use crate::tui::app::{Msg, Screen};
 use crate::tui::fake::{change_with, FakePorts};
-use crate::tui::ports::{Ports, ProjectPorts, NO_ADVISOR_YET};
+use crate::tui::ports::{Ports, ProjectPorts};
 
 /// A model that answers every prompt with `answer(prompt)`.
 fn model(answer: impl Fn(&str) -> Result<Value, String> + Send + Sync + 'static) -> Ask {
@@ -570,8 +570,30 @@ fn a_refused_answer_keeps_you_on_the_question_with_it_still_typed() {
 }
 
 #[test]
-fn the_real_ports_say_the_advisor_is_stage_8() {
+fn the_real_ports_say_why_there_is_no_advisor() {
+    use crate::tui::ports::advisor_note_for;
+    // Turned off: whatever the driver.
+    assert_eq!(
+        advisor_note_for("claude", Some("1")).as_deref(),
+        Some("turned off by SPECTACULAR_NO_ADVISOR")
+    );
+    // An empty value is not "on".
+    assert_eq!(
+        advisor_note_for("opencode", Some("")),
+        advisor_note_for("opencode", None)
+    );
+    // A driver that cannot answer structured requests, or does not exist.
+    assert!(advisor_note_for("opencode", None)
+        .expect("opencode cannot advise")
+        .contains("cannot answer structured requests"));
+    assert!(advisor_note_for("nope", None)
+        .expect("no such driver")
+        .contains("Unknown agent driver 'nope'"));
+
+    // And the ports built with one ask nothing: the screen says why.
     let dir = tempfile::tempdir().expect("temp dir");
-    let ports = ProjectPorts::new(dir.path(), None, "claude");
-    assert_eq!(ports.advisor_note().as_deref(), Some(NO_ADVISOR_YET));
+    let ports = ProjectPorts::with_note(dir.path(), None, "claude", Some("off".to_owned()));
+    assert_eq!(ports.advisor_note().as_deref(), Some("off"));
+    assert_eq!(ports.vision_note().as_deref(), Some("off"));
+    assert!(ports.propose_names("Let users log in", &[]).is_none());
 }

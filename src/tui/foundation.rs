@@ -344,14 +344,17 @@ impl App {
         self.screen = Screen::Foundation;
     }
 
-    /// Leaves, finished or not. A project whose next step is its vision goes
-    /// where the vision interview will be — the overview, until stage 8.
+    /// Leaves, finished or not. A new project whose ground rules are all
+    /// answered goes on to its vision; anything else to the overview.
     fn leave_foundation(&mut self, ports: &dyn Ports) -> Vec<Effect> {
         self.ground.shown = None;
         self.foundation = None;
         self.refresh_project(ports);
-        // Stage 8 sends `ProjectStage::Vision` to the interview instead.
-        self.screen = Screen::Overview;
+        if self.stage == ProjectStage::Vision {
+            self.open_vision();
+        } else {
+            self.screen = Screen::Overview;
+        }
         Vec::new()
     }
 

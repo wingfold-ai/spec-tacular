@@ -10,9 +10,8 @@
 //!
 //! - [`app`] holds the state and turns events into state changes and
 //!   [`app::Effect`]s — work to spawn, or the editor to run;
-//! - [`view`] (with [`home`], [`foundation`], [`review`], [`document`] and
-//!   [`jobs`]) draws a
-//!   frame from `&App`;
+//! - [`view`] (with [`home`], [`foundation`], [`vision`], [`review`],
+//!   [`document`] and [`jobs`]) draws a frame from `&App`;
 //! - [`ports`] is everything the app needs from the world, as a trait, with
 //!   the real implementation over `commands`/`adapter` and a fake for tests;
 //! - [`terminal`] takes the terminal over and always gives it back;
@@ -39,6 +38,7 @@ pub mod terminal;
 mod tests;
 pub mod theme;
 pub mod view;
+pub mod vision;
 pub mod widgets;
 
 use std::collections::VecDeque;
@@ -80,7 +80,14 @@ pub fn run(root: PathBuf, openspec_bin: Option<PathBuf>, driver: &str) -> u8 {
             return 1;
         }
     };
-    match runtime.block_on(event_loop(ports)) {
+    let result = runtime.block_on(event_loop(ports));
+    // A model request still running when the developer quits is abandoned,
+    // not waited for. Dropping the runtime drops its tasks first — killing
+    // each agent's process group with it — and only then waits for the
+    // blocking threads, which by then are either finishing a small file
+    // write or holding the cancelled request's answer, and return at once.
+    drop(runtime);
+    match result {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("spectacular: {error}");
