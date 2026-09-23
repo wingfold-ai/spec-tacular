@@ -414,6 +414,23 @@ a fixed order rather than the order the TypeScript happened to set them in.
 next line instead of being squeezed, as a flex row that is allowed to wrap
 would.
 
+**A reference bug the port does not reproduce: "AI is off" on the vision
+screen.** The TypeScript passed `unavailable={vision?.unavailable ?? 'no
+vision support'}` to the vision screen (`src/tui/app.tsx:970` on
+`claude/vibrant-fermat-s72fcs`). `unavailable` is `null` exactly when there
+is a model, and `??` turns that `null` into the truthy string, so the
+describe panel always read "(AI is off: no vision support — your description
+is saved as the vision.)" — even when the interview then ran normally. Here
+the panel says "✦ Then an AI asks a few questions to sharpen it…" when there
+is a model, and "AI is off: <why>" only when there is none.
+
+**A long vision is one line in `roadmap.yaml`.** The file is written in the
+TypeScript's layout, key for key, and a roadmap from either implementation
+loads in the other. The bytes differ in one case: when the `vision:` scalar
+is longer than 80 columns, the TypeScript's `yaml` package folds it over
+several lines and `core::roadmap::save_roadmap` does not. Both are the same
+YAML value, so this only shows in a diff of the file.
+
 ## Environment
 
 | Variable | Effect |
