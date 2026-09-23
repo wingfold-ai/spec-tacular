@@ -209,6 +209,8 @@ pub enum AfterSetup {
 #[derive(Debug)]
 pub enum Msg {
     Reloaded {
+        /// Which request this answers — see [`Latest`].
+        generation: u64,
         result: Result<Snapshot, String>,
         select: Option<String>,
         notice: Option<String>,
@@ -233,6 +235,7 @@ pub enum Msg {
     },
     /// The review queue of `change`, re-parsed from disk.
     Reparsed {
+        generation: u64,
         change: String,
         items: Vec<ReviewItem>,
     },
@@ -248,6 +251,7 @@ pub enum Msg {
     },
     /// An artifact read for the document viewer.
     DocRead {
+        generation: u64,
         change: String,
         artifact: String,
         result: Result<(PathBuf, String), String>,
@@ -272,6 +276,41 @@ pub enum Msg {
         result: Result<(), String>,
         then: AfterEditor,
     },
+}
+
+/// The newest request of each kind whose answer replaces state wholesale.
+///
+/// Answers come back in whatever order the work finishes, so an older one
+/// can land after a newer one — a reload started while a review was still
+/// open, say, arriving after the one its closing asked for, and putting the
+/// specs back as unreviewed. Each request takes the next number; an answer
+/// older than the newest request of its kind is stale and is dropped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Latest {
+    next: u64,
+    pub reload: u64,
+    /// The reload whose snapshot is on screen.
+    pub applied: u64,
+    pub reparse: u64,
+    pub doc: u64,
+}
+
+impl Latest {
+    /// A fresh number, for a request about to be made.
+    pub fn issue(&mut self) -> u64 {
+        self.next += 1;
+        self.next
+    }
+}
+
+/// What a stale reload was carrying besides its snapshot, handed on to the
+/// reload that supersedes it — a notice, a selection or a finished job must
+/// not be lost just because fresher data overtook them.
+#[derive(Debug, Default)]
+pub struct Carried {
+    pub select: Option<String>,
+    pub notice: Option<String>,
+    pub finished: Option<Box<Job>>,
 }
 
 /// The hint ctrl+c gives where there is nothing left to cancel.
@@ -318,12 +357,16 @@ pub struct App {
     pub quit: bool,
     /// Where the clickable things were drawn, from the last frame.
     pub hits: Hits,
+    /// The newest request of each kind, so stale answers can be dropped.
+    pub latest: Latest,
+    /// What stale reloads carried, for the reload that overtook them.
+    pub carried: Carried,
 }
 
 impl App {
     /// The app as it opens — on the start screen, reading the project.
     pub fn new(ports: &dyn Ports) -> (Self, Vec<Effect>) {
-        let app = Self {
+        let mut app = Self {
             root: ports.root().display().to_string(),
             screen: Screen::Home,
             pipelines: Vec::new(),
@@ -354,6 +397,8 @@ impl App {
             loaded: false,
             quit: false,
             hits: Vec::new(),
+            latest: Latest::default(),
+            carried: Carried::default(),
         };
         let jobs = app.read_jobs(ports, false);
         let first = app.reload(ports, None, None, None);
@@ -686,11 +731,46 @@ impl App {
     pub fn on_msg(&mut self, ports: &dyn Ports, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::Reloaded {
+                generation,
                 result,
                 select,
                 notice,
                 finished,
             } => {
+                if generation < self.latest.reload {
+                    // Overtaken: its snapshot is older than one already
+                    // asked for, and must not replace it.
+                    if self.latest.applied < self.latest.reload {
+                        // The newer one is still on its way: it takes what
+                        // this one carried.
+                        let carried = &mut self.carried;
+                        carried.select = select.or(carried.select.take());
+                        carried.notice = notice.or(carried.notice.take());
+                        carried.finished = finished.or(carried.finished.take());
+                        return Vec::new();
+                    }
+                    // The newer one is already here: what this one carried
+                    // applies to the fresher state now on screen.
+                    if let Some(i) = select
+                        .as_deref()
+                        .and_then(|name| self.pipelines.iter().position(|p| p.name == name))
+                    {
+                        self.index = i;
+                        self.action_focus = 0;
+                    }
+                    if notice.is_some() {
+                        self.notice = notice;
+                    }
+                    return match finished {
+                        Some(job) => self.after_finished(ports, &job),
+                        None => Vec::new(),
+                    };
+                }
+                self.latest.applied = generation;
+                let carried = std::mem::take(&mut self.carried);
+                let select = select.or(carried.select);
+                let notice = notice.or(carried.notice);
+                let finished = finished.or(carried.finished);
                 self.loaded = true;
                 if self.home.busy.as_deref() == Some("Reading the project…") {
                     self.home.busy = None;
@@ -792,19 +872,28 @@ impl App {
                 self.review_opened(&change, session);
                 Vec::new()
             }
-            Msg::Reparsed { change, items } => {
-                self.reparsed(&change, &items);
+            Msg::Reparsed {
+                generation,
+                change,
+                items,
+            } => {
+                if generation >= self.latest.reparse {
+                    self.reparsed(&change, &items);
+                }
                 Vec::new()
             }
             Msg::Marked { change, result } => self.marked(ports, &change, result),
             Msg::Promoted { change, result } => self.promoted(ports, &change, result),
             Msg::DocRead {
+                generation,
                 change,
                 artifact,
                 result,
                 just_drafted,
             } => {
-                self.doc_read(change, artifact, result, just_drafted);
+                if generation >= self.latest.doc {
+                    self.doc_read(change, artifact, result, just_drafted);
+                }
                 Vec::new()
             }
             Msg::ArtifactFile { change, result } => match result {
@@ -1325,13 +1414,16 @@ impl App {
     }
 
     pub(super) fn reload(
-        &self,
+        &mut self,
         ports: &dyn Ports,
         select: Option<String>,
         notice: Option<String>,
         finished: Option<Box<Job>>,
     ) -> Effect {
+        let generation = self.latest.issue();
+        self.latest.reload = generation;
         spawn(ports.reload(), move |result| Msg::Reloaded {
+            generation,
             result,
             select,
             notice,

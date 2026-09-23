@@ -169,6 +169,14 @@ pub fn markdown_lines(content: &str, width: usize) -> Vec<DocLine> {
     out
 }
 
+/// The width the text is wrapped at, for text drawn `text_width` wide: the
+/// TypeScript's `max(terminal width - 8, 30)`. The text spans the terminal
+/// less the panel's border and padding (4 columns), so that is 4 fewer again
+/// — lines break where the TypeScript's did, and the scroll percentages agree.
+fn wrap_width(text_width: u16) -> usize {
+    usize::from(text_width).saturating_sub(4).max(30)
+}
+
 impl App {
     /// Prose artifacts written for the selected change — what can be read.
     /// Specs are reviewed, not read, and span a file per capability.
@@ -191,15 +199,18 @@ impl App {
     /// `just_drafted` is the job poll opening a fresh draft by itself: if it
     /// cannot be read, that is not worth a notice.
     pub(super) fn open_doc(
-        &self,
+        &mut self,
         ports: &dyn Ports,
         change: &str,
         artifact: &str,
         just_drafted: bool,
     ) -> Effect {
         let (c, a) = (change.to_owned(), artifact.to_owned());
+        let generation = self.latest.issue();
+        self.latest.doc = generation;
         spawn(ports.read_artifact(change, artifact), move |result| {
             Msg::DocRead {
+                generation,
                 change: c,
                 artifact: a,
                 result,
@@ -330,7 +341,7 @@ impl App {
 
     /// The document's lines at the width it is drawn at.
     fn doc_lines(&self) -> usize {
-        let width = usize::from(self.doc_text_area().width);
+        let width = wrap_width(self.doc_text_area().width);
         self.doc
             .as_ref()
             .map_or(0, |d| markdown_lines(&d.content, width).len())
@@ -534,7 +545,7 @@ pub fn render_document(frame: &mut Frame<'_>, area: Rect, app: &App, hits: &mut 
     };
     hits.push((text, Target::DocText));
 
-    let lines = markdown_lines(&doc.content, usize::from(text.width));
+    let lines = markdown_lines(&doc.content, wrap_width(text.width));
     let page = usize::from(text_h);
     let top = doc.top.min(lines.len().saturating_sub(page));
     let scrolled = if lines.len() <= page {

@@ -298,9 +298,12 @@ impl App {
 
     /// Asks for the queue again, for the review of `change` if it is still
     /// open when the answer comes.
-    pub(super) fn reparse(&self, ports: &dyn Ports, change: &str) -> Effect {
+    pub(super) fn reparse(&mut self, ports: &dyn Ports, change: &str) -> Effect {
         let for_msg = change.to_owned();
+        let generation = self.latest.issue();
+        self.latest.reparse = generation;
         spawn(ports.reparse(change), move |items| Msg::Reparsed {
+            generation,
             change: for_msg,
             items,
         })
@@ -377,11 +380,13 @@ fn footer(review: &Review, findings: &[Finding]) -> Vec<Line<'static>> {
         } else {
             "   enter confirm · esc cancel"
         };
-        return vec![Line::from(vec![
-            Span::styled(ask, Style::default().fg(theme::WARN)),
-            Span::styled(format!("{draft}_"), Style::default().fg(theme::TEXT)),
-            Span::styled(hint, Style::default().fg(theme::DIM)),
-        ])];
+        // Stacked, as the TypeScript's prompt box stacked its three texts:
+        // the question, what has been typed, and the keys.
+        return vec![
+            styled(ask, theme::WARN),
+            styled(format!("{draft}_"), theme::TEXT),
+            styled(hint, theme::DIM),
+        ];
     }
     if review.marking {
         return vec![styled(

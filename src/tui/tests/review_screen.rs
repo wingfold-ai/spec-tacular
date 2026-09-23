@@ -103,7 +103,11 @@ fn r_prompts_for_a_reason_and_records_it() {
     ui.char('r');
     ui.expect("Why reject?");
     ui.type_text("names an endpoint");
-    ui.expect("names an endpoint_");
+    // Question, draft and keys stacked, as the TypeScript's box had them.
+    let (_, ask) = ui.find("Why reject?");
+    let (_, draft) = ui.find("names an endpoint_");
+    let (_, keys) = ui.find("enter confirm · esc cancel");
+    assert_eq!((draft, keys), (ask + 1, ask + 2));
     ui.press(KeyCode::Enter);
     let item = &ui.session().items[0];
     assert_eq!(item.state, ReviewState::Rejected);
@@ -271,4 +275,78 @@ fn enter_on_the_review_button_opens_it_and_ctrl_j_still_works_from_it() {
     ui.ctrl('j');
     assert_eq!(ui.app.screen, Screen::Review, "your place is kept");
     ui.expect("Requirement: Theme selection");
+}
+
+// --- stale reloads ------------------------------------------------------------
+
+/// The overview as a reload would have read it now: both requirements still
+/// pending, before the review below.
+fn snapshot_now(ui: &Ui) -> crate::tui::ports::Snapshot {
+    ui.runtime
+        .block_on(crate::tui::ports::Ports::reload(ui.ports.as_ref()))
+        .expect("snapshot")
+}
+
+#[test]
+fn a_stale_reload_landing_after_a_newer_one_is_ignored() {
+    // The race: a reload started before the review closed lands after the
+    // one its closing asked for, and would put the specs back as unreviewed
+    // — so `w` would say there is nothing to draft.
+    let mut ui = Ui::with_spec_change("c", &[("cap", SPEC)], None);
+    let stale = snapshot_now(&ui);
+    let old = ui.app.latest.reload;
+    ui.char('r');
+    ui.char('a');
+    ui.char('a');
+    ui.char('q');
+    ui.expect("2/2");
+
+    let effects = ui.app.on_msg(
+        ui.ports.as_ref(),
+        crate::tui::app::Msg::Reloaded {
+            generation: old,
+            result: Ok(stale),
+            select: None,
+            notice: Some("carried by the stale reload".to_owned()),
+            finished: None,
+        },
+    );
+    ui.run(effects);
+    ui.expect("2/2");
+    ui.expect_not("0/2");
+    // What it carried besides its snapshot still counts.
+    ui.expect("carried by the stale reload");
+    ui.char('w');
+    assert_eq!(ui.ports.dispatched(), ["c/design"]);
+}
+
+#[test]
+fn a_stale_reload_landing_first_hands_what_it_carried_to_the_newer_one() {
+    let mut ui = Ui::with_spec_change("c", &[("cap", SPEC)], None);
+    let stale = snapshot_now(&ui);
+    let old = ui.app.latest.reload;
+    ui.char('r');
+    ui.char('a');
+    ui.char('a');
+    // Leave the review by hand, holding its reload back.
+    ui.app.review = None;
+    ui.app.screen = crate::tui::app::Screen::Overview;
+    let newer = ui.app.reload(ui.ports.as_ref(), None, None, None);
+
+    let effects = ui.app.on_msg(
+        ui.ports.as_ref(),
+        crate::tui::app::Msg::Reloaded {
+            generation: old,
+            result: Ok(stale),
+            select: None,
+            notice: Some("carried by the stale reload".to_owned()),
+            finished: None,
+        },
+    );
+    assert!(effects.is_empty(), "dropped, nothing asked for");
+    ui.expect_not("carried by the stale reload");
+
+    ui.run(vec![newer]);
+    ui.expect("2/2");
+    ui.expect("carried by the stale reload");
 }

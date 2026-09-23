@@ -317,6 +317,14 @@ condition, checked again when the file arrives. `save_session` alone stays
 synchronous: every decision is written before the next key is read, in order,
 which is what makes a crash mid-review lose nothing.
 
+**A stale answer never replaces a fresher one.** Reloads, re-parses of the
+review queue and document reads each carry a request number, and an answer
+older than the newest request of its kind is dropped — what it carried
+besides its data (a notice, a selection, a finished job) is handed on rather
+than lost. Without it, a reload started while a review was open could land
+after the one leaving the review asked for and show the specs as unreviewed
+again: `w` then said there was nothing to draft.
+
 **Reasons are typed with the shared line editor.** The reject and defer
 prompts, and the redraft feedback, take `ctrl+u` and `ctrl+w` like the
 new-change prompt. The TypeScript review prompts knew only backspace.
@@ -324,7 +332,9 @@ new-change prompt. The TypeScript review prompts knew only backspace.
 **A page is what was drawn.** The TypeScript document viewer guessed its text
 height from the terminal's (13 or 16 rows less, for the chrome); here the
 viewer records where its text was drawn last frame, and `space`, `G` and the
-scroll percentage use that — so a page is exactly a page at any size.
+scroll percentage use that — so a page is exactly a page at any size. Lines
+are still wrapped where the TypeScript wrapped them, at the terminal's width
+less 8 (never under 30).
 
 **Buttons are measured in cells.** "📄 Read the proposal" has an emoji two
 cells wide; a button's width counts display cells, not characters, so its
