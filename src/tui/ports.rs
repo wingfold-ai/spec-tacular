@@ -21,10 +21,13 @@ use crate::adapter::openspec::{is_openspec_project, OpenSpecAdapter};
 use crate::adapter::types::OpenSpecChangeStatus;
 use crate::agent::default_registry;
 use crate::commands::{dispatch, load_pipelines};
+use crate::core::advisor::{AfterAnswer, Coached, Meta};
 use crate::core::change_review::{load_change_review, spec_files_of};
 use crate::core::concreteness::{load_lint_config, LintConfig};
 use crate::core::decisions::{promote_decision, replace_decision_body, Decision, PromoteOptions};
-use crate::core::foundation::{guided_questions, scaffold_foundation, GuidedQuestion};
+use crate::core::foundation::{
+    answer_foundation, guided_questions, scaffold_foundation, GuidedQuestion,
+};
 use crate::core::guide::{project_stage, schema_installed, ProjectStage};
 use crate::core::init::init_project;
 use crate::core::jobs::{cancel_job, list_jobs, prune_jobs, tail_job, Job, JobStatus, TAIL_LIMIT};
@@ -55,6 +58,10 @@ pub struct JobsView {
     /// The last non-blank lines of the agent running on the selected change.
     pub running_lines: Vec<String>,
 }
+
+/// Why the real ports have no advisor yet: `core::advisor` is complete, but
+/// reaching a model with it — a driver's structured request — is stage 8.
+pub const NO_ADVISOR_YET: &str = "not available until stage 8";
 
 /// How many of a running agent's lines the overview shows under its change.
 const RUNNING_LINES: usize = 8;
@@ -170,9 +177,35 @@ pub trait Ports: Send + Sync {
     /// Whether the project starts from nothing — no baseline specs yet.
     fn greenfield(&self) -> bool;
     fn roadmap(&self) -> Option<Roadmap>;
-    /// The Foundation questions, in the order the setup asks them. The screen
-    /// that asks them is stage 7; stage 5 opens the next one in `$EDITOR`.
-    fn questions(&self) -> Vec<GuidedQuestion>;
+    /// The Foundation questions, in the order the setup asks them. A future:
+    /// it reads every Foundation file, and the ground-rules screen re-reads
+    /// after every answer and every piece of advice.
+    fn questions(&self) -> PortFuture<Vec<GuidedQuestion>>;
+    /// Writes an answer into its question's section. Synchronous on purpose,
+    /// like [`Ports::save_session`]: an answer is a decision, written before
+    /// the next key is read, and a refusal (the section moved, the file is
+    /// gone) has to keep you on the question with your answer still typed.
+    fn answer(&self, question: &GuidedQuestion, text: &str) -> Result<(), String>;
+
+    /// Why there are no AI suggestions, or `None` when there is an advisor.
+    /// Read once, when the app starts.
+    fn advisor_note(&self) -> Option<String>;
+    /// What the advisor remembers about each question, by id.
+    fn advisor_meta(&self) -> PortFuture<Meta>;
+    /// After an answer is saved: follow-ups on it, options for the next
+    /// question, answers that now follow — `core::advisor`'s `after_answer`.
+    fn after_answer(
+        &self,
+        question: &GuidedQuestion,
+        answer: &str,
+    ) -> PortFuture<Result<AfterAnswer, String>>;
+    /// Options for a question on screen that nobody has asked about yet.
+    fn suggest(&self, question: &GuidedQuestion) -> PortFuture<Result<(), String>>;
+    /// Help with a question the developer cannot answer: an explanation,
+    /// examples, and simpler questions put before it.
+    fn coach(&self, question: &GuidedQuestion) -> PortFuture<Result<Coached, String>>;
+    /// Removes a question the advisor added; whether it was there to remove.
+    fn dismiss(&self, question: &GuidedQuestion) -> PortFuture<bool>;
 
     /// Makes the folder a spec-tacular project: OpenSpec, schema, Foundation.
     fn setup(&self) -> PortFuture<Result<(), String>>;
@@ -387,10 +420,44 @@ impl Ports for ProjectPorts {
         load_roadmap(&self.root)
     }
 
-    fn questions(&self) -> Vec<GuidedQuestion> {
-        guided_questions(&self.root)
+    fn questions(&self) -> PortFuture<Vec<GuidedQuestion>> {
+        let root = self.root.clone();
+        Box::pin(blocking(Vec::new(), move || guided_questions(&root)))
     }
 
+    fn answer(&self, question: &GuidedQuestion, text: &str) -> Result<(), String> {
+        answer_foundation(&question.item, text)
+    }
+
+    /// The advisor is stage 8: until then the screen says so, asks nothing,
+    /// and every advisor request below resolves to nothing at all.
+    fn advisor_note(&self) -> Option<String> {
+        Some(NO_ADVISOR_YET.to_owned())
+    }
+
+    fn advisor_meta(&self) -> PortFuture<Meta> {
+        Box::pin(async { Meta::new() })
+    }
+
+    fn after_answer(
+        &self,
+        _question: &GuidedQuestion,
+        _answer: &str,
+    ) -> PortFuture<Result<AfterAnswer, String>> {
+        Box::pin(async { Ok(AfterAnswer::default()) })
+    }
+
+    fn suggest(&self, _question: &GuidedQuestion) -> PortFuture<Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn coach(&self, _question: &GuidedQuestion) -> PortFuture<Result<Coached, String>> {
+        Box::pin(async { Ok(Coached::default()) })
+    }
+
+    fn dismiss(&self, _question: &GuidedQuestion) -> PortFuture<bool> {
+        Box::pin(async { false })
+    }
     /// OpenSpec if missing, then the schema, then the Foundation questions.
     /// Each step is skipped when already done, so it is safe on a half-set-up
     /// project, and it never overwrites a schema someone edited — `init` only

@@ -1,7 +1,5 @@
 //! The shell: the start screen, the overview, help and the job pane.
 
-use std::path::PathBuf;
-
 use crossterm::event::KeyCode;
 
 use super::Ui;
@@ -23,11 +21,11 @@ fn the_start_screen_shows_the_logo_and_a_start_button_that_sets_the_folder_up() 
     ui.expect("Quit");
 
     ui.press(KeyCode::Enter);
-    assert_eq!(ui.app.screen, Screen::Overview);
+    assert_eq!(ui.app.screen, Screen::Foundation);
+    ui.expect("Before the first change, settle the ground rules.");
     ui.expect("✓ Set up");
     ui.expect("2. Ground rules");
-    ui.expect("Ground rules: 0 of 19 answered.");
-    ui.expect("f opens the first question in your editor");
+    ui.expect("▶ Begin — 19 questions");
 }
 
 #[test]
@@ -63,13 +61,11 @@ fn ctrl_c_on_the_start_screen_does_not_quit_it_says_q_does() {
 
 #[test]
 fn start_screen_buttons_cycle_with_the_arrows_and_the_last_is_quit() {
-    let mut ui = Ui::mount(FakePorts::with_baseline());
-    ui.press(KeyCode::Enter); // Start
-    ui.ports.settle_ground_rules();
+    let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.ports.add_change(change_with("add-login", &[]));
+    ui.reload();
     ui.char('h'); // back to the start screen
-    ui.settle();
-    // Working: Open project, New change, Ground rules, Quit.
+                  // Working: Open project, New change, Ground rules, Quit.
     ui.press(KeyCode::Enter); // Open project
     ui.char('h');
     ui.expect("1 change");
@@ -89,7 +85,7 @@ fn a_start_screen_button_is_clickable() {
     let mut ui = Ui::mount(FakePorts::new());
     let (x, y) = ui.find("▶ Start");
     ui.click(x, y);
-    assert_eq!(ui.app.screen, Screen::Overview);
+    assert_eq!(ui.app.screen, Screen::Foundation);
 }
 
 // --- the overview -----------------------------------------------------------
@@ -97,11 +93,6 @@ fn a_start_screen_button_is_clickable() {
 #[test]
 fn an_empty_folder_is_guided_to_its_first_proposal() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
-    assert_eq!(
-        ui.editors.len(),
-        1,
-        "f opened the ground rules in the editor"
-    );
 
     // First change: explained, then created from the overview.
     ui.expect("Ground rules are set. Next: your first change.");
@@ -156,7 +147,7 @@ fn an_empty_folder_is_guided_to_its_first_proposal() {
 fn a_taken_name_is_refused() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.ports.add_change(change_with("add-login", &[]));
-    ui.char('f');
+    ui.reload();
     ui.char('n');
     ui.type_text("anything");
     ui.press(KeyCode::Enter);
@@ -188,24 +179,12 @@ fn ctrl_c_cancels_the_prompt_one_level_and_never_quits() {
 fn leaving_the_ground_rules_half_done_blocks_a_change() {
     let mut ui = Ui::mount(FakePorts::with_baseline());
     ui.press(KeyCode::Enter); // Start
+    ui.ctrl('c'); // out of the ground rules, none answered
     ui.expect("Ground rules: 0 of 19 answered.");
     ui.char('n');
     ui.expect("Settle the ground rules first — f continues them");
     ui.expect("Settle the ground rules first — f.");
     ui.expect_not("+ New change");
-}
-
-#[test]
-fn f_opens_the_next_open_question_in_the_editor() {
-    let mut ui = Ui::mount(FakePorts::with_baseline());
-    ui.press(KeyCode::Enter);
-    let questions = crate::core::foundation::guided_questions(ui.ports.path());
-    crate::core::foundation::answer_foundation(&questions[0].item, "Go 1.23").expect("answer");
-    ui.char('f');
-    let (file, line) = ui.editors.last().cloned().expect("an editor");
-    assert_eq!(file, PathBuf::from(&questions[1].item.file));
-    assert_eq!(line, questions[1].item.line);
-    ui.expect("Ground rules: 1 of 19 answered.");
 }
 
 #[test]
@@ -268,7 +247,7 @@ fn question_mark_explains_every_key_and_any_key_closes_it() {
 fn the_next_step_buttons_cycle_and_enter_presses_the_focused_one() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.ports.add_change(change_with("add-login", &[]));
-    ui.char('f');
+    ui.reload();
     ui.press(KeyCode::Right);
     assert_eq!(ui.app.focused_action(), 1);
     ui.press(KeyCode::Right);
@@ -286,7 +265,7 @@ fn changes_are_selected_with_the_keys_or_a_click_clamped_at_the_ends() {
     ui.ports.add_change(change_with("add-login", &[]));
     ui.ports
         .add_change(change_with("fix-export", &["proposal"]));
-    ui.char('f');
+    ui.reload();
     ui.expect("Changes · 2");
     assert_eq!(ui.app.index, 0);
     ui.char('k');
@@ -307,7 +286,7 @@ fn changes_are_selected_with_the_keys_or_a_click_clamped_at_the_ends() {
 fn r_on_a_change_without_specs_says_so() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.ports.add_change(change_with("add-login", &[]));
-    ui.char('f');
+    ui.reload();
     ui.char('r');
     ui.expect("add-login has no specs to review yet");
 }
@@ -327,7 +306,7 @@ fn h_goes_back_to_the_start_screen() {
 fn a_finished_job_is_noticed_and_one_that_wrote_nothing_says_so() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.ports.add_change(change_with("add-login", &[]));
-    ui.char('f');
+    ui.reload();
     ui.char('w');
     assert_eq!(ui.ports.dispatched(), ["add-login/proposal"]);
     ui.char('w');
@@ -485,7 +464,7 @@ fn p_clears_finished_jobs_and_keeps_running_ones() {
 fn watch_the_full_log_opens_the_pane() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.ports.add_change(change_with("add-login", &[]));
-    ui.char('f');
+    ui.reload();
     ui.char('w');
     let (x, y) = ui.find("Watch the full log");
     ui.click(x, y);
