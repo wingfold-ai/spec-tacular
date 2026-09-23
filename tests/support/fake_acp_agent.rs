@@ -12,7 +12,8 @@
 //!   allowed (and stops saying so if not), and ends the turn with `end_turn`.
 //!   "Allow always" is remembered: the session's later writes do not ask.
 //! - `slow`: streams a line, then works "forever" — until `session/cancel`
-//!   arrives, when the turn ends `cancelled`, or 30 s pass.
+//!   arrives, when the turn ends `cancelled` a quarter of a second later, or
+//!   30 s pass.
 //! - `crash`: streams a line and exits mid-turn.
 //!
 //! The file to write is named in the first prompt of a session, on a line
@@ -256,6 +257,9 @@ impl Agent {
                 Err(RecvTimeoutError::Disconnected) => std::process::exit(0),
             }
             if self.cancelled {
+                // Stopping takes an agent a moment: long enough for a test
+                // to see the TUI say it is waiting for it.
+                std::thread::sleep(Duration::from_millis(250));
                 return "cancelled";
             }
         }
