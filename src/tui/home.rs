@@ -40,17 +40,32 @@ pub fn home_buttons(actions: &[HomeAction]) -> Vec<Button> {
     buttons
 }
 
-/// One row of the centred column: a line of text, or the button row.
+/// One row of the centred column: a line of text, a row of the logo, or the
+/// button row.
 enum Row {
     Text(Line<'static>),
+    Logo(Line<'static>),
     Buttons,
+}
+
+/// Where a thing `free` cells narrower than its column starts, the way the
+/// TypeScript's layout engine (Yoga) placed it: a text node's edge is floored,
+/// any other box's is rounded half up. So at 120 columns the 107-wide logo
+/// starts at 7 while the 71-wide tagline starts at 24, exactly as the
+/// TypeScript drew them.
+fn centre(free: u16, text: bool) -> u16 {
+    if text {
+        free / 2
+    } else {
+        free.div_ceil(2)
+    }
 }
 
 pub fn render_home(frame: &mut Frame<'_>, area: Rect, app: &App, hits: &mut Hits) {
     let face = face_for(area.width);
     let mut rows: Vec<Row> = logo_lines(face, app.tick)
         .into_iter()
-        .map(Row::Text)
+        .map(Row::Logo)
         .collect();
     let text =
         |s: String, color| Row::Text(Line::from(Span::styled(s, Style::default().fg(color))));
@@ -77,21 +92,22 @@ pub fn render_home(frame: &mut Frame<'_>, area: Rect, app: &App, hits: &mut Hits
     let height: u16 = rows
         .iter()
         .map(|row| match row {
-            Row::Text(_) => 1,
+            Row::Text(_) | Row::Logo(_) => 1,
             Row::Buttons => BUTTON_HEIGHT,
         })
         .sum();
-    let mut y = area.y + area.height.saturating_sub(height) / 2;
+    let mut y = area.y + centre(area.height.saturating_sub(height), false);
     let bottom = area.y.saturating_add(area.height);
 
     for row in rows {
         match row {
-            Row::Text(line) => {
+            Row::Text(ref line) | Row::Logo(ref line) => {
                 if y < bottom {
                     let width = u16::try_from(line.width())
                         .unwrap_or(u16::MAX)
                         .min(area.width);
-                    let x = area.x + (area.width - width) / 2;
+                    let x = area.x + centre(area.width - width, matches!(row, Row::Text(_)));
+                    let line = line.clone();
                     frame.render_widget(Paragraph::new(line), Rect::new(x, y, width, 1));
                 }
                 y = y.saturating_add(1);
@@ -113,7 +129,7 @@ pub fn render_home(frame: &mut Frame<'_>, area: Rect, app: &App, hits: &mut Hits
                     if band.height > 1 {
                         frame.render_widget(
                             Paragraph::new(line),
-                            Rect::new(area.x + (area.width - width) / 2, y + 1, width, 1),
+                            Rect::new(area.x + centre(area.width - width, false), y + 1, width, 1),
                         );
                     }
                 } else {
@@ -124,7 +140,7 @@ pub fn render_home(frame: &mut Frame<'_>, area: Rect, app: &App, hits: &mut Hits
                         .map(|b| b.width() + 1)
                         .sum::<u16>()
                         .saturating_sub(1);
-                    let x = area.x + area.width.saturating_sub(total) / 2;
+                    let x = area.x + centre(area.width.saturating_sub(total), false);
                     let row = Rect::new(
                         x,
                         band.y,

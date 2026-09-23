@@ -23,7 +23,7 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 
 use super::input::{edit_line, is_cancel, is_ctrl, is_enter};
-use super::ports::{PortFuture, Ports, Snapshot};
+use super::ports::{JobsView, PortFuture, Ports, Snapshot};
 use crate::core::gate::stale_artifacts;
 use crate::core::guide::{
     next_step, setup_step, validate_change_name, NextAction, NextStep, ProjectStage,
@@ -196,6 +196,15 @@ pub enum Msg {
         result: Result<PathBuf, String>,
     },
     Names(Vec<String>),
+    /// The jobs as [`App::read_jobs`] asked for them, for the selection that
+    /// was current then.
+    JobsRead {
+        view: JobsView,
+        job_index: usize,
+        change: Option<String>,
+        /// From the poll: note jobs that stopped since the last read.
+        poll: bool,
+    },
     EditorClosed {
         result: Result<(), String>,
         select: Option<String>,
@@ -245,7 +254,7 @@ pub struct App {
 impl App {
     /// The app as it opens — on the start screen, reading the project.
     pub fn new(ports: &dyn Ports) -> (Self, Vec<Effect>) {
-        let mut app = Self {
+        let app = Self {
             root: ports.root().display().to_string(),
             screen: Screen::Home,
             pipelines: Vec::new(),
@@ -274,9 +283,9 @@ impl App {
             quit: false,
             hits: Vec::new(),
         };
-        app.refresh_jobs(ports);
+        let jobs = app.read_jobs(ports, false);
         let first = app.reload(ports, None, None, None);
-        (app, vec![first])
+        (app, vec![jobs, first])
     }
 
     // --- derived --------------------------------------------------------
@@ -490,8 +499,14 @@ impl App {
         if !self.jobs.iter().any(|j| j.status == JobStatus::Running) {
             return Vec::new();
         }
-        let before = std::mem::take(&mut self.jobs);
-        self.refresh_jobs(ports);
+        // Read off the loop's thread: a directory listing and a log tail
+        // every two seconds are file reads the frame must never wait on.
+        vec![self.read_jobs(ports, true)]
+    }
+
+    /// A job poll came back: note any job that has stopped since the last
+    /// one — the TypeScript's poll, run on its result rather than inline.
+    fn notice_finished(&mut self, ports: &dyn Ports, before: &[Job]) -> Vec<Effect> {
         let finished: Vec<Job> = self
             .jobs
             .iter()
@@ -529,8 +544,7 @@ impl App {
             return self.jobs_key(ports, key);
         }
         if is_ctrl(key, 'j') {
-            self.open_jobs(ports);
-            return Vec::new();
+            return self.open_jobs(ports);
         }
         match self.screen {
             Screen::Home => self.home_key(ports, key),
@@ -562,8 +576,8 @@ impl App {
             Target::ChangeRow(i) => {
                 self.index = i.min(self.pipelines.len().saturating_sub(1));
                 self.action_focus = 0;
-                self.refresh_running(ports);
-                Vec::new()
+                self.running_lines.clear();
+                vec![self.read_jobs(ports, false)]
             }
             Target::Action(i) => {
                 self.action_focus = i;
@@ -573,14 +587,8 @@ impl App {
                 self.start_new_change();
                 Vec::new()
             }
-            Target::WatchLog => {
-                self.open_jobs(ports);
-                Vec::new()
-            }
-            Target::JobRow(i) => {
-                self.select_job(ports, i);
-                Vec::new()
-            }
+            Target::WatchLog => self.open_jobs(ports),
+            Target::JobRow(i) => self.select_job(ports, i),
         }
     }
 
@@ -617,11 +625,11 @@ impl App {
                     Err(reason) => self.notice = Some(reason),
                 }
                 self.refresh_project(ports);
-                self.refresh_running(ports);
                 if let Some(job) = finished {
                     self.check_finished(&job);
                 }
-                Vec::new()
+                // The selection may have moved to another change.
+                vec![self.read_jobs(ports, false)]
             }
             Msg::SetUp { result, then } => {
                 self.home.busy = None;
@@ -663,10 +671,30 @@ impl App {
                 }
             },
             Msg::Dispatched(result) => {
-                self.refresh_jobs(ports);
                 self.notice = Some(match result {
                     Ok(message) | Err(message) => message,
                 });
+                vec![self.read_jobs(ports, false)]
+            }
+            Msg::JobsRead {
+                view,
+                job_index,
+                change,
+                poll,
+            } => {
+                let before = std::mem::replace(&mut self.jobs, view.jobs);
+                // Lines are only taken if nothing moved while they were being
+                // read; if it did, the read that move asked for is on its way.
+                if job_index == self.job_index {
+                    self.job_lines = view.job_lines;
+                }
+                if change.as_deref() == self.selected().map(|p| p.name.as_str()) {
+                    self.running_lines = view.running_lines;
+                }
+                self.job_index = self.job_index.min(self.jobs.len().saturating_sub(1));
+                if poll {
+                    return self.notice_finished(ports, &before);
+                }
                 Vec::new()
             }
             Msg::ArtifactFile { change, result } => match result {
@@ -816,8 +844,8 @@ impl App {
                 }
                 return Vec::new();
             }
-            KeyCode::Down => self.move_selection(ports, 1),
-            KeyCode::Up => self.move_selection(ports, -1),
+            KeyCode::Down => return self.move_selection(ports, 1),
+            KeyCode::Up => return self.move_selection(ports, -1),
             KeyCode::Tab | KeyCode::Right => {
                 if buttons > 0 {
                     self.action_focus = (self.focused_action() + 1) % buttons;
@@ -830,8 +858,8 @@ impl App {
             }
             KeyCode::Char(c) if !has_modifier(key) => match c {
                 'q' => self.quit = true,
-                'j' => self.move_selection(ports, 1),
-                'k' => self.move_selection(ports, -1),
+                'j' => return self.move_selection(ports, 1),
+                'k' => return self.move_selection(ports, -1),
                 'r' => self.enter_review(ports),
                 'n' => self.start_new_change(),
                 'w' => return self.draft_next(ports),
@@ -923,16 +951,23 @@ impl App {
         }
     }
 
-    fn move_selection(&mut self, ports: &dyn Ports, delta: isize) {
+    fn move_selection(&mut self, ports: &dyn Ports, delta: isize) -> Vec<Effect> {
         let n = self.pipelines.len();
         if n == 0 {
-            return;
+            return Vec::new();
         }
         // Clamped, not wrapping: jumping to the far end at a list boundary
         // loses your place in a way that is disorienting in a review tool.
-        self.index = self.index.saturating_add_signed(delta).min(n - 1);
+        let index = self.index.saturating_add_signed(delta).min(n - 1);
+        if index == self.index {
+            return Vec::new();
+        }
+        self.index = index;
         self.action_focus = 0;
-        self.refresh_running(ports);
+        // Another change's agent output must not show under this one while
+        // this one's is read.
+        self.running_lines.clear();
+        vec![self.read_jobs(ports, false)]
     }
 
     fn press_action(&mut self, ports: &dyn Ports, i: usize) -> Vec<Effect> {
@@ -1064,7 +1099,7 @@ impl App {
             if plain(key, 'y') {
                 if let Some(job) = self.jobs.get(self.job_index).cloned() {
                     ports.cancel_job(&job);
-                    self.refresh_jobs(ports);
+                    return vec![self.read_jobs(ports, false)];
                 }
             }
             return Vec::new();
@@ -1074,13 +1109,13 @@ impl App {
             return vec![self.reload(ports, None, None, None)];
         }
         match key.code {
-            KeyCode::Down => self.select_job(ports, self.job_index.saturating_add(1)),
-            KeyCode::Up => self.select_job(ports, self.job_index.saturating_sub(1)),
+            KeyCode::Down => return self.select_job(ports, self.job_index.saturating_add(1)),
+            KeyCode::Up => return self.select_job(ports, self.job_index.saturating_sub(1)),
             KeyCode::Char('j') if !has_modifier(key) => {
-                self.select_job(ports, self.job_index.saturating_add(1))
+                return self.select_job(ports, self.job_index.saturating_add(1));
             }
             KeyCode::Char('k') if !has_modifier(key) => {
-                self.select_job(ports, self.job_index.saturating_sub(1))
+                return self.select_job(ports, self.job_index.saturating_sub(1));
             }
             KeyCode::Char('x') if !has_modifier(key) => {
                 if self
@@ -1093,11 +1128,11 @@ impl App {
             }
             KeyCode::Char('p') if !has_modifier(key) => {
                 let removed = ports.prune_jobs();
-                self.refresh_jobs(ports);
                 self.notice = Some(format!(
                     "Cleared {removed} finished job{}",
                     if removed == 1 { "" } else { "s" }
                 ));
+                return vec![self.read_jobs(ports, false)];
             }
             _ => {}
         }
@@ -1107,40 +1142,36 @@ impl App {
     /// Re-reads from disk every time the pane opens: jobs record their own
     /// outcome, and a pane showing a job as running long after it stopped is
     /// worse than no pane.
-    fn open_jobs(&mut self, ports: &dyn Ports) {
+    fn open_jobs(&mut self, ports: &dyn Ports) -> Vec<Effect> {
         self.confirm_cancel = false;
-        self.refresh_jobs(ports);
         self.jobs_open = true;
+        vec![self.read_jobs(ports, false)]
     }
 
-    fn select_job(&mut self, ports: &dyn Ports, i: usize) {
-        self.job_index = i.min(self.jobs.len().saturating_sub(1));
-        self.job_lines = self
-            .jobs
-            .get(self.job_index)
-            .map(|job| ports.tail_job(job))
-            .unwrap_or_default();
+    fn select_job(&mut self, ports: &dyn Ports, i: usize) -> Vec<Effect> {
+        let index = i.min(self.jobs.len().saturating_sub(1));
+        if index == self.job_index {
+            return Vec::new();
+        }
+        self.job_index = index;
+        vec![self.read_jobs(ports, false)]
     }
 
-    fn refresh_jobs(&mut self, ports: &dyn Ports) {
-        self.jobs = ports.list_jobs();
-        self.select_job(ports, self.job_index);
-        self.refresh_running(ports);
-    }
-
-    /// The running agent's latest output, for the block under its change.
-    fn refresh_running(&mut self, ports: &dyn Ports) {
-        self.running_lines = match self.running() {
-            Some(job) => {
-                let lines: Vec<String> = ports
-                    .tail_job(job)
-                    .into_iter()
-                    .filter(|l| !l.trim().is_empty())
-                    .collect();
-                lines[lines.len().saturating_sub(8)..].to_vec()
+    /// The job list, the selected job's log and the running agent's latest
+    /// lines, read off the loop's thread and delivered as
+    /// [`Msg::JobsRead`]. Every path that shows jobs goes through here, so
+    /// the pane, the header and the block under a change always agree.
+    fn read_jobs(&self, ports: &dyn Ports, poll: bool) -> Effect {
+        let change = self.selected().map(|p| p.name.clone());
+        let job_index = self.job_index;
+        spawn(ports.read_jobs(job_index, change.as_deref()), move |view| {
+            Msg::JobsRead {
+                view,
+                job_index,
+                change,
+                poll,
             }
-            None => Vec::new(),
-        };
+        })
     }
 
     /// Exit 0 is not proof of work: an agent can finish without writing the

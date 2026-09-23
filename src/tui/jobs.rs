@@ -76,23 +76,23 @@ pub fn render_job_pane(frame: &mut Frame<'_>, area: Rect, app: &App, hits: &mut 
     );
     let mut flow = Flow::new(inner);
 
+    // Two lines, as the TypeScript's header box stacked its two texts: its
+    // flex direction was the default column.
     let summary = summarize_jobs(&app.jobs);
     flow.line(
         frame,
-        Line::from(vec![
-            Span::styled("jobs", Style::default().fg(theme::ACCENT)),
-            Span::styled(
-                format!(
-                    "  {}",
-                    if summary.is_empty() {
-                        "none yet"
-                    } else {
-                        &summary
-                    }
-                ),
-                Style::default().fg(theme::DIM),
-            ),
-        ]),
+        Line::from(Span::styled("jobs", Style::default().fg(theme::ACCENT))),
+    );
+    flow.line(
+        frame,
+        dim(format!(
+            "  {}",
+            if summary.is_empty() {
+                "none yet"
+            } else {
+                &summary
+            }
+        )),
     );
 
     if app.jobs.is_empty() {

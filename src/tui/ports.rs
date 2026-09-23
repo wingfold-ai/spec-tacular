@@ -24,7 +24,7 @@ use crate::commands::{dispatch, load_pipelines};
 use crate::core::foundation::{guided_questions, scaffold_foundation, GuidedQuestion};
 use crate::core::guide::{project_stage, schema_installed, ProjectStage};
 use crate::core::init::init_project;
-use crate::core::jobs::{cancel_job, list_jobs, prune_jobs, tail_job, Job, TAIL_LIMIT};
+use crate::core::jobs::{cancel_job, list_jobs, prune_jobs, tail_job, Job, JobStatus, TAIL_LIMIT};
 use crate::core::pipeline::ChangePipeline;
 use crate::core::roadmap::{load_roadmap, Roadmap};
 use crate::core::session::ReviewSession;
@@ -40,6 +40,68 @@ pub struct Snapshot {
     pub failed: Vec<String>,
 }
 
+/// What the job pane, the header and the running-agent block draw from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobsView {
+    pub jobs: Vec<Job>,
+    /// The selected job's log, rendered.
+    pub job_lines: Vec<String>,
+    /// The last non-blank lines of the agent running on the selected change.
+    pub running_lines: Vec<String>,
+}
+
+/// How many of a running agent's lines the overview shows under its change.
+const RUNNING_LINES: usize = 8;
+
+/// A [`JobsView`] from a listing and a way to tail one job — shared by the
+/// real ports and the fake, so both pick the selected and the running job the
+/// same way.
+pub fn jobs_view(
+    jobs: Vec<Job>,
+    tail: impl Fn(&Job) -> Vec<String>,
+    selected: usize,
+    change: Option<&str>,
+) -> JobsView {
+    let job_lines = jobs
+        .get(selected.min(jobs.len().saturating_sub(1)))
+        .map(&tail)
+        .unwrap_or_default();
+    let running_lines = change
+        .and_then(|change| {
+            jobs.iter()
+                .find(|j| j.status == JobStatus::Running && j.change == change)
+        })
+        .map(|job| {
+            let lines: Vec<String> = tail(job)
+                .into_iter()
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            lines[lines.len().saturating_sub(RUNNING_LINES)..].to_vec()
+        })
+        .unwrap_or_default();
+    JobsView {
+        jobs,
+        job_lines,
+        running_lines,
+    }
+}
+
+/// A job's log as the pane shows it: each line through its driver's
+/// formatter.
+fn rendered_tail(job: &Job) -> Vec<String> {
+    let registry = default_registry();
+    // A job recorded under a driver this build no longer has is still
+    // readable — its log is plain text on disk.
+    let driver = registry.get(&job.driver).ok();
+    tail_job(job, TAIL_LIMIT)
+        .into_iter()
+        .filter_map(|line| match driver {
+            Some(driver) => driver.format_line(&line),
+            None => Some(line),
+        })
+        .collect()
+}
+
 /// The TUI's view of the project. See the module docs.
 pub trait Ports: Send + Sync {
     /// The project root, as the header shows it.
@@ -50,10 +112,12 @@ pub trait Ports: Send + Sync {
     fn reload(&self) -> PortFuture<Result<Snapshot, String>>;
 
     /// Background jobs, re-read from disk each time — they record their own
-    /// outcome, so an in-memory list goes stale the moment one finishes.
-    fn list_jobs(&self) -> Vec<Job>;
-    /// Rendered log lines for one job.
-    fn tail_job(&self, job: &Job) -> Vec<String>;
+    /// outcome, so an in-memory list goes stale the moment one finishes —
+    /// with the log of the job at `selected` and the latest lines of the one
+    /// running on `change`. A future because it is file I/O, and the job poll
+    /// runs it every two seconds: the real implementation reads on a blocking
+    /// thread, never on the one that draws.
+    fn read_jobs(&self, selected: usize, change: Option<&str>) -> PortFuture<JobsView>;
     fn cancel_job(&self, job: &Job);
     /// Removes finished jobs and their logs; how many went.
     fn prune_jobs(&self) -> usize;
@@ -156,22 +220,18 @@ impl Ports for ProjectPorts {
         })
     }
 
-    fn list_jobs(&self) -> Vec<Job> {
-        list_jobs(&self.root)
-    }
-
-    fn tail_job(&self, job: &Job) -> Vec<String> {
-        let registry = default_registry();
-        // A job recorded under a driver this build no longer has is still
-        // readable — its log is plain text on disk.
-        let driver = registry.get(&job.driver).ok();
-        tail_job(job, TAIL_LIMIT)
-            .into_iter()
-            .filter_map(|line| match driver {
-                Some(driver) => driver.format_line(&line),
-                None => Some(line),
+    fn read_jobs(&self, selected: usize, change: Option<&str>) -> PortFuture<JobsView> {
+        let root = self.root.clone();
+        let change = change.map(str::to_owned);
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                jobs_view(list_jobs(&root), rendered_tail, selected, change.as_deref())
             })
-            .collect()
+            .await
+            // Only a panic in the read gets here; an empty pane is the
+            // honest thing to show for it, and the next poll tries again.
+            .unwrap_or_default()
+        })
     }
 
     fn cancel_job(&self, job: &Job) {

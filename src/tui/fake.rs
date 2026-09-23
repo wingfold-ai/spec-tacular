@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 
-use super::ports::{PortFuture, Ports, Snapshot};
+use super::ports::{jobs_view, JobsView, PortFuture, Ports, Snapshot};
 use crate::adapter::types::{OpenSpecArtifact, OpenSpecArtifactStatus, OpenSpecChangeStatus};
 use crate::core::foundation::{guided_questions, scaffold_foundation, GuidedQuestion};
 use crate::core::guide::{project_stage, ProjectStage};
@@ -193,12 +193,15 @@ impl Ports for FakePorts {
         })
     }
 
-    fn list_jobs(&self) -> Vec<Job> {
-        lock(&self.jobs).clone()
-    }
-
-    fn tail_job(&self, job: &Job) -> Vec<String> {
-        lock(&self.tails).get(&job.id).cloned().unwrap_or_default()
+    fn read_jobs(&self, selected: usize, change: Option<&str>) -> PortFuture<JobsView> {
+        let tails = lock(&self.tails).clone();
+        let view = jobs_view(
+            lock(&self.jobs).clone(),
+            |job| tails.get(&job.id).cloned().unwrap_or_default(),
+            selected,
+            change,
+        );
+        Box::pin(async move { view })
     }
 
     fn cancel_job(&self, job: &Job) {

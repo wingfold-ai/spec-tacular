@@ -59,10 +59,15 @@ pub fn panel(title: Option<&str>, focused: bool) -> Block<'static> {
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(theme::PANEL));
     if let Some(title) = title {
-        block = block.title(Span::styled(
-            format!(" {title} "),
-            Style::default().fg(if focused { theme::ACCENT } else { theme::TEXT }),
-        ));
+        // `╭─ Title ───╮`: opentui sets a title one dash in from the corner,
+        // where Ratatui would start it at the corner itself.
+        block = block.title(Line::from(vec![
+            Span::styled("─", Style::default().fg(border)),
+            Span::styled(
+                format!(" {title} "),
+                Style::default().fg(if focused { theme::ACCENT } else { theme::TEXT }),
+            ),
+        ]));
     }
     block
 }

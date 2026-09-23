@@ -91,7 +91,9 @@ changes, and what comes out is a list of `Effect`s — work to spawn on the
 runtime (an OpenSpec call, a dispatch), or the editor to run. The loop spawns
 them and feeds their results back as messages. Drawing is a pure function of
 `&App` that also reports where each clickable thing landed, which is all a
-mouse click needs. Nothing in `app.rs` waits, draws or touches a terminal, so
+mouse click needs. Even file reads stay off the drawing thread: the job list
+and log tails the 2 s poll wants are read by `Ports::read_jobs` on a blocking
+thread and arrive as a message, like any other result. Nothing in `app.rs` waits, draws or touches a terminal, so
 the tests drive the whole interface against a fake `Ports` and assert on a
 `TestBackend` frame.
 
@@ -288,6 +290,12 @@ opentui's `ascii_font` meaning one colour per letter, but opentui applies a
 colour array to a font's *tones* — the block face's fill and shadow — so what
 it drew was two-tone. The glyphs are the same `block` and `tiny` shapes; the
 gradient drifts across the letters as the code intended.
+
+**The start screen has a line for notices.** The TypeScript start screen
+showed only an error under its buttons; the ctrl+c hint needs somewhere to
+appear there too, so a notice gets its own line in the same place. Everything
+else on that screen is placed as the TypeScript placed it, down to Yoga's
+rounding — a text line's edge floored, any other box's rounded half up.
 
 **Button rows wrap.** A row of buttons too wide for its panel continues on the
 next line instead of being squeezed, as a flex row that is allowed to wrap

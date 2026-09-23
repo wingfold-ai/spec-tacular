@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 
 use super::app::{App, Effect, Msg, Screen, QUIT_HINT};
 use super::fake::{change_with, job, FakePorts, Names};
+use super::ports::Ports;
 use super::view;
 use crate::core::jobs::JobStatus;
 
@@ -685,4 +686,109 @@ fn watch_the_full_log_opens_the_pane() {
     ui.click(x, y);
     assert!(ui.app.jobs_open);
     ui.expect("add-login/proposal");
+}
+
+// --- matching the TypeScript's frame ----------------------------------------
+
+/// The leading spaces of the first line containing `text`.
+fn indent_of(frame: &str, text: &str) -> usize {
+    let line = frame
+        .lines()
+        .find(|l| l.contains(text))
+        .unwrap_or_else(|| panic!("{text:?} is not on screen:\n{frame}"));
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+#[test]
+fn the_start_screen_is_centred_as_the_typescript_centred_it() {
+    // Measured from the TypeScript HomeScreen under opentui's testRender:
+    // at 120×36 the logo starts at column 7 on row 9 and the tagline at
+    // column 24; at 121×37, row 10 and column 25.
+    let ports = FakePorts::with_baseline();
+    let mut ui = Ui::mount_sized(ports, 120, 36);
+    ui.app.tick = 100;
+    let frame = ui.frame();
+    assert_eq!(indent_of(&frame, "███████╗ ██████╗"), 7, "{frame}");
+    assert_eq!(indent_of(&frame, "spec-driven development"), 24, "{frame}");
+    let row = frame.lines().position(|l| l.contains("███████╗ ██████╗"));
+    assert_eq!(row, Some(9));
+
+    let mut ui = Ui::mount_sized(FakePorts::with_baseline(), 121, 37);
+    ui.app.tick = 100;
+    let frame = ui.frame();
+    assert_eq!(indent_of(&frame, "███████╗ ██████╗"), 7, "{frame}");
+    assert_eq!(indent_of(&frame, "spec-driven development"), 25, "{frame}");
+    let row = frame.lines().position(|l| l.contains("███████╗ ██████╗"));
+    assert_eq!(row, Some(10));
+}
+
+#[test]
+fn panel_titles_sit_one_dash_in_from_the_corner() {
+    let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
+    ui.expect("╭─ Changes · 0 ─");
+    ui.expect("╭─ Getting started ─");
+    ui.ctrl('j');
+    ui.expect("╭─ Jobs ─");
+}
+
+#[test]
+fn the_job_pane_header_is_two_lines_as_in_the_typescript() {
+    let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
+    ui.ctrl('j');
+    let frame = ui.frame();
+    let lines: Vec<&str> = frame.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.trim_matches(|c| c == '│' || c == ' ') == "jobs")
+        .unwrap_or_else(|| panic!("no header line:\n{frame}"));
+    assert!(lines[at + 1].contains("  none yet"), "{frame}");
+}
+
+// --- the job poll -------------------------------------------------------------
+
+#[test]
+fn the_poll_reads_jobs_as_spawned_work_not_on_the_loop() {
+    let ports = FakePorts::with_baseline();
+    ports.add_job(job("j1", "add-login", "specs", JobStatus::Running), &[]);
+    let mut ui = Ui::ready_for_first_change(ports);
+    ui.ports.set_job_status("j1", JobStatus::Failed);
+
+    let effects = ui.app.on_poll(ui.ports.as_ref());
+    assert_eq!(effects.len(), 1);
+    assert!(matches!(effects[0], Effect::Spawn(_)));
+    // Nothing read yet: the app still believes what it last heard.
+    assert_eq!(ui.app.jobs[0].status, JobStatus::Running);
+
+    ui.run(effects);
+    assert_eq!(ui.app.jobs[0].status, JobStatus::Failed);
+    ui.expect("add-login/specs failed — ctrl+j shows its log");
+}
+
+#[test]
+fn a_read_that_arrives_after_the_selection_moved_keeps_its_list_not_its_lines() {
+    let mut ui = with_jobs(&[
+        (
+            "j1",
+            "add-dark-mode",
+            JobStatus::Running,
+            &["first job's output"],
+        ),
+        ("j2", "other", JobStatus::Running, &["second job's output"]),
+    ]);
+    ui.char('j');
+    ui.expect("second job's output");
+    // A read requested for job 0 lands late, after the move to job 1.
+    let late = ui.runtime.block_on(ui.ports.read_jobs(0, None));
+    let effects = ui.app.on_msg(
+        ui.ports.as_ref(),
+        Msg::JobsRead {
+            view: late,
+            job_index: 0,
+            change: None,
+            poll: false,
+        },
+    );
+    ui.run(effects);
+    ui.expect("second job's output");
+    ui.expect_not("first job's output");
 }
