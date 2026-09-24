@@ -1,25 +1,36 @@
-# spec-tacular — TypeScript (OpenTUI) implementation
+# spec-tacular
 
-spec-tacular is a terminal UI for spec-driven development layered on
-[OpenSpec](https://github.com/Fission-AI/OpenSpec). It adds the review surface
-OpenSpec lacks: per-requirement accept/reject/defer state, an always-visible
-pipeline, gated proposal → specs → design → tasks sequencing, background agent
-jobs, and guided setup. This branch is the empty base of the TypeScript
-implementation (Bun, OpenTUI + Solid); each stage below lands as its own
-stacked pull request.
+A terminal UI for spec-driven development that builds **on top of** [OpenSpec](https://github.com/Fission-AI/OpenSpec).
 
-## Stages
+OpenSpec gets the artifacts right: proposals, specs, design, tasks, archive. What it
+does not give you is a **review surface**. Everything is a folder of Markdown you read
+in your editor, and "done" means "the file exists". spec-tacular adds the missing half:
+a keyboard-driven review loop, an explicit accept/reject state per requirement, and a
+pipeline that is always visible.
 
-1. `ts/01-plan` — implementation plan, problem analysis, custom OpenSpec schema
-2. `ts/02-m0-skeleton` — M0: skeleton, OpenSpec adapter, pipeline model, TUI shell
-3. `ts/03-m2-review-state` — M2: review state, requirement parser, drift detection
-4. `ts/04-m3-review-loop` — M3: the review loop
-5. `ts/05-m4-gating` — M4: gating and the custom schema
-6. `ts/06-m5-agents-jobs` — M5: agent drivers and background jobs
-7. `ts/07-m6-linter` — M6: concreteness linter and the example notation
-8. `ts/08-m7-foundation-adrs` — M7: Foundation, ADRs, and decision promotion
-9. `ts/09-m8-deferral-roadmap` — M8: deferral, the archive split, and the roadmap
-10. `ts/10-setup-advisor-vision-core` — guided setup, AI advisor, vision interview: core logic and unit tests
-11. `ts/11-start-screen-guided-tui` — start screen, guided setup, vision and document screens, CLI wiring, end-to-end tests
+## What it changes
 
-The Rust (Ratatui) implementation lives in the separate `rust/main` stack.
+| OpenSpec today | spec-tacular |
+| --- | --- |
+| Artifact is "complete" when its file exists | Artifact is complete when a human **accepted** it |
+| `design` only requires `proposal` — both can be written at once | `design` requires **accepted** specs; strict `proposal → specs → design → tasks` |
+| Review = reading N spec files in your editor | Review = one requirement at a time, `a`ccept / `r`eject / `e`dit / `d`efer |
+| Design decisions stay local to a change | Cross-cutting decisions are **promoted to global ADRs** |
+| No project ground rules before the first change | A **Foundation** phase: stack, architecture style, conventions, ADRs |
+| Greenfield = 15 changes proposed at once | A **Roadmap** layer that sequences an idea into reviewable slices |
+| `apply` blocks the terminal | `apply` runs in the **background** while you keep reviewing |
+| A task needing a deployed env blocks archive | That task is **deferred**; the rest of the change archives |
+
+## Status
+
+Pre-implementation. This repository currently contains the plan:
+
+- [`docs/problem-analysis.md`](docs/problem-analysis.md) — each pain point traced to its
+  root cause in the OpenSpec source, and what the fix has to be.
+- [`docs/architecture.md`](docs/architecture.md) — stack, layering, data model, state machine.
+- [`docs/implementation-plan.md`](docs/implementation-plan.md) — milestones M0–M8 with exit criteria.
+- [`docs/tui-design.md`](docs/tui-design.md) — screens, layout, keybindings.
+- [`schemas/spec-tacular/schema.yaml`](schemas/spec-tacular/schema.yaml) — the custom OpenSpec
+  schema that enforces the sequencing. This one is already runnable.
+
+Start with `docs/implementation-plan.md`.
