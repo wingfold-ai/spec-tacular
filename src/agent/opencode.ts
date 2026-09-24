@@ -170,10 +170,14 @@ export class OpencodeServer {
     return (await response.json()) as T;
   }
 
-  /** Deletes a session in the background, so it does not clutter opencode's list. */
-  forget(id: string): void {
+  /**
+   * Deletes a session in the background, so it does not clutter opencode's
+   * list. Registered at once, even before its id is known, so a `stop` that
+   * follows straight after still waits for it.
+   */
+  forget(id: Promise<string>): void {
     if (!this.running) return;
-    const deletion = this.request('DELETE', `/session/${id}`).catch(() => {});
+    const deletion = id.then((known) => this.request('DELETE', `/session/${known}`)).catch(() => {});
     this.deletions.add(deletion);
     void deletion.finally(() => this.deletions.delete(deletion));
   }
@@ -271,7 +275,7 @@ export class OpencodeSession implements StructuredSession {
     if (this.dead) return;
     this.dead = true;
     this.inFlight?.abort();
-    void this.id?.then((id) => this.server.forget(id), () => {});
+    if (this.id) this.server.forget(this.id);
   }
 }
 

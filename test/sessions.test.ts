@@ -406,6 +406,21 @@ describe('an opencode session, against a fake server', () => {
     expect(server.running).toBe(true);
   });
 
+  test('stopping the server right after closing still deletes the conversation first', async () => {
+    const { server, session } = setUp();
+    await session.send('one', { timeoutMs: 5000 });
+    const deleted: string[] = [];
+    const request = server.request.bind(server);
+    server.request = (async (method: string, path: string, body?: unknown, signal?: AbortSignal) => {
+      if (method === 'DELETE') deleted.push(path);
+      return request(method, path, body, signal);
+    }) as typeof server.request;
+    session.close();
+    await server.stop();
+    expect(deleted).toEqual(['/session/ses_1']);
+    expect(server.running).toBe(false);
+  });
+
   test('a server that cannot start is a session error', async () => {
     const server = new OpencodeServer(process.cwd(), { command: '/nonexistent/opencode', args: [] }, 2000);
     const session = new OpencodeSession(server, SCHEMA, 'think');
