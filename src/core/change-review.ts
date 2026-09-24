@@ -4,12 +4,15 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { OpenSpecChangeStatus } from '../adapter/types.ts';
+import { loadDecisions } from './decisions.ts';
 import {
   capabilityFromPath,
   parseSpecFile,
   type Rename,
   type Requirement,
+  type ReviewItem,
 } from './requirements.ts';
 import {
   applyRenames,
@@ -17,13 +20,13 @@ import {
   reconcile,
   summarize,
   type ChangeReview,
-  type ReviewedRequirement,
+  type ReviewedItem,
   type ReviewSummary,
 } from './review.ts';
 
 export interface ChangeReviewQueue {
   change: string;
-  requirements: ReviewedRequirement[];
+  requirements: ReviewedItem[];
   summary: ReviewSummary;
   review: ChangeReview;
   /** Spec files that could not be read, so the UI can say so rather than under-report. */
@@ -52,9 +55,15 @@ export function specFilesOf(status: OpenSpecChangeStatus): string[] {
   return id ? (status.artifactPaths[id]?.existingOutputPaths ?? []) : [];
 }
 
+/** The change's design decisions, reviewable like any other item. */
+export function loadChangeDecisions(status: OpenSpecChangeStatus) {
+  return loadDecisions(join(status.changeRoot, 'design.md'));
+}
+
 export function loadChangeReview(
   projectRoot: string,
   status: OpenSpecChangeStatus,
+  options: { includeDecisions?: boolean } = {},
 ): ChangeReviewQueue {
   const requirements: Requirement[] = [];
   const renames: Rename[] = [];
@@ -75,8 +84,13 @@ export function loadChangeReview(
     renames.push(...parsed.renames);
   }
 
+  // Decisions come after requirements: a design is written against settled
+  // specs, so reviewing it first would be reviewing it out of order.
+  const items: ReviewItem[] = [...requirements];
+  if (options.includeDecisions) items.push(...loadChangeDecisions(status));
+
   const review = applyRenames(loadReview(projectRoot, status.changeName), renames);
-  const reviewed = reconcile(requirements, review);
+  const reviewed = reconcile(items, review);
 
   return {
     change: status.changeName,

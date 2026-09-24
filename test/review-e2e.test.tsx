@@ -121,7 +121,7 @@ describe.if(available)('reviewing a real change end to end', () => {
 
     const first = await mount(root, openSession(CHANGE, requirements, loadReview(root, CHANGE)));
     for (let i = 0; i < 7; i++) await first.press('a');
-    const stoppedAt = first.session().items[first.session().cursor]!.requirement.id;
+    const stoppedAt = first.session().items[first.session().cursor]!.item.id;
     expect(first.session().summary.accepted).toBe(7);
     first.destroy();
 
@@ -132,7 +132,7 @@ describe.if(available)('reviewing a real change end to end', () => {
       openSession(CHANGE, requirements, loadReview(root, CHANGE)),
     );
     expect(resumed.session().summary.accepted).toBe(7);
-    expect(resumed.session().items[resumed.session().cursor]!.requirement.id).toBe(stoppedAt);
+    expect(resumed.session().items[resumed.session().cursor]!.item.id).toBe(stoppedAt);
     expect(resumed.frame()).toContain('7 accepted');
     resumed.destroy();
   });
@@ -174,7 +174,7 @@ describe.if(available)('reviewing a real change end to end', () => {
     await ui.press('RETURN');
     for (let i = 1; i < requirements.length; i++) await ui.press('a');
 
-    expect(ui.session().items[ui.session().cursor]!.requirement.id).toBe(requirements[0]!.id);
+    expect(ui.session().items[ui.session().cursor]!.item.id).toBe(requirements[0]!.id);
     expect(ui.session().summary).toMatchObject({ rejected: 1, complete: false });
     ui.destroy();
   });

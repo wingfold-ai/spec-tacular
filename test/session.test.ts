@@ -34,19 +34,19 @@ const reqs = (md = SPEC): Requirement[] =>
 const open = (review: ChangeReview = emptyReview('c'), md = SPEC) =>
   openSession('c', reqs(md), review);
 
-const names = (s: ReturnType<typeof open>) => s.items.map((i) => i.requirement.name);
+const names = (s: ReturnType<typeof open>) => s.items.map((i) => i.item.name);
 
 describe('opening and resuming', () => {
   test('a fresh session starts at the first requirement', () => {
     const s = open();
     expect(names(s)).toEqual(['Alpha', 'Beta', 'Gamma']);
-    expect(currentItem(s)?.requirement.name).toBe('Alpha');
+    expect(currentItem(s)?.item.name).toBe('Alpha');
     expect(position(s)).toEqual({ index: 1, total: 3 });
   });
 
   test('resumes at the stored cursor', () => {
     const review = { ...emptyReview('c'), cursor: 'cap#gamma' };
-    expect(currentItem(open(review))?.requirement.name).toBe('Gamma');
+    expect(currentItem(open(review))?.item.name).toBe('Gamma');
   });
 
   test('with no cursor, starts at the first requirement still needing attention', () => {
@@ -54,12 +54,12 @@ describe('opening and resuming', () => {
     // accepted ones to reach the work.
     let review = setState(emptyReview('c'), reqs()[0]!, 'accepted');
     review = setState(review, reqs()[1]!, 'accepted');
-    expect(currentItem(open(review))?.requirement.name).toBe('Gamma');
+    expect(currentItem(open(review))?.item.name).toBe('Gamma');
   });
 
   test('a stored cursor pointing at a deleted requirement falls back safely', () => {
     const review = { ...emptyReview('c'), cursor: 'cap#deleted' };
-    expect(currentItem(open(review))?.requirement.name).toBe('Alpha');
+    expect(currentItem(open(review))?.item.name).toBe('Alpha');
   });
 
   test('an empty queue yields no current item and does not throw', () => {
@@ -76,20 +76,20 @@ describe('navigation', () => {
   test('n/p move one step and clamp at the ends', () => {
     let s = open();
     s = move(s, 1);
-    expect(currentItem(s)?.requirement.name).toBe('Beta');
+    expect(currentItem(s)?.item.name).toBe('Beta');
     s = move(s, -1);
-    expect(currentItem(s)?.requirement.name).toBe('Alpha');
+    expect(currentItem(s)?.item.name).toBe('Alpha');
     // Clamped, not wrapped: wrapping loses your place in a long queue.
     s = move(s, -1);
-    expect(currentItem(s)?.requirement.name).toBe('Alpha');
+    expect(currentItem(s)?.item.name).toBe('Alpha');
     s = move(s, 99);
-    expect(currentItem(s)?.requirement.name).toBe('Gamma');
+    expect(currentItem(s)?.item.name).toBe('Gamma');
   });
 
   test('moving records the cursor so the position survives a restart', () => {
     const s = move(open(), 2);
     expect(s.review.cursor).toBe('cap#gamma');
-    expect(currentItem(open(s.review))?.requirement.name).toBe('Gamma');
+    expect(currentItem(open(s.review))?.item.name).toBe('Gamma');
   });
 });
 
@@ -97,7 +97,7 @@ describe('deciding', () => {
   test('accepting records the state and advances to the next open item', () => {
     const s = decide(open(), 'accepted');
     expect(s.items[0]!.state).toBe('accepted');
-    expect(currentItem(s)?.requirement.name).toBe('Beta');
+    expect(currentItem(s)?.item.name).toBe('Beta');
     expect(s.summary.accepted).toBe(1);
   });
 
@@ -121,7 +121,7 @@ describe('deciding', () => {
     let s = open();
     s = move(s, 2);              // at Gamma
     s = decide(s, 'accepted');   // Gamma done; Alpha and Beta still open
-    expect(currentItem(s)?.requirement.name).toBe('Alpha');
+    expect(currentItem(s)?.item.name).toBe('Alpha');
   });
 
   test('accepting the final open item leaves the cursor put', () => {
@@ -130,23 +130,23 @@ describe('deciding', () => {
     s = decide(s, 'accepted');
     s = decide(s, 'accepted');
     expect(s.summary.complete).toBe(true);
-    expect(currentItem(s)?.requirement.name).toBe('Gamma');
+    expect(currentItem(s)?.item.name).toBe('Gamma');
   });
 
   test('a rejected requirement is still open, so review returns to it', () => {
     let s = open();
     s = decide(s, 'rejected', { note: 'too specific' });
-    expect(currentItem(s)?.requirement.name).toBe('Beta');
+    expect(currentItem(s)?.item.name).toBe('Beta');
     s = decide(s, 'accepted');
     s = decide(s, 'accepted');
     // Alpha was rejected, so it is the only thing left needing attention.
-    expect(currentItem(s)?.requirement.name).toBe('Alpha');
+    expect(currentItem(s)?.item.name).toBe('Alpha');
   });
 
   test('skipping advances without recording a decision', () => {
     const s = skip(open());
     expect(s.items[0]!.state).toBe('pending');
-    expect(currentItem(s)?.requirement.name).toBe('Beta');
+    expect(currentItem(s)?.item.name).toBe('Beta');
   });
 });
 
@@ -154,7 +154,7 @@ describe('refresh after an external edit', () => {
   test('keeps your place when the requirement still exists', () => {
     let s = move(open(), 1);
     s = refresh(s, reqs(SPEC.replace('SHALL gamma.', 'SHALL gamma differently.')));
-    expect(currentItem(s)?.requirement.name).toBe('Beta');
+    expect(currentItem(s)?.item.name).toBe('Beta');
   });
 
   test('surfaces drift on a requirement that was edited after acceptance', () => {
@@ -178,7 +178,7 @@ describe('revision bundle', () => {
     s = decide(s, 'accepted');
 
     const bundle = buildRevisionBundle('c', s.items);
-    expect(bundle.rejected.map((r) => r.requirement.name)).toEqual(['Alpha']);
+    expect(bundle.rejected.map((r) => r.item.name)).toEqual(['Alpha']);
     expect(bundle.instruction).toContain('Requirement: Alpha');
     expect(bundle.instruction).toContain('names an endpoint that is not decided');
     // The accepted one must not be offered up for rewriting.

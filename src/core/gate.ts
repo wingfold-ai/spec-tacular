@@ -12,6 +12,7 @@
  * acceptance condition, which a schema cannot express.
  */
 
+import { foundationExists, isUnanswered, loadFoundation } from './foundation.ts';
 import type { ChangePipeline, Stage } from './pipeline.ts';
 
 export type GateDecision =
@@ -118,4 +119,36 @@ export function staleArtifacts(pipeline: ChangePipeline): StaleArtifact[] {
     if (because.length > 0) out.push({ artifact: stage.id, because });
   }
   return out;
+}
+
+
+/**
+ * Whether the project's ground rules have been settled.
+ *
+ * The first change's design otherwise invents the architecture implicitly, and
+ * every later change inherits an accident (docs/problem-analysis.md §9). So
+ * the first artifact of a change is gated on the Foundation being answered.
+ *
+ * A project with no Foundation at all is not blocked: spec-tacular has to stay
+ * usable on a repository that adopted OpenSpec before it existed. Only a
+ * scaffolded-but-unanswered Foundation blocks, because there the questions
+ * have been asked and left hanging.
+ */
+export function foundationGate(projectRoot: string): GateDecision {
+  if (!foundationExists(projectRoot)) {
+    return {
+      allowed: true,
+      warnings: ['no Foundation yet — run `spectacular init` to set the ground rules'],
+    };
+  }
+
+  const unanswered = loadFoundation(projectRoot).filter(isUnanswered);
+  if (unanswered.length === 0) return { allowed: true, warnings: [] };
+
+  return {
+    allowed: false,
+    reason: 'the project\'s ground rules are not settled yet',
+    blockers: unanswered.map((item) => `${item.capability}: ${item.name}`),
+    warnings: [],
+  };
 }
