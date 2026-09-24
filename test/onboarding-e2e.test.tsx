@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Ask } from '../src/core/advisor.ts';
 import { answerFoundation, foundationDir, guidedQuestions } from '../src/core/foundation.ts';
-import { mountApp } from './support/app-harness.tsx';
+import { foundationGate } from '../src/core/gate.ts';
+import { freshChange, mountApp } from './support/app-harness.tsx';
 
 const mounted: { destroy: () => void }[] = [];
 afterEach(() => {
@@ -75,9 +76,37 @@ describe('the start screen', () => {
     await ui.press('return');
     expect(ui.frame()).toContain('Before the first change, settle the ground rules.');
     expect(ui.frame()).toContain('✓ Set up');
-    expect(ui.frame()).toContain('▶ Begin — 19 questions');
+    // A new project: only what can be answered on day one.
+    expect(ui.frame()).toContain('▶ Begin — 11 questions');
+  });
+
+  test('a folder that still needs setting up warms the advisor before anything is answered', async () => {
+    const ui = await mountApp({});
+    mounted.push(ui);
+    // On the start screen already, before Start is pressed.
+    expect(ui.warmed).toEqual(['foundation']);
+    await ui.press('return');
+    await ui.press('return');
+    expect(ui.warmed.every((w) => w === 'foundation')).toBe(true);
+  });
+
+  test('once the setup is done, nothing more is warmed for it', async () => {
+    const ui = await mountApp({ baseline: true });
+    mounted.push(ui);
+    await ui.press('return');
+    ui.settleGroundRules();
+    ui.changes.push(freshChange('add-login'));
+    ui.warmed.splice(0);
+    await ui.press('c', { ctrl: true });
+    expect(ui.warmed).toEqual([]);
   });
 });
+
+/** From the first question (the domain's) to the first Stack question, skipping. */
+const toStack = async (ui: Awaited<ReturnType<typeof mount>>) => {
+  for (let i = 0; i < 4; i++) await ui.press('tab');
+  expect(ui.frame()).toContain('Language and runtime, with versions.');
+};
 
 describe('the ground rules', () => {
   test('an empty folder is guided all the way to its first proposal', async () => {
@@ -85,17 +114,19 @@ describe('the ground rules', () => {
     await ui.press('return'); // Start
     await ui.press('return'); // Begin
 
-    expect(ui.frame()).toContain('Stack · What the project is built with.');
-    expect(ui.frame()).toContain('Language and runtime, with versions.');
-    expect(ui.frame()).toContain('e.g. "TypeScript 5.6 on Bun 1.4"');
+    // The domain comes first: what it is, before what it is built with.
+    expect(ui.frame()).toContain('Domain · What the project is about');
+    expect(ui.frame()).toContain('What the system is for, and who uses it.');
+    expect(ui.frame()).toContain('↷ Skip — leave it for later');
+    expect(ui.frame()).toContain('▸ ✎ Write my answer');
     expect(ui.frame()).toContain('type your answer — or "skip"');
 
-    await ui.type('TypeScript on Bun');
-    expect(ui.frame()).toContain('› TypeScript on Bun');
+    await ui.type('Lets clinic staff book rooms');
+    expect(ui.frame()).toContain('› Lets clinic staff book rooms');
     await ui.press('return');
-    expect(ui.frame()).toContain('Framework, if any');
-    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
-      'TypeScript on Bun',
+    expect(ui.frame()).toContain('The core terms');
+    expect(readFileSync(join(foundationDir(ui.root), 'domain.md'), 'utf8')).toContain(
+      'Lets clinic staff book rooms',
     );
 
     // Enter on an empty, unanswered question explains instead of skipping.
@@ -149,6 +180,7 @@ describe('the ground rules', () => {
     await ui.press('return');
     expect(ui.frame()).toContain('Not sure? Press ?');
     await ui.press('return');
+    await toStack(ui);
 
     await ui.type('Elixir');
     await ui.press('return');
@@ -181,11 +213,39 @@ describe('the ground rules', () => {
     expect(stack()).toContain('## Framework, if any, and why it over the alternatives.\n\nPhoenix');
   });
 
+  test('Skip is the first choice on every question, but never the default', async () => {
+    const { ask } = elixirAdvisor();
+    const ui = await mount(ask);
+    await ui.press('return');
+    await ui.press('return');
+    await toStack(ui);
+    await ui.type('Elixir');
+    await ui.press('return');
+    await ui.settle(100);
+
+    // Listed first, above the options — the recommendation is what is selected.
+    const lines = ui.frame().split('\n');
+    const at = (text: string) => lines.findIndex((l) => l.includes(text));
+    expect(at('↷ Skip — leave it for later')).toBeGreaterThan(-1);
+    expect(at('↷ Skip — leave it for later')).toBeLessThan(at('1.19'));
+    expect(ui.frame()).toContain('▸ 1.19');
+    expect(ui.frame()).not.toContain('▸ ↷ Skip');
+
+    // Chosen, it does what tab does: on to the next question, nothing written.
+    await ui.press('up');
+    expect(ui.frame()).toContain('▸ ↷ Skip');
+    expect(ui.frame()).toContain('enter  skip');
+    await ui.press('return');
+    expect(ui.frame()).toContain('Framework, if any');
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain('## Which Elixir version?\n\nTBD');
+  });
+
   test('while it looks at an answer, enter moves on without waiting', async () => {
     let release: (v: unknown) => void = () => {};
     const ui = await mount(() => new Promise((r) => { release = r; }));
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     await ui.type('Elixir');
     await ui.press('return');
     expect(ui.frame()).toContain('✓ Saved: Elixir');
@@ -201,6 +261,7 @@ describe('the ground rules', () => {
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     await ui.type('Python');
     await ui.press('return');
 
@@ -231,6 +292,7 @@ describe('the ground rules', () => {
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     await ui.type('TypeScript');
     await ui.press('return');
 
@@ -287,6 +349,7 @@ describe('the ground rules', () => {
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     expect(ui.frame()).toContain("? I'm not sure");
 
     await ui.type('not sure');
@@ -304,7 +367,6 @@ describe('the ground rules', () => {
     expect(ui.frame()).toContain('Language and runtime, with versions.');
     expect(ui.frame()).toContain('💡 Which language the code is written in');
     expect(ui.frame()).toContain('▸ ⇐ TypeScript on Node 24');
-    expect(ui.frame()).toContain('⇐');
     expect(ui.frame()).toContain('from your earlier answers: a website');
     await ui.press('return');
     expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
@@ -322,8 +384,9 @@ describe('the ground rules', () => {
     await ui.press('return');
     await ui.press('?');
     await ui.settle(50);
-    // Help stays on the question when there is nothing simpler to ask.
-    await ui.press('down'); // off the help row, onto "write my answer"
+    // Help stays on the question when there is nothing simpler to ask; enter
+    // on "write my answer", with nothing written, asks again.
+    expect(ui.frame()).toContain('▸ ✎ Write my answer');
     await ui.press('return');
     await ui.settle(50);
     expect(coached).toBe(2);
@@ -335,8 +398,8 @@ describe('the ground rules', () => {
     await ui.press('return');
     await ui.type('skip');
     await ui.press('return');
-    expect(ui.frame()).toContain('Framework, if any');
-    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).not.toContain('skip');
+    expect(ui.frame()).toContain('The core terms');
+    expect(readFileSync(join(foundationDir(ui.root), 'domain.md'), 'utf8')).not.toContain('skip');
   });
 
   test('a follow-up can be dismissed as not relevant', async () => {
@@ -344,6 +407,7 @@ describe('the ground rules', () => {
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     await ui.type('Elixir');
     await ui.press('return');
     await ui.settle(100);
@@ -361,6 +425,7 @@ describe('the ground rules', () => {
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     await ui.type('Elixir');
     await ui.press('return');
     await ui.settle(100);
@@ -375,6 +440,7 @@ describe('the ground rules', () => {
     });
     await ui.press('return');
     await ui.press('return');
+    await toStack(ui);
     await ui.type('Go 1.23');
     await ui.press('return');
     await ui.settle(100);
@@ -386,7 +452,7 @@ describe('the ground rules', () => {
     const ui = await mount();
     await ui.press('return');
     await ui.press('return');
-    await ui.type('Go 1.23');
+    await ui.type('Lets clinic staff book rooms');
     await ui.press('return');
     await ui.press('c', { ctrl: true });
 
@@ -396,7 +462,7 @@ describe('the ground rules', () => {
 
     // f comes back to the next open question, not the intro.
     await ui.press('f');
-    expect(ui.frame()).toContain('Framework, if any');
+    expect(ui.frame()).toContain('The core terms');
   });
 
   test('tab skips a question, and ← returns to it', async () => {
@@ -404,10 +470,142 @@ describe('the ground rules', () => {
     await ui.press('return');
     await ui.press('return');
     await ui.press('tab');
-    expect(ui.frame()).toContain('Framework, if any');
+    expect(ui.frame()).toContain('The core terms');
     await ui.press('left');
-    expect(ui.frame()).toContain('Language and runtime, with versions.');
+    expect(ui.frame()).toContain('What the system is for, and who uses it.');
     expect(ui.frame()).toContain('0/19');
+  });
+
+  test('skipping every question ends the pass, and the first change can start', async () => {
+    // Skipping used to come back round to the skipped questions for ever.
+    const ui = await mount();
+    await ui.press('return');
+    await ui.press('return');
+    await ui.type('Lets clinic staff book rooms');
+    await ui.press('return');
+    for (let i = 1; i < 19; i++) await ui.press('tab');
+
+    expect(ui.frame()).toContain('✓ 1 of 19 ground rules answered.');
+    expect(ui.frame()).toContain('18 are left for later — open, but not blocking the first change.');
+    await ui.press('return');
+
+    expect(ui.frame()).toContain('Ground rules are set. Next: your first change.');
+    expect(foundationGate(ui.root).allowed).toBe(true);
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
+      '## Language and runtime, with versions.\n\nDecide later',
+    );
+    await ui.press('n');
+    expect(ui.frame()).toContain('What do you want to change, and why?');
+  });
+
+  test('ctrl+f finishes early, from any question, and says so in the footer', async () => {
+    const ui = await mount();
+    await ui.press('return');
+    await ui.press('return');
+    expect(ui.frame()).toContain('ctrl+f  done — rest later');
+    await ui.press('f', { ctrl: true });
+    expect(ui.frame()).toContain('✓ 0 of 19 ground rules answered.');
+    // ← goes back to answering after all.
+    await ui.press('left');
+    expect(ui.frame()).toContain('Anything a new contributor reliably gets wrong.');
+    await ui.type('done');
+    await ui.press('return');
+    await ui.press('return');
+    expect(ui.frame()).toContain('Ground rules are set. Next: your first change.');
+    expect(foundationGate(ui.root).allowed).toBe(true);
+  });
+});
+
+describe('a new project', () => {
+  /**
+   * A model that, once it knows the domain, proposes the rest — and is held
+   * on everything after it, so what the architecture table derives is seen
+   * on its own.
+   */
+  const domainAdvisor = () => {
+    const prompts: string[] = [];
+    const ask: Ask = (prompt) => {
+      prompts.push(prompt);
+      if (prompt.includes('Answer: Lets clinic staff book rooms')) {
+        return Promise.resolve({
+          followUps: [],
+          upcoming: [],
+          derived: [
+            { question: 'The core terms, each with a one-line meaning.', answer: 'Booking: a room held for a slot.', reason: 'room booking' },
+            { question: 'Language and runtime, with versions.', answer: 'TypeScript on Node.js', reason: 'a web app for staff' },
+            { question: 'Architecture style (layered, hexagonal, vertical slice, ...) and why.', answer: 'Clean Architecture', reason: 'rules outlive the UI' },
+          ],
+        });
+      }
+      return new Promise(() => {});
+    };
+    return { ask, prompts };
+  };
+
+  test('is asked its domain first, and the rest is proposed from it', async () => {
+    const { ask, prompts } = domainAdvisor();
+    const ui = await mountApp({ ask });
+    mounted.push(ui);
+    await ui.press('return');
+    await ui.press('return');
+    expect(ui.frame()).toContain('What the system is for, and who uses it.');
+    expect(ui.frame()).toContain('0/11');
+
+    await ui.type('Lets clinic staff book rooms');
+    await ui.press('return');
+    await ui.settle(100);
+    // The advisor was asked to propose the rest from the domain.
+    const advised = prompts.find((p) => p.includes('Answer: Lets clinic staff book rooms'))!;
+    expect(advised).toContain('- [Stack] Language and runtime, with versions. (propose)');
+    expect(advised).toContain('derived\nalso proposes an answer for every open question marked (propose)');
+
+    // Proposed, pre-selected: enter confirms.
+    expect(ui.frame()).toContain('The core terms');
+    expect(ui.frame()).toContain('▸ ⇐ Booking: a room held for a slot.');
+    await ui.press('return');
+    expect(ui.frame()).toContain('Language and runtime, with versions.');
+    expect(ui.frame()).toContain('▸ ⇐ TypeScript on Node.js');
+  });
+
+  test('Clean Architecture decides the import direction, instantly', async () => {
+    const { ask } = domainAdvisor();
+    const ui = await mountApp({ ask });
+    mounted.push(ui);
+    await ui.press('return');
+    await ui.press('return');
+    await ui.type('Lets clinic staff book rooms');
+    await ui.press('return');
+    await ui.settle(100);
+    while (!ui.frame().includes('Architecture style (layered')) await ui.press('tab');
+    expect(ui.frame()).toContain('▸ ⇐ Clean Architecture');
+    await ui.press('return');
+    // A confirmed proposal moves on at once. The advisor is still thinking
+    // about it; the table is not, so what the style decides is already there.
+
+    expect(ui.frame()).toContain('The layers or modules, and which may depend on which.');
+    expect(ui.frame()).toContain('▸ ⇐ entities ← use cases ← interface adapters ← frameworks & drivers.');
+    expect(ui.frame()).toContain('from your earlier answers: Clean Architecture: the dependency rule it defines');
+    await ui.press('return');
+    const architecture = readFileSync(join(foundationDir(ui.root), 'architecture.md'), 'utf8');
+    expect(architecture).toContain('Dependencies point inward only — frameworks/infrastructure → adapters → use cases → entities');
+
+    expect(ui.frame()).toContain('Where business rules live');
+    expect(ui.frame()).toContain('▸ ⇐ In domain/ (entities) and application/ (use cases). No I/O there');
+  });
+
+  test('its vision starts from what the domain already says', async () => {
+    const ui = await mountApp({});
+    mounted.push(ui);
+    await ui.press('return');
+    await ui.press('return');
+    await ui.type('Lets clinic staff book rooms');
+    await ui.press('return');
+    await ui.press('f', { ctrl: true });
+    await ui.press('return');
+
+    expect(ui.frame()).toContain('What are you building?');
+    expect(ui.frame()).toContain('› Lets clinic staff book rooms');
+    expect(ui.frame()).toContain('⇐ from your ground rules (Domain)');
   });
 });
 
@@ -460,7 +658,8 @@ describe('the overview', () => {
     await ui.press('c', { ctrl: true });
     await ui.press('?');
     expect(ui.frame()).toContain('let an agent draft the next artifact');
-    expect(ui.frame()).toContain('the ground rules: stack, domain, architecture, conventions');
+    expect(ui.frame()).toContain('the ground rules: domain, stack, architecture, conventions');
+    expect(ui.frame()).toContain('ctrl+f         done: leave the open questions for later');
     await ui.press('x');
     expect(ui.frame()).not.toContain('Pipeline marks');
   });

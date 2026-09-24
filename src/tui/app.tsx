@@ -31,7 +31,7 @@ import type { Job } from '../core/jobs.ts';
 import { lintRequirement, type LintConfig } from '../core/concreteness.ts';
 import { markExampleInFile } from '../core/mark.ts';
 import type { Decision } from '../core/decisions.ts';
-import type { GuidedQuestion } from '../core/foundation.ts';
+import { DEFERRED, type GuidedQuestion } from '../core/foundation.ts';
 import {
   nextStep,
   setupStep,
@@ -356,9 +356,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     refreshFoundation();
     if (!result.ok || !advisor) return result;
     setAdviceNotice(null);
-    // What the table knows is on screen now; the advisor refines it after.
+    // What the tables know — follow-ups, options, what an architecture style
+    // decides — is on screen now; the advisor refines it after.
     const presets = advisor.presets?.(q, text) ?? [];
-    if (presets.length > 0) refreshFoundation();
+    refreshFoundation();
     const advice = track(q.item.name, async () => {
       const { added, derived } = await advisor.afterAnswer(q, text);
       const parts: string[] = [];
@@ -981,6 +982,13 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             if (!result.ok) setAdviceNotice(result.reason ?? 'Could not open an editor');
             refreshFoundation();
           }}
+          onFinish={(open) => {
+            // Left for later: still in the files, no longer blocking.
+            for (const q of open) props.input.answer(q, DEFERRED);
+            setShown(null);
+            refreshFoundation();
+            setScreen(stage().kind === 'vision' ? 'vision' : 'overview');
+          }}
           onClose={() => {
             setShown(null);
             refreshFoundation();
@@ -995,6 +1003,11 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           busy={visionBusy()}
           error={visionError()}
           unavailable={vision?.unavailable ?? 'no vision support'}
+          seed={
+            // The Domain section asked what it is for already: start from that.
+            questions().find((q) => q.title === 'Domain' && q.answered && /what the system is for/i.test(q.item.name))
+              ?.item.text
+          }
           onStart={(text) => {
             if (vision?.unavailable) {
               // No interview without a model: keep the vision, start a change.

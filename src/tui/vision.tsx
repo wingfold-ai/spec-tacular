@@ -24,6 +24,12 @@ export interface VisionScreenProps {
   error: string | null;
   /** Why there is no interview, when there is no model to run it. */
   unavailable: string | null;
+  /**
+   * What the developer already said the project is for, in the ground rules'
+   * Domain section: the description starts from it, so a new project is not
+   * described twice.
+   */
+  seed?: string;
   onStart: (vision: string) => void;
   /** An answer, or null to skip the question. */
   onAnswer: (answer: string | null) => void;
@@ -40,11 +46,11 @@ export interface VisionScreenProps {
 const DONE_WORDS = new Set(['done', 'enough', "that's it", 'thats it', 'finish', 'no more']);
 const SKIP_WORDS = new Set(['skip', 'pass', 'later', "don't know", 'dont know', 'idk', 'not sure']);
 
-type Row = { kind: 'option'; option: AdviceOption } | { kind: 'own' };
+type Row = { kind: 'skip' } | { kind: 'option'; option: AdviceOption } | { kind: 'own' };
 
 export function VisionScreen(props: VisionScreenProps) {
   const dims = useTerminalDimensions();
-  const [draft, setDraft] = createSignal('');
+  const [draft, setDraft] = createSignal(props.session?.vision ? '' : (props.seed ?? '').trim());
   const [sel, setSel] = createSignal(0);
   /** Slices the developer dropped from the proposal, by id. */
   const [dropped, setDropped] = createSignal<Set<string>>(new Set());
@@ -60,13 +66,17 @@ export function VisionScreen(props: VisionScreenProps) {
   });
 
   const question = () => props.session?.pending ?? null;
+  // Skip first, as in the ground rules: the way out of any question.
   const rows = createMemo<Row[]>(() => [
+    { kind: 'skip' as const },
     ...(question()?.options ?? []).map((option) => ({ kind: 'option' as const, option })),
     { kind: 'own' as const },
   ]);
 
-  // A new question starts on its recommendation, with an empty answer box.
-  createEffect(on(() => question()?.ask, () => {
+  // A new question starts on its recommendation, with an empty answer box —
+  // or on writing your own, never on Skip.
+  createEffect(on(() => question()?.ask, (ask) => {
+    if (ask === undefined) return; // describing: keep what is there, the seed included
     setDraft('');
     const rec = rows().findIndex((r) => r.kind === 'option' && r.option.recommended);
     setSel(rec >= 0 ? rec : rows().length - 1);
@@ -95,6 +105,7 @@ export function VisionScreen(props: VisionScreenProps) {
     if (SKIP_WORDS.has(word)) return props.onAnswer(null);
     if (text) return props.onAnswer(text);
     const row = rows()[sel()];
+    if (row?.kind === 'skip') return props.onAnswer(null);
     if (row?.kind === 'option') return props.onAnswer(row.option.label);
     setHint('Pick an option or type an answer — tab skips it, "done" ends the questions');
   };
@@ -211,6 +222,11 @@ export function VisionScreen(props: VisionScreenProps) {
           </For>
           <text>{' '}</text>
           <InputBox placeholder="e.g. A booking tool for small clinics: receptionists see free rooms and book them for patients…" />
+          <Show when={props.seed?.trim() && draft() === props.seed.trim()}>
+            <text style={{ fg: THEME.accent2 }}>
+              ⇐ from your ground rules (Domain) — add what matters most, or press enter as it is
+            </text>
+          </Show>
           <Show when={hint()}>
             <text style={{ fg: THEME.warn }}>{hint()}</text>
           </Show>
@@ -244,18 +260,22 @@ export function VisionScreen(props: VisionScreenProps) {
             <For each={rows()}>
               {(row, i) => (
                 <box
-                  onMouseDown={() => (row.kind === 'option' ? props.onAnswer(row.option.label) : setSel(i()))}
+                  onMouseDown={() =>
+                    row.kind === 'option' ? props.onAnswer(row.option.label)
+                      : row.kind === 'skip' ? props.onAnswer(null)
+                      : setSel(i())}
                   style={{ flexDirection: 'row', backgroundColor: sel() === i() ? THEME.highlight : THEME.panel }}
                 >
                   <text style={{ fg: THEME.accent, width: 3, flexShrink: 0 }}>{sel() === i() ? ' ▸ ' : '   '}</text>
-                  <Show
-                    when={row.kind === 'option'}
-                    fallback={
-                      <text style={{ fg: sel() === i() ? THEME.accent : THEME.text }}>
-                        {rows().length > 1 ? '✎ Write my own answer' : '✎ Write my answer'}
-                      </text>
-                    }
-                  >
+                  <Show when={row.kind === 'skip'}>
+                    <text style={{ fg: sel() === i() ? THEME.accent : THEME.dim }}>↷ Skip this question</text>
+                  </Show>
+                  <Show when={row.kind === 'own'}>
+                    <text style={{ fg: sel() === i() ? THEME.accent : THEME.text }}>
+                      {rows().length > 2 ? '✎ Write my own answer' : '✎ Write my answer'}
+                    </text>
+                  </Show>
+                  <Show when={row.kind === 'option'}>
                     <text style={{ fg: sel() === i() ? THEME.accent : THEME.text, width: 30, flexShrink: 0 }}>
                       {clip((row as { option: AdviceOption }).option.label, 29)}
                     </text>

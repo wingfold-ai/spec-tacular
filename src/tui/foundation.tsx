@@ -9,6 +9,10 @@
  * It proposes; the developer decides. Nothing is written until an option is
  * picked or an answer typed, so the Foundation still holds only decisions
  * somebody made.
+ *
+ * Nothing here can trap anyone: every question can be skipped, a pass ends
+ * once each is answered or skipped, and ctrl+f ends it early. What was not
+ * answered is then left for later — open, but not blocking the first change.
  */
 
 import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
@@ -33,9 +37,12 @@ export type AnswerResult = Result & { advice?: Promise<{ added: string[] }>; pre
 /** Typed instead of an answer, these ask for help or skip the question. */
 const HELP_WORDS = new Set(['?', 'help', 'help me', 'idk', "i don't know", 'i dont know', 'dont know', "don't know", 'not sure', "i'm not sure", 'no idea']);
 const SKIP_WORDS = new Set(['skip', '/skip', 'later', 'pass']);
+/** Typed instead of an answer, these end the pass and leave the rest for later. */
+const DONE_WORDS = new Set(['done', '/done', 'finish', "that's all", 'thats all']);
 
 /** A row in the choice list. */
 type Row =
+  | { kind: 'skip' }
   | { kind: 'option'; option: AdviceOption; derived?: string }
   | { kind: 'help' }
   | { kind: 'own' };
@@ -44,7 +51,7 @@ type Row =
  * What the developer has chosen on this question — by what it is, not by
  * position, since positions move when the advisor's options arrive.
  */
-type Pick = { kind: 'option'; label: string } | { kind: 'help' } | { kind: 'own' };
+type Pick = { kind: 'option'; label: string } | { kind: 'skip' } | { kind: 'help' } | { kind: 'own' };
 
 const pickOf = (row: Row | undefined): Pick | null =>
   !row ? null : row.kind === 'option' ? { kind: 'option', label: row.option.label } : { kind: row.kind };
@@ -73,6 +80,11 @@ export interface FoundationScreenProps {
   onDismiss?: (question: GuidedQuestion) => void;
   /** Opens the question's section in $EDITOR, for an answer longer than a line. */
   onEdit: (question: GuidedQuestion) => void;
+  /**
+   * Ends the pass: the questions still open are left for later, so they no
+   * longer block the first change. Then the setup is left.
+   */
+  onFinish?: (open: GuidedQuestion[]) => void;
   /** Leaves the setup, finished or not. */
   onClose: () => void;
 }
@@ -81,15 +93,16 @@ const INTRO = [
   'Every agent that writes a proposal, spec or design for this project reads',
   'these first — so it builds on your decisions instead of inventing its own.',
   '',
+  '  Domain         what you are building, and for whom — asked first',
   '  Stack          what it is built with',
-  '  Domain         what it is about: its purpose, vocabulary and rules',
   '  Architecture   how the code is shaped and which way dependencies point',
   '  Conventions    how the team works on it',
   '',
-  'Answer what you know. Not sure? Press ? (or type "help") and you get an',
-  'explanation, examples for your project, and simpler questions first.',
-  'Not decided yet? Press tab or type "skip" — it stays open, and no change',
-  'can start until it is answered. Answers are saved as you go.',
+  'Start with the idea; the rest is proposed from it, marked ⇐ — enter confirms.',
+  'Not sure? Press ? (or type "help") for an explanation, examples for your',
+  'project, and simpler questions first. Not decided? Skip it (the first',
+  'choice, tab, or "skip") — skipped questions are left for later and do not',
+  'block the first change. ctrl+f finishes early. Answers are saved as you go.',
 ];
 
 export function FoundationScreen(props: FoundationScreenProps) {
@@ -139,11 +152,12 @@ export function FoundationScreen(props: FoundationScreenProps) {
   const options = () => shownOptions().list;
 
   /**
-   * The choice list: an answer derived from earlier ones first, then the
-   * proposals, then asking for help, then writing your own.
+   * The choice list: skipping it, an answer derived from earlier ones, the
+   * proposals, asking for help, then writing your own.
    */
   const rows = createMemo<Row[]>(() => {
-    const out: Row[] = [];
+    // Skip is always there, and always first: the way out of any question.
+    const out: Row[] = [{ kind: 'skip' }];
     const derived = current()?.answered ? undefined : currentMeta().derived;
     if (derived) {
       out.push({
@@ -185,9 +199,11 @@ export function FoundationScreen(props: FoundationScreenProps) {
     if (q && !intro()) props.onShow?.(q);
   }));
 
-  // Start on a derived answer, else the recommendation — when the question
-  // changes, or when advice arrives for it. Once the developer has chosen or
-  // started typing, their choice is followed to wherever it moved instead.
+  // Start on a derived answer, else the recommendation, else writing your own
+  // — never on Skip, which is first in the list but never the default: an
+  // enter that skips by accident loses a question. Re-applied when the
+  // question changes or advice arrives for it; once the developer has chosen
+  // or started typing, their choice is followed to wherever it moved instead.
   createEffect(on(rows, (r) => {
     const p = untrack(picked);
     if (untrack(draft) !== '' || p?.kind === 'own') return setSel(r.length - 1);
@@ -221,20 +237,28 @@ export function FoundationScreen(props: FoundationScreenProps) {
   };
 
   /**
-   * The first open question, in order — not merely the one after this.
+   * The first open question not skipped, in order — not merely the one after
+   * this.
    *
    * Follow-ups are inserted straight after the answer that raised them, which
    * is behind the cursor by the time they arrive. Taking the first open one
-   * means they come next, which is what "dig deeper" should feel like.
+   * means they come next, which is what "dig deeper" should feel like. A
+   * skipped question is never come back to in the same pass: once every
+   * question is answered or skipped, the pass is over.
    */
   const advance = () => {
     const qs = props.questions;
-    const next =
-      qs.find((q) => !q.answered && !skipped().has(q.item.id) && q.item.id !== cursorId()) ??
-      qs.find((q, i) => !q.answered && i > index()) ??
-      qs.find((q) => !q.answered && q.item.id !== cursorId());
+    const next = qs.find((q) => !q.answered && !skipped().has(q.item.id) && q.item.id !== cursorId());
     if (next) return go(qs.indexOf(next));
-    if (qs.every((q) => q.answered)) return setShowDone(true);
+    setShowDone(true);
+  };
+
+  /** Still open when the pass ends: what `onFinish` leaves for later. */
+  const open = createMemo(() => props.questions.filter((q) => !q.answered));
+
+  const finish = () => {
+    if (open().length > 0 && props.onFinish) props.onFinish(open());
+    else props.onClose();
   };
 
   /**
@@ -242,15 +266,19 @@ export function FoundationScreen(props: FoundationScreenProps) {
    * so what the answer leaves open is asked now, not after unrelated
    * questions. Enter moves on without waiting; what arrives later still
    * comes up next.
+   *
+   * Not for a derived answer confirmed as it was proposed: the advisor
+   * proposed it knowing everything before it, and a new project confirms
+   * several in a row — waiting after each would undo the point of proposing.
    */
-  const save = (text: string) => {
+  const save = (text: string, confirmed = false) => {
     const q = current();
     if (!q) return;
     const result = props.onAnswer(q, text);
     if (!result.ok) return setError(result.reason);
     setDraft('');
     setError(null);
-    if (!result.advice) return advance();
+    if (!result.advice || confirmed) return advance();
     // The preset table already knows what this answer leaves open: go there
     // now. The advisor's own follow-ups still arrive, and come up in order.
     if (result.presets?.[0] && goTo(result.presets[0])) return;
@@ -298,11 +326,16 @@ export function FoundationScreen(props: FoundationScreenProps) {
       setDraft('');
       return skip();
     }
+    if (DONE_WORDS.has(word)) {
+      setDraft('');
+      return setShowDone(true);
+    }
     if (HELP_WORDS.has(word)) return help();
     if (text !== '') return save(text);
 
     const row = rows()[sel()];
-    if (row?.kind === 'option') return save(row.option.label);
+    if (row?.kind === 'skip') return skip();
+    if (row?.kind === 'option') return save(row.option.label, row.derived !== undefined);
     if (row?.kind === 'help') return help();
     if (q.answered) return advance();
     // Enter on nothing, with nothing chosen, most often means "I don't know".
@@ -323,7 +356,8 @@ export function FoundationScreen(props: FoundationScreenProps) {
       return;
     }
     if (showDone()) {
-      if (isEnter(key) || isCancel(key)) props.onClose();
+      if (isEnter(key)) finish();
+      else if (isCancel(key)) props.onClose();
       else if (key.name === 'left' || key.name === 'up') {
         setShowDone(false);
         go(props.questions.length - 1);
@@ -340,6 +374,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
     }
 
     if (isCancel(key)) return props.onClose();
+    if (key.ctrl && key.name === 'f') return setShowDone(true);
     if (helping()) return;
     if (isEnter(key)) return submit();
     if (key.name === 'tab') return skip();
@@ -387,11 +422,12 @@ export function FoundationScreen(props: FoundationScreenProps) {
   const keys = createMemo((): [string, string][] => {
     if (waiting()) return [['enter', 'continue without waiting'], ['ctrl+c', 'back']];
     const k: [string, string][] = [['↑↓', 'choose']];
-    k.push(['enter', draft() ? 'save' : rows()[sel()]?.kind === 'option' ? 'pick' : current()?.answered ? 'keep' : 'save']);
+    const row = rows()[sel()]?.kind;
+    k.push(['enter', draft() ? 'save' : row === 'skip' ? 'skip' : row === 'option' ? 'pick' : current()?.answered ? 'keep' : 'save']);
     if (props.onHelp) k.push(['?', 'not sure']);
     k.push(['tab', 'skip'], ['←→', 'questions'], ['ctrl+e', 'editor']);
     if (currentMeta().parent || currentMeta().helps) k.push(['ctrl+d', 'not relevant']);
-    k.push(['ctrl+c', 'back']);
+    k.push(['ctrl+f', 'done — rest later'], ['ctrl+c', 'back']);
     return k;
   });
 
@@ -430,9 +466,21 @@ export function FoundationScreen(props: FoundationScreenProps) {
         <box style={{ flexDirection: 'column', flexGrow: 1, alignItems: 'center', justifyContent: 'center' }}>
           <Panel title="Ground rules" width={72}>
             <text>{' '}</text>
-            <text style={{ fg: THEME.ok }}>
-              {`✓ All ${props.questions.length} ground rules are answered.`}
-            </text>
+            <Show
+              when={open().length > 0}
+              fallback={
+                <text style={{ fg: THEME.ok }}>
+                  {`✓ All ${props.questions.length} ground rules are answered.`}
+                </text>
+              }
+            >
+              <text style={{ fg: THEME.ok }}>
+                {`✓ ${props.questions.length - open().length} of ${props.questions.length} ground rules answered.`}
+              </text>
+              <text style={{ fg: THEME.text }}>
+                {`${open().length} ${open().length === 1 ? 'is' : 'are'} left for later — open, but not blocking the first change.`}
+              </text>
+            </Show>
             <text>{' '}</text>
             <text style={{ fg: THEME.text }}>
               They live in spec-tacular/foundation/ and go into every agent's context.
@@ -442,11 +490,11 @@ export function FoundationScreen(props: FoundationScreenProps) {
             </text>
             <text>{' '}</text>
             <box style={{ flexDirection: 'row' }}>
-              <Button label="▶ Continue to your first change" focused onPress={props.onClose} />
+              <Button label="▶ Continue" focused onPress={finish} />
             </box>
           </Panel>
         </box>
-        <KeyBar keys={[['enter', 'continue'], ['←', 'revisit an answer']]} />
+        <KeyBar keys={[['enter', 'continue'], ['←', 'revisit an answer'], ['ctrl+c', 'back']]} />
       </Show>
 
       <Show when={!intro() && !showDone() && current()}>
@@ -538,7 +586,8 @@ export function FoundationScreen(props: FoundationScreenProps) {
             {(row, i) => (
               <box
                 onMouseDown={() => {
-                  if (row.kind === 'option') save(row.option.label);
+                  if (row.kind === 'skip') skip();
+                  else if (row.kind === 'option') save(row.option.label, row.derived !== undefined);
                   else if (row.kind === 'help') help();
                   else {
                     setSel(i());
@@ -573,6 +622,11 @@ export function FoundationScreen(props: FoundationScreenProps) {
                   </text>
                   <text style={{ fg: THEME.dim, flexGrow: 1 }}>
                     {clip((row as { option: AdviceOption }).option.detail, Math.max(dims().width - labelWidth() - 14, 20))}
+                  </text>
+                </Show>
+                <Show when={row.kind === 'skip'}>
+                  <text style={{ fg: sel() === i() ? THEME.accent : THEME.dim }}>
+                    ↷ Skip — leave it for later
                   </text>
                 </Show>
                 <Show when={row.kind === 'help'}>
