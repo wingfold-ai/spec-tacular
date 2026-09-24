@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 .spec-tacular/jobs/
+.idea/
+temp/

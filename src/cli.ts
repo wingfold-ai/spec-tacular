@@ -9,8 +9,8 @@
  * terminal, which is what makes the overview usable in CI and over a pipe.
  */
 
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject } from './adapter/openspec.ts';
 import {
   buildPipeline,
@@ -34,10 +34,23 @@ import {
   startJob,
   tailJob,
 } from './core/jobs.ts';
-import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
+import { defaultRegistry, DEFAULT_DRIVER, type AgentDriver } from './agent/index.ts';
+import { advisorUnavailable, runStructured } from './agent/structured.ts';
+import { FoundationAdvisor } from './core/advisor.ts';
+import { finalizeVision, isGreenfield, VisionInterviewer } from './core/vision.ts';
+import type { VisionPort } from './tui/app.tsx';
+import { buildNamePrompt, NAME_SCHEMA, parseNames } from './core/naming.ts';
 import { loadLintConfig } from './core/concreteness.ts';
 import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
-import { foundationDir, isUnanswered, loadFoundation } from './core/foundation.ts';
+import {
+  answerFoundation,
+  foundationDir,
+  guidedQuestions,
+  isUnanswered,
+  loadFoundation,
+  scaffoldFoundation,
+} from './core/foundation.ts';
+import { projectStage, schemaInstalled } from './core/guide.ts';
 import { ArchiveBlockedError, planArchive, prepareArchive } from './core/archive.ts';
 import { loadRegister, registerPath } from './core/pending.ts';
 import { verifyRequirement } from './core/verify.ts';
@@ -302,11 +315,33 @@ async function composePrompt(
   adapter: OpenSpecAdapter,
   artifact: string,
   change: string,
+  feedback?: string,
 ): Promise<string> {
-  const instructions = await adapter.instructions(artifact, change);
+  const base = await adapter.instructions(artifact, change);
+  // A redraft: the developer read the draft and said what to change.
+  const instructions = feedback
+    ? `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n> ${feedback.replace(/\n/g, '\n> ')}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`
+    : base;
   const status = (await adapter.statusAll()).changes.find((c) => c.changeName === change);
   const reviewed = status ? loadChangeReview(args.cwd, status).requirements : [];
-  return buildPrompt(buildContext(args.cwd, reviewed), instructions);
+  // What the developer said the change is for, when they created it. OpenSpec
+  // keeps it in the change's README but does not put it in the instructions.
+  const intent = status ? changeDescription(status.changeRoot) : '';
+  const task = intent
+    ? `The developer described this change as:\n\n> ${intent.replace(/\n/g, '\n> ')}\n\n${instructions}`
+    : instructions;
+  return buildPrompt(buildContext(args.cwd, reviewed), task);
+}
+
+/** The description a change was created with: its README, minus the heading. */
+function changeDescription(changeRoot: string): string {
+  try {
+    return readFileSync(join(changeRoot, 'README.md'), 'utf8')
+      .replace(/^#[^\n]*\n/, '')
+      .trim();
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -633,6 +668,182 @@ function runRoadmap(args: Args): number {
   return 0;
 }
 
+function describeError(err: unknown): string {
+  if (err instanceof OpenSpecError) return err.hint ? `${err.message} ${err.hint}` : err.message;
+  return (err as Error).message;
+}
+
+/**
+ * The TUI's one-key setup: OpenSpec if missing, then the schema, then the
+ * Foundation questions. Each step is skipped when already done, so it is safe
+ * to run on a half-set-up project — and never overwrites a schema someone
+ * edited, which `init` only does under `--force`.
+ */
+async function setUpProject(
+  root: string,
+  adapter: OpenSpecAdapter,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    if (!isOpenSpecProject(root)) await adapter.init();
+    if (!schemaInstalled(root)) initProject(root);
+    else scaffoldFoundation(root);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: describeError(err) };
+  }
+}
+
+/** `w` in the TUI: the same gates as `spectacular run`, reported as a line. */
+async function dispatch(
+  args: Args,
+  adapter: OpenSpecAdapter,
+  change: string,
+  artifact: string,
+  feedback?: string,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const { pipelines } = await loadPipelines(adapter, args.cwd);
+    const pipeline = pipelines.find((p) => p.name === change);
+    if (!pipeline) return { ok: false, message: `No change called '${change}'` };
+
+    const target = [...pipeline.stages, pipeline.apply].find((st) => st.id === artifact);
+    if (target && target.requires.length === 0) {
+      const foundation = foundationGate(args.cwd);
+      if (!foundation.allowed) return { ok: false, message: `Refused: ${foundation.reason}` };
+    }
+    const gate = gateFor(pipeline, artifact);
+    if (!gate.allowed) return { ok: false, message: `Refused: ${gate.reason}` };
+
+    const driver = defaultRegistry().get(args.driver);
+    const prompt = await composePrompt(args, adapter, artifact, change, feedback);
+    startJob({
+      projectRoot: args.cwd,
+      change,
+      artifact,
+      driver: driver.id,
+      command: driver.build({ prompt, cwd: args.cwd }),
+      cwd: args.cwd,
+    });
+    return {
+      ok: true,
+      message: feedback
+        ? `${driver.label} is redrafting the ${artifact} with your feedback`
+        : `${driver.label} is drafting the ${artifact} — it opens for you when done`,
+    };
+  } catch (err) {
+    return { ok: false, message: describeError(err) };
+  }
+}
+
+/**
+ * `e` in the TUI: the file an artifact is written in, seeded with the
+ * schema's template when it does not exist yet so a blank page is never the
+ * starting point.
+ */
+async function artifactFile(
+  adapter: OpenSpecAdapter,
+  statuses: Map<string, OpenSpecChangeStatus>,
+  change: string,
+  artifact: string,
+): Promise<{ ok: true; file: string } | { ok: false; reason: string }> {
+  const paths = statuses.get(change)?.artifactPaths[artifact];
+  if (!paths) return { ok: false, reason: `${change} has no artifact called ${artifact}` };
+  const file = paths.resolvedOutputPath;
+  if (file.includes('*')) {
+    return {
+      ok: false,
+      reason: `${artifact} spans one file per capability — w lets an agent draft them`,
+    };
+  }
+  if (!existsSync(file)) {
+    try {
+      const template = await adapter.template(artifact, change);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, template.replace('<!-- Change name -->', change), 'utf8');
+    } catch (err) {
+      return { ok: false, reason: describeError(err) };
+    }
+  }
+  return { ok: true, file };
+}
+
+/**
+ * The vision interview. Without a model it still records the vision in the
+ * developer's own words; there is just no interview and no slicing.
+ */
+function visionFor(args: Args): VisionPort {
+  let driver: AgentDriver | undefined;
+  let unavailable: string | null = process.env['SPECTACULAR_NO_ADVISOR']
+    ? 'turned off by SPECTACULAR_NO_ADVISOR'
+    : null;
+  try {
+    driver = defaultRegistry().get(args.driver);
+    unavailable ??= advisorUnavailable(driver);
+  } catch (err) {
+    unavailable = (err as Error).message;
+  }
+  const interviewer = new VisionInterviewer(args.cwd, (prompt, schema) =>
+    unavailable || !driver
+      ? Promise.reject(new Error(unavailable ?? 'no agent'))
+      // The interview reasons about the vision; it has nothing to look up.
+      : runStructured(driver, args.cwd, prompt, schema, { mode: 'think' }),
+  );
+  return {
+    unavailable,
+    session: () => interviewer.session(),
+    start: async (text) => {
+      if (!unavailable) return interviewer.start(text);
+      // No interview possible: keep the vision, and go on to a change.
+      const session = await interviewer.start(text).catch(() => interviewer.session()!);
+      finalizeVision(args.cwd, session, text, []);
+      interviewer.skip();
+      return session;
+    },
+    answer: (text) => interviewer.answer(text),
+    finish: () => interviewer.finish(),
+    resume: () => interviewer.resume(),
+    extract: (taken) => interviewer.extract(taken),
+    skip: () => interviewer.skip(),
+    confirm: (text, kept) => finalizeVision(args.cwd, interviewer.session()!, text, kept),
+  };
+}
+
+/**
+ * The setup advisor, when the chosen driver can answer structured requests
+ * and is installed. Without one, setup still works — just without proposals.
+ */
+function advisorFor(args: Args): {
+  advisor: FoundationAdvisor | null;
+  advisorNote: string | null;
+  nameChange?: (description: string, taken: string[]) => Promise<string[]>;
+} {
+  if (process.env['SPECTACULAR_NO_ADVISOR']) {
+    return { advisor: null, advisorNote: 'turned off by SPECTACULAR_NO_ADVISOR' };
+  }
+  let driver;
+  try {
+    driver = defaultRegistry().get(args.driver);
+  } catch (err) {
+    return { advisor: null, advisorNote: (err as Error).message };
+  }
+  const missing = advisorUnavailable(driver);
+  if (missing) return { advisor: null, advisorNote: missing };
+  return {
+    advisor: new FoundationAdvisor(args.cwd, (prompt, schema) =>
+      runStructured(driver, args.cwd, prompt, schema),
+    ),
+    advisorNote: null,
+    nameChange: async (description, taken) =>
+      parseNames(
+        await runStructured(driver, args.cwd, buildNamePrompt(description, taken), NAME_SCHEMA, {
+          mode: 'quick',
+          timeoutMs: 60_000,
+        }),
+        taken,
+      ),
+  };
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -641,11 +852,14 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  if (!isOpenSpecProject(args.cwd)) {
+  // The TUI opens anywhere: in a folder that is not set up yet, it offers to
+  // set it up. Every other command needs a project to act on.
+  const tui = args.command === 'overview' && !args.print && process.stdout.isTTY === true;
+  if (!isOpenSpecProject(args.cwd) && !tui) {
     process.stderr.write(
       `No openspec/ directory in ${args.cwd}.\n` +
-        `spec-tacular works on an OpenSpec project — run \`openspec init\` first,\n` +
-        `or point at one with --cwd.\n`,
+        `spec-tacular works on an OpenSpec project — run \`spectacular\` in a terminal\n` +
+        `to be guided through setting one up, or point at one with --cwd.\n`,
     );
     return 1;
   }
@@ -665,9 +879,8 @@ async function main(): Promise<number> {
     if (args.command === 'archive') return await runArchive(args, adapter);
     if (args.command === 'verify') return await runVerify(args, adapter);
 
-    const { pipelines, failed, statuses } = await loadPipelines(adapter, args.cwd);
-
-    if (args.print || !process.stdout.isTTY) {
+    if (!tui) {
+      const { pipelines, failed } = await loadPipelines(adapter, args.cwd);
       process.stdout.write(
         renderOverview(pipelines, {
           color: process.stdout.isTTY === true,
@@ -677,6 +890,16 @@ async function main(): Promise<number> {
       );
       return 0;
     }
+
+    // Before setup there is nothing to ask OpenSpec about.
+    const load = () =>
+      isOpenSpecProject(args.cwd)
+        ? loadPipelines(adapter, args.cwd)
+        : Promise.resolve({ pipelines: [], failed: [], statuses: new Map<string, OpenSpecChangeStatus>() });
+    const loaded = await load();
+    // Re-read on every reload: a change created, or an artifact an agent just
+    // wrote, must be reviewable without restarting.
+    let statuses = loaded.statuses;
 
     // Imported lazily so `--print` never pays for the terminal renderer, and
     // so a headless environment can run the text path even if the TUI's
@@ -692,8 +915,8 @@ async function main(): Promise<number> {
     };
 
     await startTui({
-      pipelines,
-      failed,
+      pipelines: loaded.pipelines,
+      failed: loaded.failed,
       root: args.cwd,
       openReview: (change): ReviewSession | null => {
         const queue = queueFor(change);
@@ -708,7 +931,11 @@ async function main(): Promise<number> {
       lintConfig: loadLintConfig(args.cwd),
       reparse: (change) =>
         queueFor(change)?.requirements.map((r) => r.item) ?? [],
-      reloadPipelines: async () => (await loadPipelines(adapter, args.cwd)).pipelines,
+      reloadPipelines: async () => {
+        const fresh = await load();
+        statuses = fresh.statuses;
+        return fresh.pipelines;
+      },
       listJobs: () => listJobs(args.cwd),
       tailJob: (job) => {
         let format: (line: string) => string | null;
@@ -736,6 +963,33 @@ async function main(): Promise<number> {
           return { ok: false, reason: (err as Error).message };
         }
       },
+      stage: () => projectStage(args.cwd, statuses.size),
+      setup: () => setUpProject(args.cwd, adapter),
+      questions: () => guidedQuestions(args.cwd),
+      answer: (question, text) => answerFoundation(question.item, text),
+      createChange: async (name, description) => {
+        try {
+          await adapter.newChange(name, description || undefined);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, reason: describeError(err) };
+        }
+      },
+      dispatch: (change, artifact, feedback) => dispatch(args, adapter, change, artifact, feedback),
+      readArtifact: async (change, artifact) => {
+        const file = statuses.get(change)?.artifactPaths[artifact]?.resolvedOutputPath;
+        if (!file || file.includes('*')) return { ok: false, reason: `${artifact} is not a single document` };
+        try {
+          return { ok: true, file, content: readFileSync(file, 'utf8') };
+        } catch {
+          return { ok: false, reason: `${artifact} has not been written yet` };
+        }
+      },
+      greenfield: () => isGreenfield(args.cwd),
+      roadmap: () => loadRoadmap(args.cwd),
+      vision: visionFor(args),
+      ...advisorFor(args),
+      artifactFile: (change, artifact) => artifactFile(adapter, statuses, change, artifact),
     });
     return 0;
   } catch (err) {

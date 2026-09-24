@@ -13,11 +13,11 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import type { ReviewSession } from '../core/session.ts';
 import { currentItem, position } from '../core/session.ts';
 import { renderCounts, renderProgressBar, wrap } from '../render/requirement.ts';
-import type { KeyEvent } from '@opentui/core';
 import type { Finding } from '../core/concreteness.ts';
 import { exampleValues, renderExamples } from '../core/examples.ts';
 import { isRequirement } from '../core/requirements.ts';
 import { THEME } from './theme.ts';
+import { isCancel, isPrintable } from './input.ts';
 
 /** A decision that needs a typed reason before it is recorded. */
 export type PromptKind = 'reject' | 'defer';
@@ -47,15 +47,6 @@ const STATE_COLOR: Record<string, string> = {
   deferred: THEME.warn,
   pending: THEME.dim,
 };
-
-/** A key that contributes a character to a prompt, as opposed to a command. */
-function isPrintable(key: KeyEvent): boolean {
-  // Length 1 excludes alt-chords, which arrive as a two-character sequence
-  // beginning with ESC and would otherwise type a stray letter.
-  return (
-    !key.ctrl && typeof key.sequence === 'string' && key.sequence.length === 1 && key.sequence >= ' '
-  );
-}
 
 export function ReviewScreen(props: ReviewScreenProps) {
   const [prompt, setPrompt] = createSignal<PromptKind | null>(null);
@@ -112,17 +103,6 @@ export function ReviewScreen(props: ReviewScreenProps) {
     if (kind === 'reject') props.onReject(text);
     else props.onDefer(text);
   };
-
-  /**
-   * `ctrl+c`, not a bare escape, is the reliable cancel.
-   *
-   * A lone ESC is the prefix of every escape sequence, so a terminal parser
-   * cannot deliver it until it sees what follows — pressing it alone produces
-   * no event at all, and pressing it before `x` arrives as alt-x. `escape` is
-   * still handled for terminals that do resolve it, but nothing depends on it.
-   */
-  const isCancel = (key: KeyEvent): boolean =>
-    key.name === 'escape' || (key.ctrl === true && key.name === 'c');
 
   useKeyboard((key) => {
     if (marking()) {
