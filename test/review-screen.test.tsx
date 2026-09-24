@@ -211,8 +211,10 @@ describe('review screen', () => {
     expect(ui.frame()).not.toContain('asks what would verify it');
   });
 
-  test('e and q reach their handlers', async () => {
+  test('E and q reach their handlers; without an agent to revise with, e opens the editor too', async () => {
     const ui = await mount();
+    await ui.press('E');
+    expect(ui.wasEditCalled()).toBe(true);
     await ui.press('e');
     expect(ui.wasEditCalled()).toBe(true);
     await ui.press('q');

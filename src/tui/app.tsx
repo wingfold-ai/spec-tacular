@@ -52,6 +52,9 @@ import { HomeScreen, type HomeAction } from './home.tsx';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { Button, clip, KeyBar, Panel, shortPath, Spinner } from './widgets.tsx';
 import { wrap } from '../render/requirement.ts';
+import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn } from '../core/refine.ts';
+import type { Requirement } from '../core/requirements.ts';
+import type { RefinePort } from './review.tsx';
 import { osc52, SystemClipboard, type ClipboardPort } from './clipboard.ts';
 import { ClipboardProvider, usePasteInto, useSelectionCopy, type ClipboardContextValue } from './copy-paste.ts';
 
@@ -105,7 +108,13 @@ export interface TuiInput {
    * Starts the AI sessions a screen is about to need, so its first question
    * does not wait for an agent to start. Optional, and free until asked.
    */
-  warm?: (screen: 'foundation' | 'vision' | 'naming') => void;
+  warm?: (screen: 'foundation' | 'vision' | 'naming' | 'review') => void;
+  /** Revising one requirement with the agent, from the review screen. */
+  refine?: {
+    /** Why there is no agent to revise with, or null when there is one. */
+    unavailable: string | null;
+    propose: (change: string, item: Requirement, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  };
   /** The system clipboard; tests pass their own so they never touch the real one. */
   clipboard?: ClipboardPort;
 }
@@ -635,6 +644,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
     setNotice(null);
     setSession(opened);
+    // The agent that revises a requirement starts while you read the first.
+    if (props.input.refine && !props.input.refine.unavailable) props.input.warm?.('review');
   };
 
   const leaveReview = async () => {
@@ -880,6 +891,25 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     // surface as drift.
     setSession(refresh(current, props.input.reparse(current.change)));
   };
+
+  /** `e` on the review screen: the current requirement, revised with the agent. */
+  const refinePort = createMemo((): RefinePort | undefined => {
+    const refine = props.input.refine;
+    if (!refine) return undefined;
+    return {
+      unavailable: refine.unavailable,
+      current: (item) => readRequirementBlock(item),
+      propose: (item, turns, instruction) => refine.propose(session()!.change, item, turns, instruction),
+      accept: (item, block) => {
+        const current = session();
+        if (!current) return { ok: false, reason: 'the review was closed' };
+        const result = acceptRefinement(current, item, block, () => props.input.reparse(current.change));
+        if (!result.ok) return result;
+        commit(result.session);
+        return { ok: true };
+      },
+    };
+  });
 
   // Pasting a description is as natural as typing one.
   usePasteInto(
@@ -1295,6 +1325,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             onDefer={(deferReason) => commit(decide(session()!, 'deferred', { deferReason }))}
             onSkip={() => commit(skipItem(session()!))}
             onEdit={onEdit}
+            refine={refinePort()}
             onMove={(d) => commit(moveCursor(session()!, d))}
             findings={findings()}
             promotable={promotable()}

@@ -1,9 +1,9 @@
 /**
  * The AI behind the guided setup — the ground-rules advisor, the vision
- * interview and change names — wired to the chosen agent, and started ahead
- * of time.
+ * interview and change names — and behind revising a requirement from the
+ * review screen, wired to the chosen agent, and started ahead of time.
  *
- * All three share one pool of agent sessions (agent/structured.ts), so a run
+ * All of them share one pool of agent sessions (agent/structured.ts), so a run
  * never starts the same agent twice. Each still works without a model: the
  * setup without proposals, the vision as the developer's own words.
  */
@@ -13,10 +13,11 @@ import { advisorUnavailable, StructuredPool } from './agent/structured.ts';
 import { FoundationAdvisor, type Ask } from './core/advisor.ts';
 import { buildNamePrompt, NAME_SCHEMA, parseNames } from './core/naming.ts';
 import { finalizeVision, VisionInterviewer } from './core/vision.ts';
+import { REFINE_SCHEMA, RequirementRefiner } from './core/refine.ts';
 import type { StructuredMode } from './agent/driver.ts';
 import type { VisionPort } from './tui/app.tsx';
 
-export type WarmTarget = 'foundation' | 'vision' | 'naming';
+export type WarmTarget = 'foundation' | 'vision' | 'naming' | 'review';
 
 export interface Assistants {
   advisor: FoundationAdvisor | null;
@@ -24,6 +25,11 @@ export interface Assistants {
   advisorNote: string | null;
   nameChange?: (description: string, taken: string[]) => Promise<string[]>;
   vision: VisionPort;
+  /**
+   * Revises one requirement in conversation (review screen, `e`). Null
+   * without a model; `advisorNote` says why.
+   */
+  refiner: RequirementRefiner | null;
   /**
    * Starts — and primes — the sessions a screen is about to need, while the
    * developer reads it. Never waits, never shows, and does nothing at all
@@ -101,10 +107,15 @@ export function createAssistants(options: {
             taken,
           ),
     vision,
+    // One conversation for every requirement revised in a run: each request
+    // carries its own requirement and history, so a session that revised
+    // the last one is only sent what differs.
+    refiner: unavailable ? null : new RequirementRefiner(askIn('think')),
     warm: (target) => {
       if (unavailable) return;
       if (target === 'foundation') advisor?.prime();
       else if (target === 'vision') interviewer.prime();
+      else if (target === 'review') sessions().warm(REFINE_SCHEMA, 'think');
       else sessions().warm(NAME_SCHEMA, 'quick');
     },
     close: async () => {

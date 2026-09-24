@@ -15,6 +15,7 @@ import {
   type Runner,
 } from '../src/tui/clipboard.ts';
 import { isPasteKey, selectedText, selectionAction } from '../src/tui/copy-paste.ts';
+import { isNewline } from '../src/tui/revise.tsx';
 
 const WAYLAND: NodeJS.ProcessEnv = { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' };
 const X11: NodeJS.ProcessEnv = { DISPLAY: ':0' };
@@ -163,5 +164,14 @@ describe('keys', () => {
     expect(isPasteKey({ ctrl: true, name: 'v', meta: false })).toBe(true);
     expect(isPasteKey({ ctrl: false, name: 'v', meta: false })).toBe(false);
     expect(isPasteKey({ ctrl: true, name: 'v', meta: true })).toBe(false);
+  });
+
+  test('a new line in the revise prompt: alt/shift+enter, ctrl+j, or a trailing backslash', () => {
+    expect(isNewline({ name: 'return', meta: true }, 'x')).toBe(true);
+    expect(isNewline({ name: 'return', shift: true }, 'x')).toBe(true);
+    expect(isNewline({ name: 'linefeed' }, 'x')).toBe(true);
+    expect(isNewline({ name: 'return' }, 'ends with \\')).toBe(true);
+    expect(isNewline({ name: 'return' }, 'plain')).toBe(false);
+    expect(isNewline({ name: 'a' }, '\\')).toBe(false);
   });
 });

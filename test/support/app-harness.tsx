@@ -56,6 +56,12 @@ export async function mountApp(
     baseline?: boolean;
     width?: number;
     height?: number;
+    /** Changes there already are, once the project is set up. */
+    changes?: ChangePipeline[];
+    openReview?: TuiInput['openReview'];
+    saveSession?: TuiInput['saveSession'];
+    reparse?: TuiInput['reparse'];
+    refine?: TuiInput['refine'];
     /** Never the real clipboard: a test that pastes brings its own. */
     clipboard?: TuiInput['clipboard'];
   } = {},
@@ -65,7 +71,7 @@ export async function mountApp(
     mkdirSync(join(root, 'openspec', 'specs', 'existing'), { recursive: true });
     writeFileSync(join(root, 'openspec', 'specs', 'existing', 'spec.md'), '# Existing\n');
   }
-  const changes: ChangePipeline[] = [];
+  const changes: ChangePipeline[] = [...(options.changes ?? [])];
   const created: { name: string; description: string }[] = [];
   const dispatched: string[] = [];
   const jobs: Job[] = [];
@@ -75,12 +81,13 @@ export async function mountApp(
   const interviewer = new VisionInterviewer(root, options.visionAsk ?? (() => Promise.reject(new Error('no model'))));
 
   const input: TuiInput = {
-    pipelines: [],
+    pipelines: [...changes],
     failed: [],
     root,
-    openReview: () => null,
-    saveSession: () => {},
-    reparse: () => [],
+    openReview: options.openReview ?? (() => null),
+    saveSession: options.saveSession ?? (() => {}),
+    reparse: options.reparse ?? (() => []),
+    refine: options.refine,
     clipboard: options.clipboard ?? {
       read: async () => ({ ok: false, reason: 'no clipboard in this test' }),
       write: async () => ({ ok: false, reason: 'no clipboard in this test' }),

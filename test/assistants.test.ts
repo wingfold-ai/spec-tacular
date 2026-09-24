@@ -95,6 +95,16 @@ describe('warming the setup’s AI', () => {
     expect(started[0]!.mode).toBe('think');
   });
 
+  test('opening a review warms the session that revises a requirement', async () => {
+    const { registry, started } = fakeAgent();
+    const ai = createAssistants({ cwd: project(), driver: 'fake', registry, env: {} });
+    cleanups.push(() => ai.close());
+    expect(ai.refiner).not.toBeNull();
+    ai.warm('review');
+    expect(await waitFor(() => started.length === 1)).toBe(true);
+    expect(started[0]!.mode).toBe('think');
+  });
+
   test('SPECTACULAR_NO_ADVISOR: nothing is started, whatever is warmed', async () => {
     const { registry, started } = fakeAgent();
     const ai = createAssistants({ cwd: project(), driver: 'fake', registry, env: { SPECTACULAR_NO_ADVISOR: '1' } });
@@ -102,9 +112,11 @@ describe('warming the setup’s AI', () => {
     ai.warm('foundation');
     ai.warm('vision');
     ai.warm('naming');
+    ai.warm('review');
     await Bun.sleep(100);
     expect(started).toHaveLength(0);
     expect(ai.advisor).toBeNull();
+    expect(ai.refiner).toBeNull();
     expect(ai.advisorNote).toBe('turned off by SPECTACULAR_NO_ADVISOR');
   });
 

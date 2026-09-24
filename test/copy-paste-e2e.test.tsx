@@ -1,16 +1,21 @@
 /**
- * Copy and paste in the whole app: ctrl+c copies a mouse selection and is
- * back without one, ctrl+v and the terminal's paste land in the inputs of
- * every screen, and what the clipboard could not do is said in the corner.
+ * Copy, paste and revising a requirement in the whole app: ctrl+c copies a
+ * mouse selection and is back without one, ctrl+v and the terminal's paste
+ * land in the inputs of every screen, what the clipboard could not do is said
+ * in the corner, and `e` in a review revises the requirement on disk and
+ * saves the review with it pending again.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { testRender, useKeyboard } from '@opentui/solid';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerFoundation, foundationDir, guidedQuestions } from '../src/core/foundation.ts';
+import { capabilityFromPath, parseSpecFile } from '../src/core/requirements.ts';
+import { emptyReview, type ChangeReview } from '../src/core/review.ts';
+import { openSession } from '../src/core/session.ts';
 import type { ClipboardPort } from '../src/tui/clipboard.ts';
 import { ClipboardProvider, useSelectionCopy } from '../src/tui/copy-paste.ts';
-import { mountApp } from './support/app-harness.tsx';
+import { changeWith, mountApp } from './support/app-harness.tsx';
 
 const mounted: { destroy: () => void }[] = [];
 afterEach(() => {
@@ -68,6 +73,72 @@ describe('pasting into the app’s inputs', () => {
     expect(ui.frame()).toContain('› Lets clinic staff book rooms');
     await ui.press('return');
     expect(readFileSync(join(foundationDir(ui.root), 'domain.md'), 'utf8')).toContain('Lets clinic staff book rooms');
+  });
+});
+
+describe('revising a requirement from the review', () => {
+  test('e revises it on disk; the saved review has it pending, the rest untouched', async () => {
+    const SPEC = [
+      '## ADDED Requirements',
+      '',
+      '### Requirement: Session timeout',
+      'The system SHALL end an idle session after 30 minutes.',
+      '',
+      '#### Scenario: Idle',
+      '- **WHEN** a user is idle',
+      '- **THEN** the session ends',
+      '',
+      '### Requirement: Remember me',
+      'The system SHALL remember a user when asked to.',
+      '',
+      '#### Scenario: Back',
+      '- **WHEN** they come back',
+      '- **THEN** they are signed in',
+      '',
+    ].join('\n');
+    const REVISED = SPEC.split('\n').slice(2, 8).join('\n').replace('after 30 minutes', 'after a configurable timeout');
+
+    let file = '';
+    const saved: ChangeReview[] = [];
+    const parse = () => parseSpecFile(readFileSync(file, 'utf8'), capabilityFromPath(file), file).requirements;
+    const instructions: string[] = [];
+    const ui = await overview({
+      changes: [changeWith('add-sessions', ['proposal', 'specs'])],
+      openReview: (change) => openSession(change, parse(), emptyReview(change)),
+      reparse: () => parse(),
+      saveSession: (s) => saved.push(s.review),
+      refine: {
+        unavailable: null,
+        propose: async (_change, _item, _turns, instruction) => {
+          instructions.push(instruction);
+          return { block: REVISED, summary: 'Made it configurable.', warnings: [] };
+        },
+      },
+    });
+    const dir = join(ui.root, 'openspec', 'changes', 'add-sessions', 'specs', 'auth');
+    mkdirSync(dir, { recursive: true });
+    file = join(dir, 'spec.md');
+    writeFileSync(file, SPEC);
+
+    await ui.press('r');
+    expect(ui.frame()).toContain('Requirement: Session timeout');
+    expect(ui.frame()).toContain('e revise with AI');
+    expect(ui.warmed).toContain('review');
+
+    await ui.press('n');
+    await ui.press('a'); // accept "Remember me"
+    await ui.press('e'); // back on the first, the one still open
+    await ui.type('make the timeout configurable');
+    await ui.press('return');
+    expect(ui.frame()).toContain('+ The system SHALL end an idle session after a configurable timeout.');
+    await ui.press('a');
+
+    expect(instructions).toEqual(['make the timeout configurable']);
+    expect(readFileSync(file, 'utf8')).toBe(SPEC.replace('after 30 minutes', 'after a configurable timeout'));
+    const last = saved.at(-1)!;
+    expect(last.requirements['auth#session-timeout']?.state).toBe('pending');
+    expect(last.requirements['auth#remember-me']?.state).toBe('accepted');
+    expect(last.cursor).toBe('auth#session-timeout');
   });
 });
 

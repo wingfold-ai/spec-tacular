@@ -52,6 +52,7 @@ import { projectStage, schemaInstalled } from './core/guide.ts';
 import { ArchiveBlockedError, planArchive, prepareArchive } from './core/archive.ts';
 import { loadRegister, registerPath } from './core/pending.ts';
 import { verifyRequirement } from './core/verify.ts';
+import { refineContext } from './core/refine.ts';
 import {
   completeSlice,
   loadRoadmap,
@@ -911,6 +912,14 @@ async function main(): Promise<number> {
       greenfield: () => isGreenfield(args.cwd),
       roadmap: () => loadRoadmap(args.cwd),
       ...(assistants = createAssistants({ cwd: args.cwd, driver: args.driver })),
+      refine: {
+        unavailable: assistants.refiner ? null : assistants.advisorNote,
+        propose: async (change, item, turns, instruction) => {
+          const root = statuses.get(change)?.changeRoot;
+          if (!assistants?.refiner || !root) throw new Error(assistants?.advisorNote ?? `${change} is gone`);
+          return assistants.refiner.propose(refineContext(root, item), turns, instruction);
+        },
+      },
       artifactFile: (change, artifact) => artifactFile(adapter, statuses, change, artifact),
     });
     return 0;
