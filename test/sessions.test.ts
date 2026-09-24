@@ -174,6 +174,61 @@ describe('the session pool', () => {
     expect(started).toHaveLength(1);
   });
 
+  test('priming sends the instructions ahead, so the first question is only a delta', async () => {
+    const { driver, started } = fakeDriver();
+    const p = pool(driver);
+    await p.prime({}, 'think', parts([], 'Nothing yet.'));
+    expect(started).toHaveLength(1);
+
+    const first = parts(['- domain: clinic booking'], 'Advise on the stack.');
+    const answer = (await p.ask(renderPrompt(first), {}, { mode: 'think', parts: first })) as Echo;
+    expect(answer.turn).toBe(2);
+    expect(answer.text).not.toContain('You help.');
+    expect(answer.text).toContain('Decided — now also:\n- domain: clinic booking');
+    expect(started).toHaveLength(1);
+  });
+
+  test('a question asked while the prime is still out waits for it, then sends a delta', async () => {
+    const { driver } = fakeDriver();
+    const p = pool(driver);
+    void p.prime({}, 'think', parts([], 'Nothing yet.'));
+    const first = parts(['- a'], 'first');
+    const answer = (await p.ask(renderPrompt(first), {}, { mode: 'think', parts: first })) as Echo;
+    expect(answer.turn).toBe(2);
+    expect(answer.text).not.toContain('You help.');
+  });
+
+  test('priming is once per session kind, and never a one-shot request', async () => {
+    const { driver, started } = fakeDriver();
+    let oneShots = 0;
+    const p = pool(driver, async () => {
+      oneShots++;
+      return {};
+    });
+    await p.prime({}, 'think', parts([], 'Nothing yet.'));
+    await p.prime({}, 'think', parts([], 'Nothing yet.'));
+    expect(started).toHaveLength(1);
+
+    // A prime whose session dies fails quietly; the question after it
+    // starts afresh and is sent everything.
+    await p.prime({}, 'research', parts([], 'DIE'));
+    expect(oneShots).toBe(0);
+    const next = parts(['- a'], 'first');
+    const answer = (await p.ask(renderPrompt(next), {}, { mode: 'research', parts: next })) as Echo;
+    expect(answer.turn).toBe(1);
+    expect(answer.text).toContain('You help.');
+  });
+
+  test('closing while a prime is out stops its process', async () => {
+    const { driver, started } = fakeDriver();
+    const p = new StructuredPool(driver, process.cwd());
+    const priming = p.prime({}, 'think', parts([], 'HANG'));
+    await Bun.sleep(100);
+    await p.close();
+    await priming;
+    expect(started[0]!.session.alive).toBe(false);
+  });
+
   test('requests to one session go one at a time, in order', async () => {
     const { driver } = fakeDriver();
     const p = pool(driver);
@@ -435,6 +490,32 @@ describe('an opencode session, against a fake server', () => {
     await server.stop();
     expect(deleted).toEqual(['/session/ses_1']);
     expect(server.running).toBe(false);
+  });
+
+  test('is primed like any session: one conversation, instructions first, then a delta', async () => {
+    const { server, log } = setUp();
+    const driver: AgentDriver = {
+      id: 'fake-opencode',
+      label: 'Fake opencode',
+      build: () => ({ command: 'true', args: [] }),
+      formatLine: (l) => l,
+      structured: {
+        build: () => ({ command: 'true', args: [] }),
+        parse: () => ({}),
+        session: ({ schema, mode }) => new OpencodeSession(server, schema, mode),
+      },
+    };
+    const p = new StructuredPool(driver, process.cwd());
+    cleanups.push(() => p.close());
+    await p.prime(SCHEMA, 'think', parts([], 'Nothing yet.'));
+    const first = parts(['- a'], 'first');
+    await p.ask(renderPrompt(first), SCHEMA, { mode: 'think', parts: first });
+
+    const messages = (await log()).filter((e) => e.path.endsWith('/message'));
+    expect(messages.map((m) => m.path)).toEqual(['/session/ses_1/message', '/session/ses_1/message']);
+    expect(messages[0]!.body!.parts[0]!.text).toContain('You help.');
+    expect(messages[1]!.body!.parts[0]!.text).not.toContain('You help.');
+    expect(messages[1]!.body!.parts[0]!.text).toContain('Decided — now also:\n- a');
   });
 
   test('a server that cannot start is a session error', async () => {

@@ -373,7 +373,16 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     return { ...result, advice, presets };
   };
 
-  // Sessions start while the developer reads the screen, not on the first question.
+  // Sessions start while the developer reads the screen, not on the first
+  // question — and for a project that still has to be set up, already while
+  // the start screen is read: by the first answer, the advisor has started
+  // and read its instructions, and that answer costs one short model turn.
+  // Warming twice is free, so both the stage and the screen may ask.
+  createEffect(on(stage, (s) => {
+    if (s.kind === 'no-openspec' || s.kind === 'no-foundation' || s.kind === 'foundation') {
+      props.input.warm?.('foundation');
+    } else if (s.kind === 'vision') props.input.warm?.('vision');
+  }));
   createEffect(on(screen, (s) => {
     if (s === 'foundation' || s === 'vision') props.input.warm?.(s);
   }));

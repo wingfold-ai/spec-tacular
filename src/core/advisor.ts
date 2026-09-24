@@ -323,6 +323,25 @@ export function buildAdviceParts(request: AdviceRequest, mode = adviceMode(reque
   return { preamble: INTRO, context: projectContext(request.questions), task: task.join('\n'), rules: optionRules(mode) };
 }
 
+/**
+ * A first message that only sets the scene: the standing instructions and
+ * the project so far, answered with nothing. Sent to a session before the
+ * first question is, so that question pays for a small delta and one model
+ * turn instead of an agent starting up and reading everything.
+ */
+export function buildPrimeParts(questions: GuidedQuestion[], mode: StructuredMode): PromptParts {
+  return {
+    preamble: INTRO,
+    context: projectContext(questions),
+    task: [
+      'Nothing is asked yet: the developer is about to answer the first question, and',
+      'requests follow as they do. For now return followUps, upcoming and derived as',
+      'empty lists.',
+    ].join('\n'),
+    rules: optionRules(mode),
+  };
+}
+
 export function buildAdvicePrompt(request: AdviceRequest): string {
   return renderPrompt(buildAdviceParts(request));
 }
@@ -530,6 +549,12 @@ export interface AskOptions {
   mode?: StructuredMode;
   /** The prompt in parts, for a session that has seen most of it already. */
   parts?: PromptParts;
+  /**
+   * Only primes a session ahead of the first real request (`buildPrimeParts`):
+   * nobody waits for the answer, and without a session it is not worth
+   * sending at all.
+   */
+  prime?: boolean;
 }
 
 /**
@@ -546,6 +571,22 @@ export class FoundationAdvisor {
 
   meta(): Record<string, QuestionMeta> {
     return loadMeta(this.projectRoot);
+  }
+
+  /**
+   * Primes the sessions the first questions will use, before any is
+   * answered: the domain is thought about, the stack looked up. Fire and
+   * forget — a prime that fails costs the first question nothing it would
+   * not have paid anyway.
+   */
+  prime(): void {
+    const questions = guidedQuestions(this.projectRoot);
+    for (const mode of ['think', 'research'] as const) {
+      const parts = buildPrimeParts(questions, mode);
+      void Promise.resolve()
+        .then(() => this.ask(renderPrompt(parts), ADVICE_SCHEMA, { mode, parts, prime: true }))
+        .catch(() => {});
+    }
   }
 
   /** The next open question with no advice yet — what to prefetch. */
