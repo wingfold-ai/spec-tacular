@@ -26,6 +26,66 @@ pipeline that is always visible.
 ```bash
 bun install
 
+# Open the TUI in any folder — an empty one is fine. It opens on a start
+# screen with a Start button, then walks you through:
+#   1. Set up        runs `openspec init` and installs the spec-tacular schema
+#   2. Ground rules  stack, domain, architecture, conventions — one question at a time
+#   3. Vision        (new projects) describe what you are building; an AI
+#                    interviews you, then splits it into a roadmap of slices
+#   4. First change  the first slice — or, on an existing project, describe a change
+# After that, every change shows its next step as buttons, and ? lists every key.
+bun run src/cli.ts --cwd /path/to/project
+```
+
+The ground rules are answered with an AI advisor alongside:
+
+- **It digs in before moving on.** After each answer it looks at what the
+  answer leaves open and asks that next — answer "Python" and the next
+  question is which version, with the latest stable release (looked up, not
+  remembered) marked ★ recommended. Enter moves on without waiting.
+- **It proposes.** Questions come with options for your project so far
+  (uv, pytest, FastAPI, …), and answers that already follow from earlier ones
+  are derived and pre-selected, marked ⇐. Nothing is written until you pick
+  one or type your own.
+- **Not sure?** Press `?`, type "help" or "not sure", or just press enter on
+  an empty answer: you get a plain-words explanation, examples for your
+  project, and simpler questions to answer first — whose answers often derive
+  the hard one.
+- **Not decided yet?** Press tab or type "skip". `ctrl+d` drops a question the
+  advisor added that is not relevant.
+
+A new project starts from its vision rather than a change — there is nothing
+to change yet. Describe it freely (paste is fine); the AI restates what it
+understood and asks one question at a time, with options, until it has enough
+or you say "done" (tab or "skip" passes on a question). It then proposes 3–8
+slices in build order, the first the smallest thing a user can do end to end.
+Drop the ones you do not want, and the rest become `spec-tacular/roadmap.yaml`;
+the vision and interview go to `spec-tacular/vision.md`, which every agent
+reads. The first slice becomes your first change.
+
+Drafts are for reading. While an agent drafts, its progress streams into the
+change panel; when it lands, the draft opens: scroll through it, then
+*looks good* (draft the next artifact), *edit it*, or *redraft with feedback*
+— the agent revises it with what you typed. `v` reads it again later.
+
+On an existing project, new changes start from what you want, not a name: describe it in a sentence
+or two, and a name is proposed from it (instantly, then a better one from the
+AI) for you to adjust. The description is what the agent drafting the
+proposal starts from.
+
+The advisor runs through Claude Code (`claude -p`, web search only) with
+`sonnet`; names use `haiku` with no tools. Override with
+`SPECTACULAR_ADVISOR_MODEL` / `SPECTACULAR_QUICK_MODEL`, or turn it off with
+`SPECTACULAR_NO_ADVISOR=1`. A request takes 10–30 seconds and a few cents.
+
+Agents drafting artifacts run as `claude -p` with `--permission-mode
+acceptEdits` and read-only `openspec` commands allowed — headless, nobody is
+there to approve a tool call, so without it every write is denied. To allow
+more (running tests during `apply`), add flags with `SPECTACULAR_CLAUDE_ARGS`.
+
+Everything the TUI does is also a command:
+
+```bash
 # Overview of every change
 bun run src/cli.ts --cwd /path/to/an/openspec/project --print
 
