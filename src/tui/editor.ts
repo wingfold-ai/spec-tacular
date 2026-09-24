@@ -7,6 +7,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import type { CliRenderer } from '@opentui/core';
 
 /** `+12 file` is understood by vim, nvim, nano, emacs and helix alike. */
@@ -17,13 +19,26 @@ function argsFor(editor: string, file: string, line: number): string[] {
   return [...base, `+${line}`, file];
 }
 
+/**
+ * `$VISUAL`, then `$EDITOR`, then the first common terminal editor installed.
+ *
+ * The fallback matters on a first run: plenty of machines never set
+ * `$EDITOR`, and "No $EDITOR set" is a dead end for someone being guided.
+ */
+export function resolveEditor(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const chosen = env['VISUAL'] ?? env['EDITOR'];
+  if (chosen) return chosen;
+  const dirs = (env['PATH'] ?? '').split(delimiter).filter(Boolean);
+  return ['nano', 'vim', 'vi'].find((name) => dirs.some((d) => existsSync(join(d, name))));
+}
+
 export function openInEditor(
   renderer: CliRenderer | undefined,
   file: string,
   line: number,
 ): { ok: boolean; reason?: string } {
-  const editor = process.env['VISUAL'] ?? process.env['EDITOR'];
-  if (!editor) return { ok: false, reason: 'No $EDITOR set' };
+  const editor = resolveEditor();
+  if (!editor) return { ok: false, reason: 'No $EDITOR set, and no nano or vim found' };
 
   const command = editor.split(/\s+/)[0]!;
   renderer?.suspend();

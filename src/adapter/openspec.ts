@@ -119,6 +119,31 @@ export class OpenSpecAdapter {
     return stdout + stderr;
   }
 
+  /**
+   * Makes `cwd` an OpenSpec project.
+   *
+   * `--tools none` because choosing which agents to wire up is an interactive
+   * question this UI does not ask; stdin is closed, so the prompt would fail.
+   */
+  async init(): Promise<void> {
+    await this.run(['init', '--tools', 'none', '--no-animation']);
+  }
+
+  /** Creates a change. Its schema comes from the project's config. */
+  async newChange(name: string, description?: string): Promise<void> {
+    const args = ['new', 'change', name];
+    if (description) args.push('--description', description);
+    await this.run(args);
+  }
+
+  /** The schema's starting template for an artifact, for writing it by hand. */
+  async template(artifact: string, change: string): Promise<string> {
+    const raw = await this.runJson<{ template?: string }>([
+      'instructions', artifact, '--change', change, '--json',
+    ]);
+    return raw.template ?? '';
+  }
+
   /** The OpenSpec version in use, for the compatibility check. */
   async version(): Promise<string> {
     const { stdout } = await this.run(['--version']);
