@@ -23,6 +23,7 @@ import { mergeOptions } from '../core/presets.ts';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
+import { usePasteInto } from './copy-paste.ts';
 import { Button, clip, KeyBar, Panel, Spinner } from './widgets.tsx';
 
 type Result = { ok: true } | { ok: false; reason: string };
@@ -348,6 +349,18 @@ export function FoundationScreen(props: FoundationScreenProps) {
     if (q) setSkipped((s) => new Set(s).add(q.item.id));
     advance();
   };
+
+  // A pasted answer is typed text: it chooses writing your own, as typing does.
+  usePasteInto(() =>
+    intro() || showDone() || waiting() || helping() || !current()
+      ? null
+      : (text: string) => {
+          setDraft((d) => d + text);
+          setError(null);
+          setSel(ownRow());
+          setPicked({ kind: 'own' });
+        },
+  );
 
   useKeyboard((key) => {
     if (intro()) {

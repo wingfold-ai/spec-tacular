@@ -56,6 +56,8 @@ export async function mountApp(
     baseline?: boolean;
     width?: number;
     height?: number;
+    /** Never the real clipboard: a test that pastes brings its own. */
+    clipboard?: TuiInput['clipboard'];
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'spectacular-app-'));
@@ -79,6 +81,10 @@ export async function mountApp(
     openReview: () => null,
     saveSession: () => {},
     reparse: () => [],
+    clipboard: options.clipboard ?? {
+      read: async () => ({ ok: false, reason: 'no clipboard in this test' }),
+      write: async () => ({ ok: false, reason: 'no clipboard in this test' }),
+    },
     lintConfig: { allow: [] } as unknown as TuiInput['lintConfig'],
     reloadPipelines: async () => [...changes],
     listJobs: () => jobs.map((j) => ({ ...j })),
@@ -173,6 +179,11 @@ export async function mountApp(
     },
     type: async (text: string) => {
       await setup.mockInput.typeText(text);
+      await settle();
+    },
+    /** The terminal's own paste: one bracketed-paste event. */
+    paste: async (text: string) => {
+      await setup.mockInput.pasteBracketedText(text);
       await settle();
     },
     destroy: () => {

@@ -52,6 +52,8 @@ import { HomeScreen, type HomeAction } from './home.tsx';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { Button, clip, KeyBar, Panel, shortPath, Spinner } from './widgets.tsx';
 import { wrap } from '../render/requirement.ts';
+import { osc52, SystemClipboard, type ClipboardPort } from './clipboard.ts';
+import { ClipboardProvider, usePasteInto, useSelectionCopy, type ClipboardContextValue } from './copy-paste.ts';
 
 export interface TuiInput {
   pipelines: ChangePipeline[];
@@ -104,6 +106,8 @@ export interface TuiInput {
    * does not wait for an agent to start. Optional, and free until asked.
    */
   warm?: (screen: 'foundation' | 'vision' | 'naming') => void;
+  /** The system clipboard; tests pass their own so they never touch the real one. */
+  clipboard?: ClipboardPort;
 }
 
 /** What the TUI needs from core/vision.ts. */
@@ -265,6 +269,34 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const [shown, setShown] = createSignal<GuidedQuestion | null>(null);
   /** Questions whose advice failed this session. */
   const failed = new Set<string>();
+
+  // --- copy and paste -------------------------------------------------------
+
+  /** A short status in the corner — "Copied …" — that clears itself. */
+  const [toast, setToast] = createSignal<string | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(toastTimer));
+  const clipboard: ClipboardContextValue = {
+    clipboard:
+      props.input.clipboard ??
+      new SystemClipboard({
+        // The renderer knows whether the terminal takes OSC 52; when it does
+        // not know, the sequence is sent anyway — a terminal that does not
+        // understand it ignores it.
+        osc52: (text) => {
+          if (renderer.copyToClipboardOSC52(text)) return true;
+          if (!process.stdout.isTTY) return false;
+          process.stdout.write(osc52(text));
+          return true;
+        },
+      }),
+    notify: (message) => {
+      setToast(message);
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => setToast(null), 2500);
+    },
+  };
+  useSelectionCopy(clipboard);
 
   const selected = () => pipelines()[index()];
   const inReview = createMemo(() => session() !== null && !jobsOpen());
@@ -849,6 +881,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setSession(refresh(current, props.input.reparse(current.change)));
   };
 
+  // Pasting a description is as natural as typing one.
+  usePasteInto(
+    () =>
+      screen() === 'overview' && !jobsOpen() && !inReview() && asking()
+        ? (text: string) => {
+            setDraft((d) => d + text);
+            if (asking() === 'name') setNameEdited(true);
+          }
+        : null,
+    { clipboard },
+  );
+
   // --- keyboard -----------------------------------------------------------
 
   useKeyboard((key) => {
@@ -904,7 +948,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     else if (key.name === 'e') void writeNext();
     else if (key.name === 'f') void openFoundation();
     else if (key.name === 'h') setScreen('home');
-    else if (key.name === 'v') {
+    else if (key.name === 'v' && !key.ctrl) {
       const latest = readable().at(-1);
       const p = selected();
       if (latest && p) void openDoc(p.name, latest);
@@ -926,6 +970,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   });
 
   return (
+    <ClipboardProvider value={clipboard}>
     <box
       style={{ flexDirection: 'column', width: '100%', height: '100%', backgroundColor: THEME.bg }}
     >
@@ -1274,7 +1319,15 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         </Panel>
       </Show>
       </Show>
+
+      {/* Copied, or why not: over the bottom-right corner, on every screen */}
+      <Show when={toast()}>
+        <box style={{ position: 'absolute', right: 1, bottom: 0, backgroundColor: THEME.highlight, paddingLeft: 1, paddingRight: 1 }}>
+          <text style={{ fg: THEME.ok }}>{toast()}</text>
+        </box>
+      </Show>
     </box>
+    </ClipboardProvider>
   );
 }
 

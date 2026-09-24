@@ -15,12 +15,24 @@ import { currentItem, position } from '../core/session.ts';
 import { renderCounts, renderProgressBar, wrap } from '../render/requirement.ts';
 import type { Finding } from '../core/concreteness.ts';
 import { exampleValues, renderExamples } from '../core/examples.ts';
-import { isRequirement } from '../core/requirements.ts';
+import { isRequirement, type ReviewItem } from '../core/requirements.ts';
 import { THEME } from './theme.ts';
 import { isCancel, isPrintable } from './input.ts';
+import { useCopy, usePasteInto } from './copy-paste.ts';
 
 /** A decision that needs a typed reason before it is recorded. */
 export type PromptKind = 'reject' | 'defer';
+
+/** An item as Markdown, for copying when its file cannot be read. */
+function asMarkdown(item: ReviewItem): string {
+  if (!isRequirement(item)) return `### ${item.name}\n\n${item.text}`;
+  return [
+    `### Requirement: ${item.name}`,
+    '',
+    item.text,
+    ...item.scenarios.flatMap((s) => ['', `#### Scenario: ${s.name}`, ...s.body]),
+  ].join('\n');
+}
 
 export interface ReviewScreenProps {
   session: ReviewSession;
@@ -53,6 +65,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [draft, setDraft] = createSignal('');
   const [help, setHelp] = createSignal(false);
   const [marking, setMarking] = createSignal(false);
+  const copy = useCopy();
 
   const item = createMemo(() => currentItem(props.session));
   const pos = createMemo(() => position(props.session));
@@ -104,6 +117,13 @@ export function ReviewScreen(props: ReviewScreenProps) {
     else props.onDefer(text);
   };
 
+  const copyCurrent = () => {
+    const current = item();
+    if (current) copy(asMarkdown(current.item), `the ${noun()}`);
+  };
+
+  usePasteInto(() => (prompt() ? (text: string) => setDraft((d) => d + text) : null));
+
   useKeyboard((key) => {
     if (marking()) {
       // Numbered rather than cycling: with several findings on one
@@ -139,6 +159,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
       case 'd': return setPrompt('defer');
       case 's': return props.onSkip();
       case 'e': return props.onEdit();
+      case 'y': return copyCurrent();
       case 'm':
         if (findings().length > 0) setMarking(true);
         return;
@@ -270,7 +291,8 @@ export function ReviewScreen(props: ReviewScreenProps) {
       <Show when={!prompt() && !marking() && help()}>
         <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.text }}>a accept · r reject (asks why) · d defer (asks what would verify it)</text>
-          <text style={{ fg: THEME.text }}>e edit in $EDITOR · s skip · n/p move · q back · any key closes</text>
+          <text style={{ fg: THEME.text }}>e edit in $EDITOR · y copy it · s skip · n/p move · q back</text>
+          <text style={{ fg: THEME.text }}>drag to select text, ctrl+c copies it · ctrl+v pastes into a prompt · any key closes</text>
         </box>
       </Show>
 

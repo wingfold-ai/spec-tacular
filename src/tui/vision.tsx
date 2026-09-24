@@ -8,13 +8,14 @@
  * split into slices they review before anything is written.
  */
 
-import { usePaste, useKeyboard, useTerminalDimensions } from '@opentui/solid';
+import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
 import type { AdviceOption } from '../core/advisor.ts';
 import type { ProposedSlice, VisionSession } from '../core/vision.ts';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
+import { usePasteInto } from './copy-paste.ts';
 import { Button, clip, KeyBar, Panel, Spinner } from './widgets.tsx';
 
 export interface VisionScreenProps {
@@ -85,11 +86,10 @@ export function VisionScreen(props: VisionScreenProps) {
   const kept = createMemo(() => (props.session?.slices ?? []).filter((s) => !dropped().has(s.id)));
 
   // Pasting a long description is the natural way to hand over a vision.
-  usePaste((event) => {
-    if (phase() === 'describe' || phase() === 'interview') {
-      setDraft((d) => d + new TextDecoder().decode(event.bytes).replace(/\r\n?/g, '\n'));
-    }
-  });
+  usePasteInto(
+    () => (!props.busy && (phase() === 'describe' || phase() === 'interview') ? (text: string) => setDraft((d) => d + text) : null),
+    { multiline: true },
+  );
 
   const submitDescribe = () => {
     const text = draft().trim();
