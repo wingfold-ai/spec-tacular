@@ -5,9 +5,14 @@
 //! proposed from it — instantly from its words, then better from a model — and
 //! the developer adjusts it.
 //!
-//! The instant proposal lands here with the new-change prompt in stage 5. The
-//! model-backed half — the prompt, its schema and the filter over what comes
-//! back — waits for the advisor in stage 8.
+//! Both halves are here: the instant name from the description's own words,
+//! and the model-backed one — its prompt, its schema and the filter over what
+//! comes back, so a model can never propose a name OpenSpec would refuse or
+//! one that is already taken.
+
+use serde_json::{json, Value};
+
+use super::guide::validate_change_name;
 
 /// Words that carry no meaning in a change name.
 const FILLER: &[&str] = &[
@@ -60,6 +65,61 @@ pub fn unique(name: &str, taken: &[String]) -> String {
     unreachable!("the loop returns for some i")
 }
 
+/// What a name proposal answers in: the best name and a few alternatives.
+pub fn name_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "alternatives": { "type": "array", "items": { "type": "string" } },
+        },
+        "required": ["name", "alternatives"],
+    })
+}
+
+/// Asks for a name for the change `description` describes.
+pub fn build_name_prompt(description: &str, taken: &[String]) -> String {
+    let mut lines = vec![
+        "Name a change in a spec-driven project. The name is a directory name and how".to_owned(),
+        "the team will refer to the change: kebab-case, lowercase, 2 to 4 words, verb".to_owned(),
+        "first where natural (add-user-login, fix-export-timeout, migrate-to-postgres).".to_owned(),
+        String::new(),
+        format!("The change: {description}"),
+    ];
+    if !taken.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("Already taken: {}", taken.join(", ")));
+    }
+    lines.push(String::new());
+    lines.push("Return the best name and 2 alternatives.".to_owned());
+    lines.join("\n")
+}
+
+/// Only names OpenSpec would accept, not already taken, best first, each once.
+pub fn parse_names(raw: &Value, taken: &[String]) -> Vec<String> {
+    let Some(record) = raw.as_object() else {
+        return Vec::new();
+    };
+    let alternatives = record
+        .get("alternatives")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    for value in record.get("name").into_iter().chain(alternatives) {
+        let name = match value {
+            Value::String(s) => s.trim().to_lowercase(),
+            Value::Null => String::new(),
+            other => other.to_string().trim().to_lowercase(),
+        };
+        if validate_change_name(&name).is_none() && !taken.contains(&name) && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +151,27 @@ mod tests {
             name_from_description("add login", &taken(&["add-login"])),
             "add-login-2"
         );
+    }
+
+    #[test]
+    fn the_models_names_are_filtered_to_valid_free_ones() {
+        let names = parse_names(
+            &json!({
+                "name": "add-user-login",
+                "alternatives": ["Add Login", "taken-one", "user-sign-in", "add-user-login"],
+            }),
+            &taken(&["taken-one"]),
+        );
+        assert_eq!(names, ["add-user-login", "user-sign-in"]);
+        assert!(parse_names(&Value::Null, &[]).is_empty());
+    }
+
+    #[test]
+    fn the_prompt_carries_the_description_and_what_is_taken() {
+        let prompt = build_name_prompt("Let users sign in", &taken(&["add-export"]));
+        assert!(prompt.contains("The change: Let users sign in"));
+        assert!(prompt.contains("Already taken: add-export"));
+        assert!(!build_name_prompt("x", &[]).contains("Already taken"));
     }
 
     #[test]

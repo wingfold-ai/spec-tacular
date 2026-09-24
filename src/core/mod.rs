@@ -19,9 +19,6 @@
 // last caller lands. Stage 3 took it off `pipeline`, `context` and `markdown`;
 // stage 4 takes it off `archive`, `pending`, `verify`, `roadmap` and `jobs`.
 // What still carries it is waiting on the TUI, in stages 5 to 8.
-// The advisor is complete, but only the tests' fake ports run it until
-// stage 8 hands the real ports a model.
-#[allow(dead_code)]
 pub mod advisor;
 pub mod archive;
 #[allow(dead_code)]

@@ -67,9 +67,13 @@ src/
                  context, foundation, decisions, init, jobs, archive, pending,
                  verify, roadmap, guide, naming, advisor, vision
                  (advisor: the Foundation advisor whole — prompts, parsers,
-                 its sidecar, follow-ups written into the files — reached
-                 through an injected `Ask`; stage 8 supplies a real one)
+                 its sidecar, follow-ups written into the files; vision: the
+                 interview, its saved session, slicing and the roadmap it
+                 writes; naming: the instant name and the model's. All three
+                 reach a model through an injected `Ask`)
   agent/         driver.rs, claude.rs, opencode.rs, structured.rs
+                 (structured: one-shot requests, and `driver_ask` — the real
+                 `Ask`, in research, think or quick mode)
   render/        text.rs, requirement.rs — shared by `--print` and the TUI
   tui/           the Ratatui shell:
                    mod.rs       the tokio event loop (keys, mouse, resize,
@@ -84,9 +88,16 @@ src/
                    foundation.rs the ground rules: one Foundation question
                                 at a time, the advisor's options, follow-ups
                                 and help, its keys and drawing
+                   vision.rs    a new project's vision: described (or
+                                pasted), interviewed one question at a time,
+                                split into slices you review, its keys and
+                                drawing
                    jobs.rs      the job pane; guide.rs the help and empty states
                    ports.rs     the `Ports` trait (the TypeScript `TuiInput`)
-                                and its real implementation
+                                and its real implementation, with the advisor,
+                                the interviewer and name proposals over the
+                                chosen driver (the TypeScript `advisorFor` and
+                                `visionFor`)
                    terminal.rs  raw mode, alternate screen, mouse — and always
                                 restoring them (Drop guard, panic hook)
                    editor.rs    `$VISUAL`/`$EDITOR`/nano/vim/vi at a line
@@ -128,7 +139,7 @@ reviewable on its own.
 | 5 | `rust/05-tui-shell` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane, describe-then-name new change, `$EDITOR` (ctrl+c never quits) |
 | 6 | `rust/06-review-document` | TUI review screen, document viewer, editor integration |
 | 7 | `rust/07-guided-setup` | guided setup: the ground-rules screen (intro, one question at a time, options, follow-ups, help, derived answers, done), Start → ground rules → overview routing, `core::advisor` complete behind an injected model |
-| 8 | `rust/08-advisor` | AI advisor: structured requests, follow-ups/options/derived answers/help, name proposals, vision interview and slicing, draft opens when done, redraft with feedback |
+| 8 | `rust/08-ai-advisor-vision` | AI advisor: the real ports reach a model (structured requests in research/think/quick mode, `SPECTACULAR_NO_ADVISOR`), follow-ups/options/derived answers/help live, name proposals, the vision screen (describe or paste, interview, slices review, roadmap and first change), Start → ground rules → vision routing |
 | 9 | `rust/09-acp` | ACP agent integration: permission prompts in the UI, live tool/diff events, session resume |
 | 10 | `rust/10-release` | CI workflow, release build, README |
 
@@ -278,26 +289,42 @@ it).
 "Reading the project…" where its buttons go, and they appear when the answer
 does; `q` works meanwhile.
 
-**Stand-ins until the screens they need land.** Stage 5 shipped the shell,
-stage 6 the review screen and the document viewer and stage 7 the ground
-rules, not every screen, and they say so rather than pretending:
+**The model's work stays off the drawing thread, and dies with the TUI.**
+The TypeScript ran the advisor's and the interview's file reads and writes
+inline around each model call. Here each request's whole future — read the
+questions, ask, write the sidecar or the Foundation file — is driven on a
+blocking thread, and the model request itself is spawned back onto the
+runtime (`agent::structured::driver_ask`). A request abandoned by quitting
+is cancelled with the runtime, and it kills the agent's whole process group,
+not only the direct child: quitting mid-question returns at once and leaves
+nothing running.
 
-- *The AI advisor* (stage 8): the ground-rules screen is complete and
-  talks to the advisor through `Ports` (`after_answer`, `suggest`, `coach`,
-  `dismiss`, `advisor_meta`), and `core::advisor` is complete behind an
-  injected `Ask` — but nothing reaches a model yet. The real ports report
-  "AI suggestions are off: not available until stage 8", as the TypeScript
-  did for a driver that could not advise, and every advisor request resolves
-  to nothing. The tests drive the real `core::advisor` with a scripted model.
-- *The vision interview* (stage 8): a new project at the vision step is
-  offered "Start your first change" instead of "Describe your vision", and the
-  overview shows the first-change guide. Leaving the ground rules with every
-  question answered goes to the overview; the TypeScript went to the vision
-  screen when `project_stage` said so, and stage 8 does again.
-- *Name proposals from a model* (stage 8): the name is the instant one from
-  the description's own words; `Ports::propose_names` is the hook, and the
-  prompt already shows suggestions, tab-cycles them and never overwrites a
-  name being edited.
+**No model, no pretend call.** The TypeScript `visionFor` started the
+interview anyway when there was no model, caught the failure, and then saved
+the vision. Here, without a model, the description is kept as the vision
+(`VisionInterviewer::keep_without_interview`: `vision.md`, an empty roadmap,
+and the session marked as not a new project) without asking anything, and
+the app goes on to describing a single change, as the TypeScript did.
+
+**A late name proposal is checked against the description it was for.**
+The TypeScript dropped a proposal only when the prompt was no longer on its
+name step; a prompt cancelled and started again for another change would
+take the first one's names. Each proposal carries a request number, and one
+for an earlier description is dropped. The same guard covers every step of
+the vision interview.
+
+**The interview does not slice behind your back.** The TypeScript went on to
+split the vision into slices as soon as an answer that ended the interview
+came back, wherever you were. Here that happens only if you are still on the
+vision screen; otherwise the screen says "Press enter to ask again" when you
+return, and enter slices it then. Writing the roadmap and creating the first
+change show a spinner, where the TypeScript showed nothing and took a second
+enter as a second roadmap.
+
+**Pastes are pastes.** Bracketed paste is switched on with the terminal, so a
+pasted vision arrives as one event, line breaks and all, rather than as
+keystrokes whose newlines would each press enter. Only the vision's text
+boxes take a paste, as in the TypeScript.
 
 **The logo is coloured per letter.** The TypeScript passed the gradient to
 opentui's `ascii_font` meaning one colour per letter, but opentui applies a
@@ -386,6 +413,37 @@ a fixed order rather than the order the TypeScript happened to set them in.
 **Button rows wrap.** A row of buttons too wide for its panel continues on the
 next line instead of being squeezed, as a flex row that is allowed to wrap
 would.
+
+**A reference bug the port does not reproduce: "AI is off" on the vision
+screen.** The TypeScript passed `unavailable={vision?.unavailable ?? 'no
+vision support'}` to the vision screen (`src/tui/app.tsx:970` on
+`claude/vibrant-fermat-s72fcs`). `unavailable` is `null` exactly when there
+is a model, and `??` turns that `null` into the truthy string, so the
+describe panel always read "(AI is off: no vision support — your description
+is saved as the vision.)" — even when the interview then ran normally. Here
+the panel says "✦ Then an AI asks a few questions to sharpen it…" when there
+is a model, and "AI is off: <why>" only when there is none.
+
+**A long vision is one line in `roadmap.yaml`.** The file is written in the
+TypeScript's layout, key for key, and a roadmap from either implementation
+loads in the other. The bytes differ in one case: when the `vision:` scalar
+is longer than 80 columns, the TypeScript's `yaml` package folds it over
+several lines and `core::roadmap::save_roadmap` does not. Both are the same
+YAML value, so this only shows in a diff of the file.
+
+## Environment
+
+| Variable | Effect |
+| --- | --- |
+| `SPECTACULAR_NO_ADVISOR` | Any non-empty value turns every model request off: no advisor on the ground rules, no vision interview (the description is kept as the vision), no name proposals. The screens say "turned off by SPECTACULAR_NO_ADVISOR". |
+| `SPECTACULAR_ADVISOR_MODEL` | The model for the advisor (research) and the vision interview (think) with the claude driver. Default `sonnet`. |
+| `SPECTACULAR_QUICK_MODEL` | The model for name proposals (quick). Default `haiku`. |
+| `SPECTACULAR_CLAUDE_ARGS` | Extra arguments for the claude driver's jobs. |
+
+Without the variable, the advisor is on when the chosen driver (`--driver`,
+default `claude`) answers structured requests and its binary is on `PATH`;
+otherwise the screens say why (`opencode cannot answer structured requests`,
+`` `claude` is not installed ``).
 
 ## What is not being ported
 

@@ -226,6 +226,47 @@ fn a_name_being_adjusted_is_never_overwritten_by_a_late_proposal() {
 }
 
 #[test]
+fn the_model_is_asked_with_the_description_and_its_names_are_filtered() {
+    let ports = FakePorts::with_baseline();
+    // The model's best is not a name OpenSpec would take; its alternative is.
+    *ports.names.lock().expect("names") = Names::Now(vec![
+        "Add Email Login".to_owned(),
+        "email-sign-in".to_owned(),
+    ]);
+    let mut ui = Ui::ready_for_first_change(ports);
+    ui.char('n');
+    ui.type_text("Let users log in with email");
+    ui.press(KeyCode::Enter);
+    let prompts = ui.ports.name_prompts.lock().expect("prompts").clone();
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].contains("The change: Let users log in with email"));
+    ui.expect("› email-sign-in▏");
+    ui.expect("suggestions: email-sign-in · log-email");
+}
+
+#[test]
+fn a_proposal_for_an_earlier_description_is_dropped() {
+    let ports = FakePorts::with_baseline();
+    let (release, later) = tokio::sync::oneshot::channel();
+    *ports.names.lock().expect("names") = Names::Later(later);
+    let mut ui = Ui::ready_for_first_change(ports);
+    ui.char('n');
+    ui.type_text("Let users log in with email");
+    ui.press(KeyCode::Enter);
+    ui.expect("proposing a better name");
+    ui.ctrl('c'); // cancelled while it was asked
+    ui.char('n');
+    ui.type_text("Export invoices as PDF");
+    ui.press(KeyCode::Enter);
+    release
+        .send(vec!["add-email-login".to_owned()])
+        .expect("release");
+    ui.settle();
+    ui.expect("› export-invoices-pdf▏");
+    ui.expect_not("add-email-login");
+}
+
+#[test]
 fn question_mark_explains_every_key_and_any_key_closes_it() {
     let mut ui = Ui::ready_for_first_change(FakePorts::with_baseline());
     ui.char('?');

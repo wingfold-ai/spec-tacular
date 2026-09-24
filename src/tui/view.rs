@@ -18,6 +18,7 @@ use super::home::render_home;
 use super::jobs::{render_job_pane, summarize_jobs};
 use super::review::render_review;
 use super::theme;
+use super::vision::render_vision;
 use super::widgets::{
     buttons_height, clip, dim, panel, panel_inner, render_buttons, render_key_bar, short_path,
     spinner_line, stepper_line, wrapped_height, Button, Flow,
@@ -61,6 +62,7 @@ pub fn render(app: &App, frame: &mut Frame<'_>) -> Hits {
         Screen::Review => render_review(frame, body, app),
         Screen::Document => render_document(frame, body, app, &mut hits),
         Screen::Foundation => render_foundation(frame, body, app, &mut hits),
+        Screen::Vision => render_vision(frame, body, app, &mut hits),
         Screen::Home | Screen::Overview => render_overview(frame, body, app, &mut hits),
     }
     hits
@@ -87,6 +89,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .as_ref()
             .map(|d| format!(" › {} › {}", d.change, d.artifact)),
         Screen::Foundation => Some(" › ground rules".to_owned()),
+        Screen::Vision => Some(" › vision".to_owned()),
         Screen::Home | Screen::Overview => None,
     }
     .unwrap_or_default();
@@ -448,8 +451,8 @@ fn render_change(
 fn render_getting_started(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(panel(Some("Getting started"), false), area);
     let inner = panel_inner(area);
-    // A project at the vision step is also shown the first-change guide: the
-    // interview is stage 8, and until then a first change is the way in.
+    // A project at the vision step is also shown the first-change guide:
+    // `n` still starts a single change there, as "Not a new project" does.
     if matches!(app.stage, ProjectStage::NoChanges | ProjectStage::Vision) {
         let padded = Rect {
             x: inner.x + 1,

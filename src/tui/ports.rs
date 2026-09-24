@@ -17,11 +17,15 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use std::time::Duration;
+
 use crate::adapter::openspec::{is_openspec_project, OpenSpecAdapter};
 use crate::adapter::types::OpenSpecChangeStatus;
 use crate::agent::default_registry;
+use crate::agent::driver::StructuredMode;
+use crate::agent::structured::{advisor_unavailable, driver_ask, StructuredOptions};
 use crate::commands::{dispatch, load_pipelines};
-use crate::core::advisor::{AfterAnswer, Coached, Meta};
+use crate::core::advisor::{AfterAnswer, Ask, Coached, FoundationAdvisor, Meta};
 use crate::core::change_review::{load_change_review, spec_files_of};
 use crate::core::concreteness::{load_lint_config, LintConfig};
 use crate::core::decisions::{promote_decision, replace_decision_body, Decision, PromoteOptions};
@@ -32,12 +36,15 @@ use crate::core::guide::{project_stage, schema_installed, ProjectStage};
 use crate::core::init::init_project;
 use crate::core::jobs::{cancel_job, list_jobs, prune_jobs, tail_job, Job, JobStatus, TAIL_LIMIT};
 use crate::core::mark::mark_example_in_file;
+use crate::core::naming::{build_name_prompt, name_schema, parse_names};
 use crate::core::pipeline::ChangePipeline;
 use crate::core::requirements::ReviewItem;
 use crate::core::review::save_review;
-use crate::core::roadmap::{load_roadmap, Roadmap};
+use crate::core::roadmap::{load_roadmap, Roadmap, Slice};
 use crate::core::session::{open_session, ReviewSession};
-use crate::core::vision::is_greenfield;
+use crate::core::vision::{
+    is_greenfield, load_session, ProposedSlice, VisionInterviewer, VisionSession,
+};
 
 /// Work that waits on something slower than a file read.
 pub type PortFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
@@ -59,9 +66,92 @@ pub struct JobsView {
     pub running_lines: Vec<String>,
 }
 
-/// Why the real ports have no advisor yet: `core::advisor` is complete, but
-/// reaching a model with it — a driver's structured request — is stage 8.
-pub const NO_ADVISOR_YET: &str = "not available until stage 8";
+/// Set to anything non-empty, this turns every model request off: no
+/// advisor, no vision interview, no name proposals.
+pub const NO_ADVISOR_ENV: &str = "SPECTACULAR_NO_ADVISOR";
+
+/// How long a name proposal may take: it is a small task on a fast model,
+/// and the instant name is already on screen.
+const NAMES_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Why there is no advisor for `driver_id`, or `None` when there is one —
+/// the TypeScript's `advisorFor`. `no_advisor` is the value of
+/// [`NO_ADVISOR_ENV`], passed in so this is testable without touching the
+/// process environment.
+pub fn advisor_note_for(driver_id: &str, no_advisor: Option<&str>) -> Option<String> {
+    if no_advisor.is_some_and(|v| !v.is_empty()) {
+        return Some(format!("turned off by {NO_ADVISOR_ENV}"));
+    }
+    let registry = default_registry();
+    match registry.get(driver_id) {
+        Err(error) => Some(error.to_string()),
+        Ok(driver) => advisor_unavailable(driver),
+    }
+}
+
+/// Better names for a change, from a model: its answer through
+/// [`parse_names`], so nothing invalid or taken gets through. A failure is no
+/// proposal — the instant name stays.
+pub async fn ask_names(ask: Ask, description: String, taken: Vec<String>) -> Vec<String> {
+    match ask(build_name_prompt(&description, &taken), name_schema()).await {
+        Ok(raw) => parse_names(&raw, &taken),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// One step of the vision interview, as the screen asks for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VisionStep {
+    /// Start from the developer's description, and ask the first question.
+    Start(String),
+    /// An answer; `None` skips the question.
+    Answer(Option<String>),
+    /// The developer has said enough.
+    Finish,
+    /// Ask again, after a failure or a quit mid-request.
+    Resume,
+    /// Split it into slices, none of them named like these changes.
+    Extract(Vec<String>),
+    /// Not a new project: never offer the interview again.
+    Skip,
+    /// No model: keep the description as the vision, and move on to a change.
+    Keep(String),
+}
+
+/// What a [`VisionStep`] left behind: the interview as it is now saved —
+/// read back whether the step worked or not, since a step that failed half
+/// way (the description saved, the model offline) still moved it — and why it
+/// failed, if it did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VisionAnswer {
+    pub session: Option<VisionSession>,
+    pub error: Option<String>,
+}
+
+/// Runs one [`VisionStep`] — shared by the real ports and the fake, so both
+/// walk the interview through the same `core::vision` calls.
+pub async fn run_vision_step(interviewer: &VisionInterviewer, step: VisionStep) -> VisionAnswer {
+    let error = step_result(interviewer, step).await.err();
+    VisionAnswer {
+        session: interviewer.session(),
+        error,
+    }
+}
+
+async fn step_result(
+    interviewer: &VisionInterviewer,
+    step: VisionStep,
+) -> Result<VisionSession, String> {
+    match step {
+        VisionStep::Start(text) => interviewer.start(&text).await,
+        VisionStep::Answer(answer) => interviewer.answer(answer.as_deref()).await,
+        VisionStep::Finish => interviewer.finish(),
+        VisionStep::Resume => interviewer.resume().await,
+        VisionStep::Extract(taken) => interviewer.extract(&taken).await,
+        VisionStep::Skip => interviewer.skip(),
+        VisionStep::Keep(text) => interviewer.keep_without_interview(&text),
+    }
+}
 
 /// How many of a running agent's lines the overview shows under its change.
 const RUNNING_LINES: usize = 8;
@@ -219,15 +309,25 @@ pub trait Ports: Send + Sync {
     fn artifact_file(&self, change: &str, artifact: &str) -> PortFuture<Result<PathBuf, String>>;
 
     /// Better names for a change than its own words give, best first — the
-    /// model-backed half of naming. `None` when there is nothing to ask,
-    /// which is always, until the advisor lands in stage 8.
-    fn propose_names(
+    /// model-backed half of naming. `None` when there is no model to ask.
+    fn propose_names(&self, description: &str, taken: &[String])
+        -> Option<PortFuture<Vec<String>>>;
+
+    /// Why there is no vision interview, or `None` when there is one. Read
+    /// once, when the app starts.
+    fn vision_note(&self) -> Option<String>;
+    /// The saved interview, if one was started — a small file, read when the
+    /// app starts to label the start screen's button.
+    fn vision_session(&self) -> Option<VisionSession>;
+    /// One step of the interview; the session as it stands after it.
+    fn vision(&self, step: VisionStep) -> PortFuture<VisionAnswer>;
+    /// Writes the vision and the roadmap from the slices kept, and makes the
+    /// first one active; that slice, or `None` when none can start first.
+    fn confirm_vision(
         &self,
-        _description: &str,
-        _taken: &[String],
-    ) -> Option<PortFuture<Vec<String>>> {
-        None
-    }
+        vision: &str,
+        kept: &[ProposedSlice],
+    ) -> PortFuture<Result<Option<Slice>, String>>;
 }
 
 /// The real thing: OpenSpec through the adapter, jobs on disk, the Foundation
@@ -239,16 +339,67 @@ pub struct ProjectPorts {
     /// OpenSpec's status per change, from the last reload. `stage` counts it
     /// and `artifact_file` looks paths up in it, as the TypeScript did.
     statuses: Arc<Mutex<BTreeMap<String, OpenSpecChangeStatus>>>,
+    /// Why there is no model to ask; `None` when there is one.
+    note: Option<String>,
+    /// The Foundation advisor, over the driver's `research` requests.
+    advisor: Option<FoundationAdvisor>,
+    /// The vision interview, over its `think` requests. Present without a
+    /// model too: keeping a description and skipping need no model.
+    interviewer: VisionInterviewer,
+    /// Name proposals: `quick` requests.
+    names: Option<Ask>,
 }
 
 impl ProjectPorts {
+    /// The ports for `root`, asking the model through `driver` unless
+    /// [`NO_ADVISOR_ENV`] is set or the driver cannot answer.
     pub fn new(root: impl Into<PathBuf>, openspec_bin: Option<PathBuf>, driver: &str) -> Self {
+        let no_advisor = std::env::var(NO_ADVISOR_ENV).ok();
+        Self::with_note(
+            root,
+            openspec_bin,
+            driver,
+            advisor_note_for(driver, no_advisor.as_deref()),
+        )
+    }
+
+    /// The same, with the reason there is no model decided by the caller.
+    pub fn with_note(
+        root: impl Into<PathBuf>,
+        openspec_bin: Option<PathBuf>,
+        driver: &str,
+        note: Option<String>,
+    ) -> Self {
         let root = root.into();
+        let ask = |mode, timeout| driver_ask(driver, &root, StructuredOptions { mode, timeout });
+        let (advisor, think, names) = if note.is_none() {
+            (
+                Some(FoundationAdvisor::new(
+                    &root,
+                    ask(StructuredMode::Research, None),
+                )),
+                ask(StructuredMode::Think, None),
+                Some(ask(StructuredMode::Quick, Some(NAMES_TIMEOUT))),
+            )
+        } else {
+            // Never called: without a model the screen keeps the description
+            // instead of starting an interview. Should it be, it says why.
+            let why = note.clone().unwrap_or_default();
+            let refuse: Ask = Arc::new(move |_, _| {
+                let why = why.clone();
+                Box::pin(async move { Err(why) })
+            });
+            (None, refuse, None)
+        };
         Self {
             adapter: OpenSpecAdapter::new(&root, openspec_bin),
+            interviewer: VisionInterviewer::new(&root, think),
             root,
             driver: driver.to_owned(),
             statuses: Arc::default(),
+            note,
+            advisor,
+            names,
         }
     }
 
@@ -441,34 +592,60 @@ impl Ports for ProjectPorts {
         answer_foundation(&question.item, text)
     }
 
-    /// The advisor is stage 8: until then the screen says so, asks nothing,
-    /// and every advisor request below resolves to nothing at all.
+    /// Without a model the screen says why, asks nothing, and every advisor
+    /// request below resolves to nothing at all.
     fn advisor_note(&self) -> Option<String> {
-        Some(NO_ADVISOR_YET.to_owned())
+        self.note.clone()
     }
 
     fn advisor_meta(&self) -> PortFuture<Meta> {
-        Box::pin(async { Meta::new() })
+        let advisor = self.advisor.clone();
+        Box::pin(blocking(Meta::new(), move || {
+            advisor.map(|a| a.meta()).unwrap_or_default()
+        }))
     }
 
     fn after_answer(
         &self,
-        _question: &GuidedQuestion,
-        _answer: &str,
+        question: &GuidedQuestion,
+        answer: &str,
     ) -> PortFuture<Result<AfterAnswer, String>> {
-        Box::pin(async { Ok(AfterAnswer::default()) })
+        let Some(advisor) = self.advisor.clone() else {
+            return Box::pin(async { Ok(AfterAnswer::default()) });
+        };
+        let question = question.clone();
+        let answer = answer.to_owned();
+        Box::pin(off_thread(move || async move {
+            advisor.after_answer(&question, &answer).await
+        }))
     }
 
-    fn suggest(&self, _question: &GuidedQuestion) -> PortFuture<Result<(), String>> {
-        Box::pin(async { Ok(()) })
+    fn suggest(&self, question: &GuidedQuestion) -> PortFuture<Result<(), String>> {
+        let Some(advisor) = self.advisor.clone() else {
+            return Box::pin(async { Ok(()) });
+        };
+        let question = question.clone();
+        Box::pin(off_thread(move || async move {
+            advisor.suggest(&question).await
+        }))
     }
 
-    fn coach(&self, _question: &GuidedQuestion) -> PortFuture<Result<Coached, String>> {
-        Box::pin(async { Ok(Coached::default()) })
+    fn coach(&self, question: &GuidedQuestion) -> PortFuture<Result<Coached, String>> {
+        let Some(advisor) = self.advisor.clone() else {
+            return Box::pin(async { Ok(Coached::default()) });
+        };
+        let question = question.clone();
+        Box::pin(off_thread(
+            move || async move { advisor.coach(&question).await },
+        ))
     }
 
-    fn dismiss(&self, _question: &GuidedQuestion) -> PortFuture<bool> {
-        Box::pin(async { false })
+    fn dismiss(&self, question: &GuidedQuestion) -> PortFuture<bool> {
+        let advisor = self.advisor.clone();
+        let question = question.clone();
+        Box::pin(blocking(false, move || {
+            advisor.is_some_and(|a| a.dismiss(&question))
+        }))
     }
     /// OpenSpec if missing, then the schema, then the Foundation questions.
     /// Each step is skipped when already done, so it is safe on a half-set-up
@@ -517,6 +694,74 @@ impl Ports for ProjectPorts {
                 .map_err(|error| error.describe())
         })
     }
+
+    fn propose_names(
+        &self,
+        description: &str,
+        taken: &[String],
+    ) -> Option<PortFuture<Vec<String>>> {
+        let ask = self.names.clone()?;
+        Some(Box::pin(ask_names(
+            ask,
+            description.to_owned(),
+            taken.to_vec(),
+        )))
+    }
+
+    fn vision_note(&self) -> Option<String> {
+        self.note.clone()
+    }
+
+    fn vision_session(&self) -> Option<VisionSession> {
+        load_session(&self.root)
+    }
+
+    fn vision(&self, step: VisionStep) -> PortFuture<VisionAnswer> {
+        let interviewer = self.interviewer.clone();
+        Box::pin(async move {
+            off_thread(move || async move { Ok(run_vision_step(&interviewer, step).await) })
+                .await
+                .unwrap_or_else(|error| VisionAnswer {
+                    session: None,
+                    error: Some(error),
+                })
+        })
+    }
+
+    fn confirm_vision(
+        &self,
+        vision: &str,
+        kept: &[ProposedSlice],
+    ) -> PortFuture<Result<Option<Slice>, String>> {
+        let interviewer = self.interviewer.clone();
+        let vision = vision.to_owned();
+        let kept = kept.to_vec();
+        Box::pin(blocking(
+            Err("Could not write the roadmap".to_owned()),
+            move || interviewer.confirm(&vision, &kept),
+        ))
+    }
+}
+
+/// Runs a model-backed request with its file work on a blocking thread.
+///
+/// The advisor and the interviewer read and write their files around the
+/// model's answer, inside one future. That future is driven here, on a
+/// blocking thread through the runtime's handle, so none of its file I/O
+/// happens on the thread that draws; the model request itself is spawned back
+/// onto the runtime by [`driver_ask`]. Only a panic gets the generic error.
+async fn off_thread<T, F, Fut>(make: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, String>>,
+{
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return Err("no runtime to run the request on".to_owned());
+    };
+    tokio::task::spawn_blocking(move || handle.block_on(make()))
+        .await
+        .unwrap_or_else(|_| Err("the request stopped unexpectedly".to_owned()))
 }
 
 /// Runs file work on a blocking thread, never on the one that draws. Only a

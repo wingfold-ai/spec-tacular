@@ -15,7 +15,11 @@
 //! - [`draft`] — `vision-e2e`'s "an agent's draft";
 //! - [`ground_rules`] — `onboarding-e2e`'s "the ground rules", with the
 //!   advisor's model scripted, and [`ground_rules_screen`] — each of its
-//!   states, drawn.
+//!   states, drawn;
+//! - [`vision_e2e`] — `vision-e2e`'s "a new project starts from its vision",
+//!   with the interviewer's model scripted, and [`vision_screen`] — each of
+//!   its states, drawn. `onboarding-e2e`'s "a new change" (the model's name
+//!   proposals) is in [`shell`].
 
 mod concurrency_e2e;
 mod draft;
@@ -26,6 +30,8 @@ mod review_e2e;
 mod review_lint;
 mod review_screen;
 mod shell;
+mod vision_e2e;
+mod vision_screen;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

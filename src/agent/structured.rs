@@ -4,14 +4,18 @@
 //! the running TUI, and nothing needs to survive the TUI exiting. It is still
 //! asynchronous — the UI keeps drawing and taking answers while it runs.
 //!
-//! The advisor that calls this lands in stage 8. What lands here is the part
-//! that has nothing to do with advice: finding the binary, running it, and
-//! turning a failure into a sentence somebody can act on.
+//! Its callers are the Foundation advisor, the vision interview and the name
+//! proposal, each through [`driver_ask`] — the real end of `core`'s injected
+//! [`Ask`]. What is here has nothing to do with advice: finding the binary,
+//! running it, and turning a failure into a sentence somebody can act on.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
+use super::default_registry;
 use super::driver::{AgentDriver, StructuredMode, StructuredRequest};
+use crate::core::advisor::Ask;
 use crate::core::jobs::signal_group;
 
 /// How long a structured request may take before it is abandoned.
@@ -51,6 +55,20 @@ pub fn advisor_unavailable(driver: &dyn AgentDriver) -> Option<String> {
         mode: StructuredMode::default(),
     });
     (!on_path(&probe.command)).then(|| format!("`{}` is not installed", probe.command))
+}
+
+/// Kills a request's process group when the request is abandoned — timed
+/// out, or dropped because the TUI quit or moved on. `kill_on_drop` reaches
+/// the direct child only; whatever it started (a wrapper's real agent, the
+/// agent's own helpers) is in the group and goes with it.
+struct GroupGuard(Option<i32>);
+
+impl Drop for GroupGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0 {
+            signal_group(pid, libc::SIGKILL);
+        }
+    }
 }
 
 /// How a structured request may be tuned.
@@ -108,14 +126,12 @@ pub async fn run_structured(
     })?;
 
     // Read before the wait consumes the child: the group id is its pid.
-    let pid = child.id().and_then(|pid| i32::try_from(pid).ok());
+    let mut group = GroupGuard(child.id().and_then(|pid| i32::try_from(pid).ok()));
 
     let timeout = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Err(_) => {
-            if let Some(pid) = pid {
-                signal_group(pid, libc::SIGKILL);
-            }
+            // The guard, dropped on return, kills the group.
             return Err(format!(
                 "{} did not answer within {}s",
                 driver.label(),
@@ -123,7 +139,11 @@ pub async fn run_structured(
             ));
         }
         Ok(Err(err)) => return Err(err.to_string()),
-        Ok(Ok(output)) => output,
+        Ok(Ok(output)) => {
+            // Reaped: its pid, and so its group id, may be reused from here.
+            group.0 = None;
+            output
+        }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -135,6 +155,35 @@ pub async fn run_structured(
         } else {
             reason
         }
+    })
+}
+
+/// An [`Ask`] that runs the driver `driver_id`'s structured request in `cwd`.
+///
+/// The request is spawned onto the current tokio runtime and awaited through
+/// its handle, so the future this returns can be driven from anywhere — in
+/// particular from a blocking thread in `Handle::block_on`, which is where the
+/// TUI runs the advisor so that its file work stays off the thread that
+/// draws. The subprocess itself always lives on the runtime, and a request
+/// abandoned when the TUI quits is killed with it (`kill_on_drop`).
+pub fn driver_ask(driver_id: &str, cwd: &Path, options: StructuredOptions) -> Ask {
+    let driver_id = driver_id.to_owned();
+    let cwd: PathBuf = cwd.to_path_buf();
+    Arc::new(move |prompt, schema| {
+        let driver_id = driver_id.clone();
+        let cwd = cwd.clone();
+        Box::pin(async move {
+            let handle = tokio::runtime::Handle::try_current()
+                .map_err(|_| "no runtime to ask the model on".to_owned())?;
+            handle
+                .spawn(async move {
+                    let registry = default_registry();
+                    let driver = registry.get(&driver_id).map_err(|err| err.to_string())?;
+                    run_structured(driver, &cwd, &prompt, &schema, options).await
+                })
+                .await
+                .map_err(|_| "the request to the model was cut off".to_owned())?
+        })
     })
 }
 
@@ -326,6 +375,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_request_dropped_mid_way_takes_everything_it_started_with_it() {
+        let dir = TempDir::new().expect("temp dir");
+        let marker = dir.path().join("still-running");
+        let driver = fake(
+            dir.path(),
+            &format!("sh -c 'sleep 30; : > {}' &\nwait", marker.display()),
+        );
+        let rt = runtime();
+        let schema = serde_json::json!({});
+        rt.block_on(async {
+            let request = run_structured(
+                &driver,
+                dir.path(),
+                "p",
+                &schema,
+                StructuredOptions::default(),
+            );
+            // Abandoned while it runs: what the TUI does to a request when
+            // the developer quits.
+            let _ = tokio::time::timeout(Duration::from_millis(150), request).await;
+        });
+        assert!(
+            no_survivors(dir.path()),
+            "the dropped request left a process behind"
+        );
+    }
+
     /// Whether every process the fake started is gone.
     ///
     /// The fake writes its marker only if it runs to completion, so a marker
@@ -346,6 +423,44 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         false
+    }
+
+    #[test]
+    fn a_driver_ask_reaches_the_registry_and_says_why_it_cannot_answer() {
+        // Neither of these runs anything: opencode has no structured mode,
+        // and an unknown driver is refused before a command is built.
+        let dir = TempDir::new().expect("temp dir");
+        let ask = driver_ask("opencode", dir.path(), StructuredOptions::default());
+        let err = runtime()
+            .block_on(ask("p".to_owned(), serde_json::json!({})))
+            .expect_err("opencode cannot advise");
+        assert_eq!(err, "opencode cannot advise");
+
+        let ask = driver_ask("nope", dir.path(), StructuredOptions::default());
+        let err = runtime()
+            .block_on(ask("p".to_owned(), serde_json::json!({})))
+            .expect_err("no such driver");
+        assert!(err.contains("Unknown agent driver 'nope'"), "{err}");
+    }
+
+    #[test]
+    fn a_driver_ask_outside_a_runtime_is_an_error_not_a_panic() {
+        let dir = TempDir::new().expect("temp dir");
+        let ask = driver_ask("claude", dir.path(), StructuredOptions::default());
+        // Polled by a runtime with no handle of its own entered: the
+        // future itself is run on a bare executor thread.
+        let err = std::thread::spawn(move || {
+            let waker = std::task::Waker::noop();
+            let mut cx = std::task::Context::from_waker(waker);
+            let mut fut = ask("p".to_owned(), serde_json::json!({}));
+            match fut.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => Ok(serde_json::Value::Null),
+            }
+        })
+        .join()
+        .expect("thread");
+        assert_eq!(err, Err("no runtime to ask the model on".to_owned()));
     }
 
     #[test]
