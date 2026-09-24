@@ -23,10 +23,13 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 
 use super::document::Document;
+use super::foundation::{FoundationScreen, GroundRules};
 use super::input::{edit_line, is_cancel, is_ctrl, is_enter};
 use super::ports::{JobsView, PortFuture, Ports, Snapshot};
 use super::review::Review;
+use crate::core::advisor::{AfterAnswer, Coached, Meta};
 use crate::core::concreteness::LintConfig;
+use crate::core::foundation::GuidedQuestion;
 use crate::core::gate::stale_artifacts;
 use crate::core::guide::{
     next_step, setup_step, validate_change_name, NextAction, NextStep, ProjectStage,
@@ -38,8 +41,7 @@ use crate::core::requirements::ReviewItem;
 use crate::core::roadmap::Roadmap;
 use crate::core::session::ReviewSession;
 
-/// Which screen is up. The ground rules and the vision interview join this
-/// in stages 7 and 8.
+/// Which screen is up. The vision interview joins this in stage 8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     /// The logo, where the project stands, and one obvious next step.
@@ -51,6 +53,8 @@ pub enum Screen {
     Review,
     /// A drafted artifact, read in full ([`super::document`]).
     Document,
+    /// The ground rules, one question at a time ([`super::foundation`]).
+    Foundation,
 }
 
 /// Which half of the new-change prompt is showing.
@@ -159,6 +163,10 @@ pub enum Target {
     DocButton(usize),
     /// Where the document's text is drawn — how its keys know what a page is.
     DocText,
+    /// A row of the ground rules' choice list.
+    GroundRow(usize),
+    /// The ground rules' one button: Begin, or Continue.
+    GroundButton,
 }
 
 /// Where each clickable thing was drawn last frame.
@@ -187,6 +195,8 @@ pub enum AfterEditor {
     Reparse { change: String },
     /// Read this document again.
     Document { change: String, artifact: String },
+    /// Re-read the ground rules.
+    Foundation,
 }
 
 pub(super) fn spawn<T: Send + 'static>(
@@ -196,13 +206,14 @@ pub(super) fn spawn<T: Send + 'static>(
     Effect::Spawn(Box::pin(async move { to_msg(work.await) }))
 }
 
-/// What happens after setup succeeds.
+/// Where setup was asked for. Either way it goes on to the ground rules;
+/// this is where a failure is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterSetup {
-    /// The start screen's Start: on to the overview.
+    /// The start screen's Start.
+    Home,
+    /// Opening the ground rules of a project that had none.
     Overview,
-    /// Setup was the first half of opening the ground rules.
-    GroundRules,
 }
 
 /// A result coming back from an [`Effect`].
@@ -276,6 +287,38 @@ pub enum Msg {
         result: Result<(), String>,
         then: AfterEditor,
     },
+    /// The ground-rule questions and the advisor's memory, re-read.
+    FoundationRead {
+        generation: u64,
+        questions: Vec<GuidedQuestion>,
+        meta: Meta,
+        /// Where the project stands, re-derived with them: the last answer
+        /// moves it past the ground rules.
+        stage: ProjectStage,
+    },
+    /// The advisor looked at the answer to the question `label` names.
+    Advised {
+        token: u64,
+        label: String,
+        result: Result<AfterAnswer, String>,
+    },
+    /// Options for a question were asked for.
+    Suggested {
+        label: String,
+        id: String,
+        result: Result<(), String>,
+    },
+    /// Help with a question came back.
+    Coached {
+        token: u64,
+        label: String,
+        result: Result<Coached, String>,
+    },
+    /// A follow-up was dismissed as not relevant.
+    Dismissed {
+        name: String,
+        removed: bool,
+    },
 }
 
 /// The newest request of each kind whose answer replaces state wholesale.
@@ -293,6 +336,8 @@ pub struct Latest {
     pub applied: u64,
     pub reparse: u64,
     pub doc: u64,
+    /// The newest read of the ground rules.
+    pub foundation: u64,
 }
 
 impl Latest {
@@ -361,6 +406,10 @@ pub struct App {
     pub latest: Latest,
     /// What stale reloads carried, for the reload that overtook them.
     pub carried: Carried,
+    /// The ground rules and the advisor's work on them, across visits.
+    pub ground: GroundRules,
+    /// The ground-rules screen, on [`Screen::Foundation`].
+    pub foundation: Option<FoundationScreen>,
 }
 
 impl App {
@@ -399,6 +448,11 @@ impl App {
             hits: Vec::new(),
             latest: Latest::default(),
             carried: Carried::default(),
+            ground: GroundRules {
+                note: ports.advisor_note(),
+                ..GroundRules::default()
+            },
+            foundation: None,
         };
         let jobs = app.read_jobs(ports, false);
         let first = app.reload(ports, None, None, None);
@@ -593,6 +647,7 @@ impl App {
             || self.home.busy.is_some()
             || self.prompt.as_ref().is_some_and(|p| p.naming)
             || (self.screen == Screen::Overview && self.running().is_some())
+            || self.ground_animating()
     }
 
     fn taken(&self) -> Vec<String> {
@@ -675,6 +730,7 @@ impl App {
             Screen::Overview => self.overview_key(ports, key),
             Screen::Review => self.review_key(ports, key),
             Screen::Document => self.document_key(ports, key),
+            Screen::Foundation => self.foundation_key(ports, key),
         }
     }
 
@@ -724,6 +780,7 @@ impl App {
             Target::JobRow(i) => self.select_job(ports, i),
             Target::DocButton(i) => self.press_doc(ports, i),
             Target::DocText => Vec::new(),
+            Target::GroundRow(_) | Target::GroundButton => self.foundation_click(ports, target),
         }
     }
 
@@ -806,30 +863,17 @@ impl App {
                 self.home.busy = None;
                 if let Err(reason) = result {
                     match then {
-                        AfterSetup::Overview => {
+                        AfterSetup::Home => {
                             self.home.error = Some(format!("Setup failed: {reason}"));
                         }
-                        AfterSetup::GroundRules => self.notice = Some(reason),
+                        AfterSetup::Overview => self.notice = Some(reason),
                     }
                     return Vec::new();
                 }
                 self.refresh_project(ports);
-                match then {
-                    AfterSetup::Overview => {
-                        self.screen = Screen::Overview;
-                        self.notice = Some(
-                            "Set up. Next, the ground rules — f opens the first question in \
-                             your editor."
-                                .to_owned(),
-                        );
-                        vec![self.reload(ports, None, None, None)]
-                    }
-                    AfterSetup::GroundRules => {
-                        let mut effects = vec![self.reload(ports, None, None, None)];
-                        effects.extend(self.open_foundation(ports));
-                        effects
-                    }
-                }
+                let mut effects = vec![self.reload(ports, None, None, None)];
+                effects.extend(self.open_after_setup(ports));
+                effects
             }
             Msg::Created { name, result } => match result {
                 Ok(()) => {
@@ -949,7 +993,26 @@ impl App {
                 AfterEditor::Document { change, artifact } => {
                     self.doc_edited(ports, result, change, artifact)
                 }
+                AfterEditor::Foundation => self.foundation_edited(ports, result),
             },
+            Msg::FoundationRead {
+                generation,
+                questions,
+                meta,
+                stage,
+            } => self.foundation_read(ports, generation, questions, meta, stage),
+            Msg::Advised {
+                token,
+                label,
+                result,
+            } => self.advised(ports, token, &label, result),
+            Msg::Suggested { label, id, result } => self.suggested(ports, &label, id, result),
+            Msg::Coached {
+                token,
+                label,
+                result,
+            } => self.coached(ports, token, &label, result),
+            Msg::Dismissed { name, removed } => self.dismissed(ports, &name, removed),
         }
     }
 
@@ -997,7 +1060,7 @@ impl App {
                 self.home.error = None;
                 vec![spawn(ports.setup(), |result| Msg::SetUp {
                     result,
-                    then: AfterSetup::Overview,
+                    then: AfterSetup::Home,
                 })]
             }
             HomeAction::ContinueGroundRules | HomeAction::GroundRules => {
@@ -1264,32 +1327,6 @@ impl App {
         )]
     }
 
-    /// `f`: the ground rules. Their own screen is stage 7; until then this
-    /// opens the next open question in `$EDITOR`, at its line, and the banner
-    /// counts what is answered when you come back. A project that adopted
-    /// OpenSpec before spec-tacular has no Foundation yet, and asking for it
-    /// is the moment to write the questions.
-    fn open_foundation(&mut self, ports: &dyn Ports) -> Vec<Effect> {
-        self.enter_overview();
-        let questions = ports.questions();
-        let Some(question) = questions
-            .iter()
-            .find(|q| !q.answered)
-            .or_else(|| questions.first())
-        else {
-            return vec![spawn(ports.setup(), |result| Msg::SetUp {
-                result,
-                then: AfterSetup::GroundRules,
-            })];
-        };
-        self.notice = None;
-        vec![Effect::Editor {
-            file: PathBuf::from(&question.item.file),
-            line: question.item.line,
-            then: AfterEditor::Reload { select: None },
-        }]
-    }
-
     // --- jobs -----------------------------------------------------------
 
     fn jobs_key(&mut self, ports: &dyn Ports, key: &KeyEvent) -> Vec<Effect> {
@@ -1407,7 +1444,7 @@ impl App {
     // --- reloading ------------------------------------------------------
 
     /// Re-reads what a first run moves through, from disk, after any step.
-    fn refresh_project(&mut self, ports: &dyn Ports) {
+    pub(super) fn refresh_project(&mut self, ports: &dyn Ports) {
         self.stage = ports.stage();
         self.greenfield = ports.greenfield();
         self.roadmap = ports.roadmap();

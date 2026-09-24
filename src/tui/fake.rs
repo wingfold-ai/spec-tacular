@@ -23,10 +23,13 @@ use super::ports::{jobs_view, promote, read_document, JobsView, PortFuture, Port
 use crate::adapter::types::{
     OpenSpecArtifact, OpenSpecArtifactPaths, OpenSpecArtifactStatus, OpenSpecChangeStatus,
 };
+use crate::core::advisor::{AfterAnswer, Ask, Coached, FoundationAdvisor, Meta};
 use crate::core::change_review::{load_change_review, spec_files_of, specs_artifact_id};
 use crate::core::concreteness::LintConfig;
 use crate::core::decisions::Decision;
-use crate::core::foundation::{guided_questions, scaffold_foundation, GuidedQuestion};
+use crate::core::foundation::{
+    answer_foundation, guided_questions, scaffold_foundation, GuidedQuestion,
+};
 use crate::core::guide::{project_stage, ProjectStage};
 use crate::core::jobs::{Job, JobStatus};
 use crate::core::mark::mark_example_in_file;
@@ -169,6 +172,8 @@ pub struct FakePorts {
     /// Drafts an agent "wrote", by `change/artifact`.
     pub docs: Mutex<BTreeMap<String, String>>,
     pub lint: LintConfig,
+    /// The advisor, with a scripted model behind it; `None` is no advisor.
+    pub advisor: Option<FoundationAdvisor>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -192,7 +197,15 @@ impl FakePorts {
             real: Mutex::default(),
             docs: Mutex::default(),
             lint: LintConfig::empty(),
+            advisor: None,
         }
+    }
+
+    /// With an advisor whose model is `ask` — the real `core::advisor`
+    /// writing real files, only the model pretend.
+    pub fn with_ask(mut self, ask: Ask) -> Self {
+        self.advisor = Some(FoundationAdvisor::new(self.path(), ask));
+        self
     }
 
     /// An existing project: it has baseline specs, so no vision step.
@@ -467,6 +480,12 @@ impl Ports for FakePorts {
         project_stage(self.dir.path(), lock(&self.changes).len())
     }
 
+    fn read_stage(&self) -> PortFuture<ProjectStage> {
+        let count = lock(&self.changes).len();
+        let root = self.path();
+        Box::pin(async move { project_stage(&root, count) })
+    }
+
     fn greenfield(&self) -> bool {
         is_greenfield(self.dir.path())
     }
@@ -475,10 +494,68 @@ impl Ports for FakePorts {
         load_roadmap(self.dir.path())
     }
 
-    fn questions(&self) -> Vec<GuidedQuestion> {
-        guided_questions(self.dir.path())
+    fn questions(&self) -> PortFuture<Vec<GuidedQuestion>> {
+        let root = self.path();
+        Box::pin(async move { guided_questions(&root) })
     }
 
+    fn answer(&self, question: &GuidedQuestion, text: &str) -> Result<(), String> {
+        answer_foundation(&question.item, text)
+    }
+
+    fn advisor_note(&self) -> Option<String> {
+        self.advisor
+            .is_none()
+            .then(|| "none in this test".to_owned())
+    }
+
+    fn advisor_meta(&self) -> PortFuture<Meta> {
+        let advisor = self.advisor.clone();
+        Box::pin(async move { advisor.map(|a| a.meta()).unwrap_or_default() })
+    }
+
+    fn after_answer(
+        &self,
+        question: &GuidedQuestion,
+        answer: &str,
+    ) -> PortFuture<Result<AfterAnswer, String>> {
+        let advisor = self.advisor.clone();
+        let question = question.clone();
+        let answer = answer.to_owned();
+        Box::pin(async move {
+            match advisor {
+                Some(advisor) => advisor.after_answer(&question, &answer).await,
+                None => Ok(AfterAnswer::default()),
+            }
+        })
+    }
+
+    fn suggest(&self, question: &GuidedQuestion) -> PortFuture<Result<(), String>> {
+        let advisor = self.advisor.clone();
+        let question = question.clone();
+        Box::pin(async move {
+            match advisor {
+                Some(advisor) => advisor.suggest(&question).await,
+                None => Ok(()),
+            }
+        })
+    }
+
+    fn coach(&self, question: &GuidedQuestion) -> PortFuture<Result<Coached, String>> {
+        let advisor = self.advisor.clone();
+        let question = question.clone();
+        Box::pin(async move {
+            match advisor {
+                Some(advisor) => advisor.coach(&question).await,
+                None => Ok(Coached::default()),
+            }
+        })
+    }
+
+    fn dismiss(&self, question: &GuidedQuestion) -> PortFuture<bool> {
+        let removed = self.advisor.as_ref().is_some_and(|a| a.dismiss(question));
+        Box::pin(async move { removed })
+    }
     fn setup(&self) -> PortFuture<Result<(), String>> {
         let root = self.path();
         Box::pin(async move {

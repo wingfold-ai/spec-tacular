@@ -12,6 +12,7 @@ use ratatui::Frame;
 
 use super::app::{change_warnings, App, Hits, PromptStep, Screen, Target};
 use super::document::render_document;
+use super::foundation::render_foundation;
 use super::guide::{first_change_lines, help_lines};
 use super::home::render_home;
 use super::jobs::{render_job_pane, summarize_jobs};
@@ -59,6 +60,7 @@ pub fn render(app: &App, frame: &mut Frame<'_>) -> Hits {
     match app.screen {
         Screen::Review => render_review(frame, body, app),
         Screen::Document => render_document(frame, body, app, &mut hits),
+        Screen::Foundation => render_foundation(frame, body, app, &mut hits),
         Screen::Home | Screen::Overview => render_overview(frame, body, app, &mut hits),
     }
     hits
@@ -84,6 +86,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .doc
             .as_ref()
             .map(|d| format!(" › {} › {}", d.change, d.artifact)),
+        Screen::Foundation => Some(" › ground rules".to_owned()),
         Screen::Home | Screen::Overview => None,
     }
     .unwrap_or_default();

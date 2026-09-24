@@ -12,10 +12,15 @@
 //!   the suites of the same names;
 //! - [`concurrency_e2e`] — its review half: a job keeps running while
 //!   decisions are made;
-//! - [`draft`] — `vision-e2e`'s "an agent's draft".
+//! - [`draft`] — `vision-e2e`'s "an agent's draft";
+//! - [`ground_rules`] — `onboarding-e2e`'s "the ground rules", with the
+//!   advisor's model scripted, and [`ground_rules_screen`] — each of its
+//!   states, drawn.
 
 mod concurrency_e2e;
 mod draft;
+mod ground_rules;
+mod ground_rules_screen;
 mod promote_e2e;
 mod review_e2e;
 mod review_lint;
@@ -247,13 +252,13 @@ impl Ui {
         );
     }
 
-    /// Setup done, every ground rule answered, and back from the editor —
+    /// Setup done, every ground rule answered, and back on the overview —
     /// a project ready for its first change.
     pub(super) fn ready_for_first_change(ports: FakePorts) -> Self {
         let mut ui = Self::mount(ports);
-        ui.press(KeyCode::Enter); // Start
+        ui.press(KeyCode::Enter); // Start: on to the ground rules
         ui.ports.settle_ground_rules();
-        ui.char('f'); // the editor opens, and closes again
+        ui.ctrl('c'); // leave them, answered behind the screen's back
         ui
     }
 

@@ -10,7 +10,8 @@
 //!
 //! - [`app`] holds the state and turns events into state changes and
 //!   [`app::Effect`]s — work to spawn, or the editor to run;
-//! - [`view`] (with [`home`], [`review`], [`document`] and [`jobs`]) draws a
+//! - [`view`] (with [`home`], [`foundation`], [`review`], [`document`] and
+//!   [`jobs`]) draws a
 //!   frame from `&App`;
 //! - [`ports`] is everything the app needs from the world, as a trait, with
 //!   the real implementation over `commands`/`adapter` and a fake for tests;
@@ -25,6 +26,7 @@ pub mod document;
 pub mod editor;
 #[cfg(test)]
 mod fake;
+pub mod foundation;
 pub mod guide;
 pub mod home;
 pub mod input;
