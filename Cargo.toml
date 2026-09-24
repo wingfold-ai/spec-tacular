@@ -24,7 +24,7 @@ serde_json = "1.0.151"
 serde_yml = "0.0.13"
 sha2 = "0.11.0"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["rt", "macros", "process", "io-util", "sync", "time"] }
 
 [dev-dependencies]
 # Temp directories for the file-I/O tests. Pure Rust, like everything else.
