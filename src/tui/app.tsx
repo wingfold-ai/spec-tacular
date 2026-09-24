@@ -11,6 +11,7 @@
 
 import { render, useKeyboard, useRenderer } from '@opentui/solid';
 import { createMemo, createSignal, For, Show } from 'solid-js';
+import { staleArtifacts } from '../core/gate.ts';
 import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
 import {
   decide,
@@ -89,6 +90,11 @@ function ChangeRow(props: { pipeline: ChangePipeline; selected: boolean }) {
       </Show>
       <Show when={(specs()?.drifted ?? 0) > 0}>
         <text style={{ fg: THEME.warn }}>{`  ! ${specs()!.drifted} changed`}</text>
+      </Show>
+      <Show when={staleArtifacts(props.pipeline).length > 0}>
+        <text style={{ fg: THEME.warn }}>
+          {`  ! ${staleArtifacts(props.pipeline).map((s) => s.artifact).join(', ')} may be stale`}
+        </text>
       </Show>
       <Show when={props.pipeline.gaps.length > 0}>
         <text style={{ fg: THEME.warn }}>{`  ? ${props.pipeline.gaps.length} prereq gap`}</text>
