@@ -77,8 +77,8 @@ reviewable on its own.
 | # | Branch | Contents |
 | --- | --- | --- |
 | 1 | `rust/01-skeleton` | Cargo project, CLI parsing, docs, `--help` |
-| 2 | `rust/02-core` | markdown/requirement parsing, review state and drift, session, pipeline, gate, linter |
-| 3 | `rust/03-adapter` | OpenSpec adapter, context bundle, foundation, decisions/ADRs, init, `--print` overview, `instructions`/`foundation`/`adr` |
+| 2 | `rust/02-core` | markdown/requirement parsing, review state and drift, session, revision bundle, pipeline, gate, concreteness linter, foundation, decisions/ADRs, requirement rendering |
+| 3 | `rust/03-adapter` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
 | 4 | `rust/04-jobs` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
 | 5 | `rust/05-tui` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane (ctrl+c never quits) |
 | 6 | `rust/06-review` | TUI review screen, document viewer, editor integration |
@@ -188,3 +188,12 @@ The TypeScript tests are not translated mechanically. Each stage brings its own
 Rust tests for the behaviour it lands, written against the same cases the
 TypeScript suite covers, because a test suite ported without being re-read
 tends to encode the old implementation rather than the requirement.
+
+One suite is the exception, and it is generated rather than written:
+`core/compat.rs` pins the requirement ids, the scenario splits, the `sha256:`
+hashes and the review sidecar's bytes against values produced by *running* the
+TypeScript implementation over `tests/fixtures/`. Agreeing about what a
+requirement is and what its hash is are correctness requirements — a hash that
+differs by one byte marks every requirement in a project as changed since it
+was accepted — so those expectations are taken from the reference rather than
+restated by hand. When one of them fails, the Rust side is wrong.

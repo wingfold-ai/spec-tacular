@@ -12,6 +12,11 @@
 pub mod advisor;
 pub mod archive;
 pub mod change_review;
+/// The cross-implementation compatibility suite. Tests only: it proves the
+/// parser, the hasher and the sidecar writer agree with the TypeScript
+/// original, which is what lets a repository be opened by either.
+#[cfg(test)]
+mod compat;
 pub mod concreteness;
 pub mod context;
 pub mod decisions;
