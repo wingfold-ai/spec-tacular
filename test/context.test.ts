@@ -114,7 +114,7 @@ describe('buildPrompt', () => {
   });
 
   test('is just the instructions when there is no context at all', () => {
-    const empty = { foundation: [], decisions: [], accepted: [], deferred: [], missing: [] };
+    const empty = { vision: '', foundation: [], decisions: [], accepted: [], deferred: [], missing: [] };
     expect(buildPrompt(empty, 'ONLY THIS')).toBe('ONLY THIS');
   });
 });

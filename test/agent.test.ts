@@ -11,6 +11,10 @@ describe('claude driver', () => {
     // stream-json requires --verbose; without it the CLI refuses to start,
     // which would look like a driver bug rather than a missing flag.
     expect(built.args).toContain('--verbose');
+    // Without it, a headless agent's every write is denied and it prints the
+    // artifact instead of writing it.
+    expect(built.args[built.args.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
+    expect(built.args).toContain('Bash(openspec list:*)');
   });
 
   test('passes the prompt as one argv entry, never interpolated', () => {

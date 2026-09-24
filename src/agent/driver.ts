@@ -14,6 +14,8 @@ export interface AgentRequest {
   cwd: string;
 }
 
+export type StructuredMode = 'research' | 'think' | 'quick';
+
 export interface AgentCommand {
   command: string;
   args: string[];
@@ -30,6 +32,20 @@ export interface AgentDriver {
    * Agents emit a lot of protocol noise that nobody wants tailing past.
    */
   formatLine(line: string): string | null;
+  /**
+   * A one-shot request answered as JSON matching `schema` — for the advisor,
+   * not for writing artifacts. Optional: a driver without it simply means no
+   * AI suggestions during setup.
+   */
+  structured?: {
+    /**
+     * `research` may look things up on the web (current versions); `think`
+     * reasons with no tools; `quick` is a small offline task on a fast model.
+     */
+    build(request: AgentRequest & { schema: object; mode?: StructuredMode }): AgentCommand;
+    /** The structured value from the command's stdout; throws on failure. */
+    parse(stdout: string): unknown;
+  };
 }
 
 /** Passes stdout through unchanged. The right default for a plain-text agent. */
