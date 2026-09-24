@@ -33,10 +33,15 @@ overview also works over a pipe and in CI.
 
 ## Status
 
-**M0 and M2 done**, M1 mostly. Reads a real OpenSpec project, parses every
-requirement, tracks acceptance in a sidecar, and detects drift when a reviewed
-requirement is edited afterwards. The review *loop* (accepting things from the
-TUI) is M3 — until then state is set programmatically.
+**M0–M3 done** (M1 mostly). The review loop works: open a change, walk its
+requirements one at a time, and `a`ccept / `r`eject / `d`efer / `e`dit each one
+from the keyboard. Decisions persist immediately, drift is detected when a
+reviewed requirement is edited afterwards, and reopening resumes where you
+stopped.
+
+Verified against the largest change in the OpenSpec repo — 26 requirements,
+reviewed end to end by keystroke in tests that assert on the real rendered
+terminal frame.
 
 The plan:
 
@@ -57,4 +62,4 @@ Source layout:
 | `src/adapter/` | The only module that knows OpenSpec exists. Reads its `--json` CLI; never writes a file OpenSpec owns. |
 | `src/core/` | Pure domain logic — requirement parsing, review state, drift detection, stage derivation. Schema-agnostic and terminal-free. |
 | `src/render/` | Headless text rendering, so the overview is testable and pipe-friendly. |
-| `src/tui/` | OpenTUI + Solid shell. Deliberately thin. |
+| `src/tui/` | OpenTUI + Solid screens. Deliberately thin — they draw, `core/` decides. |
