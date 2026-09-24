@@ -46,6 +46,7 @@ import {
   answerFoundation,
   foundationDir,
   guidedQuestions,
+  isDeferred,
   isUnanswered,
   loadFoundation,
   scaffoldFoundation,
@@ -472,17 +473,19 @@ function runFoundation(args: Args): number {
   }
 
   const unanswered = items.filter(isUnanswered);
+  const deferred = items.filter(isDeferred);
   let group = '';
   for (const item of items) {
     if (item.capability !== group) {
       group = item.capability;
       process.stdout.write(`\n${group}\n`);
     }
-    process.stdout.write(`  ${isUnanswered(item) ? '○' : '●'} ${item.name}\n`);
+    process.stdout.write(`  ${isUnanswered(item) ? '○' : isDeferred(item) ? '◌' : '●'} ${item.name}\n`);
   }
 
   process.stdout.write(
-    `\n${items.length - unanswered.length}/${items.length} answered\n`,
+    `\n${items.length - unanswered.length - deferred.length}/${items.length - deferred.length} answered` +
+      `${deferred.length > 0 ? `, ${deferred.length} left for later (◌)` : ''}\n`,
   );
   if (unanswered.length > 0) {
     // Not an error: a half-answered Foundation is a normal state to be in
@@ -686,7 +689,7 @@ async function setUpProject(
   try {
     if (!isOpenSpecProject(root)) await adapter.init();
     if (!schemaInstalled(root)) initProject(root);
-    else scaffoldFoundation(root);
+    else scaffoldFoundation(root, { defer: isGreenfield(root) });
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: describeError(err) };

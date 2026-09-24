@@ -162,7 +162,7 @@ describe('presets in the Foundation', () => {
 
     // The presets stay where the developer expects them; the advisor's own
     // follow-up comes after them.
-    const names = guidedQuestions(r).map((q) => q.item.name);
+    const names = guidedQuestions(r).filter((q) => q.title === 'Stack').map((q) => q.item.name);
     expect(names.slice(0, 4)).toEqual([
       'Language and runtime, with versions.',
       'Which Rust edition, and the minimum supported Rust version (MSRV)?',

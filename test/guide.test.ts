@@ -106,26 +106,55 @@ describe('where a project is', () => {
 });
 
 describe('the guided questions', () => {
-  test('are asked stack, domain, architecture, conventions — with hints', () => {
+  test('are asked domain first, then stack, architecture, conventions — with hints', () => {
     const r = root();
     scaffoldFoundation(r);
     const qs = guidedQuestions(r);
     expect([...new Set(qs.map((q) => q.title))]).toEqual([
-      'Stack', 'Domain', 'Architecture', 'Conventions',
+      'Domain', 'Stack', 'Architecture', 'Conventions',
     ]);
+    expect(qs[0]!.item.name).toBe('What the system is for, and who uses it.');
     expect(qs.every((q) => q.hint !== '' && !q.answered)).toBe(true);
     expect(qs.find((q) => q.title === 'Architecture')!.hint).toContain('Clean architecture');
+  });
+
+  test('an existing project is asked every question; a new one only what it can answer on day one', () => {
+    const existing = root();
+    scaffoldFoundation(existing);
+    expect(guidedQuestions(existing)).toHaveLength(19);
+
+    const fresh = withOpenSpec();
+    scaffoldFoundation(fresh, { defer: true });
+    const qs = guidedQuestions(fresh);
+    // One question asked cold — the idea — and ten proposed from it.
+    expect(qs.map((q) => [q.item.name, q.derive])).toEqual([
+      ['What the system is for, and who uses it.', false],
+      ['The core terms, each with a one-line meaning.', true],
+      ['Language and runtime, with versions.', true],
+      ['Framework, if any, and why it over the alternatives.', true],
+      ['Datastore and how schema changes are managed.', true],
+      ['Package manager, test runner, linter, formatter.', true],
+      ['Architecture style (layered, hexagonal, vertical slice, ...) and why.', true],
+      ['The layers or modules, and which may depend on which.', true],
+      ['Where business rules live, and what must never leak into them.', true],
+      ['Naming: files, types, functions, tests.', true],
+      ['What a test must cover before a change is considered done.', true],
+    ]);
+    // The rest are in the files, saying they are left for later.
+    const domain = readFileSync(join(foundationDir(fresh), 'domain.md'), 'utf8');
+    expect(domain).toContain('## Rules about the domain that must always hold.\n\nDecide later');
+    expect(projectStage(fresh, 0)).toEqual({ kind: 'foundation', answered: 0, total: 11 });
   });
 
   test('an answer replaces the placeholder and nothing else', () => {
     const r = root();
     scaffoldFoundation(r);
-    const [first, second] = guidedQuestions(r);
+    const [first, second] = guidedQuestions(r).filter((q) => q.title === 'Stack');
     expect(answerFoundation(first!.item, 'TypeScript 5.6 on Bun 1.4')).toEqual({ ok: true });
 
     const file = readFileSync(join(foundationDir(r), 'stack.md'), 'utf8');
     expect(file).toContain('## Language and runtime, with versions.\n\nTypeScript 5.6 on Bun 1.4\n\n## Framework');
-    const after = guidedQuestions(r);
+    const after = guidedQuestions(r).filter((q) => q.title === 'Stack');
     expect(after[0]!.answered).toBe(true);
     expect(after[1]!.item.name).toBe(second!.item.name);
     expect(after[1]!.answered).toBe(false);
@@ -134,8 +163,9 @@ describe('the guided questions', () => {
   test('re-answering replaces the previous answer', () => {
     const r = root();
     scaffoldFoundation(r);
-    answerFoundation(guidedQuestions(r)[0]!.item, 'Python');
-    answerFoundation(guidedQuestions(r)[0]!.item, 'Go 1.23');
+    const lang = () => guidedQuestions(r).find((q) => q.item.name.startsWith('Language'))!;
+    answerFoundation(lang().item, 'Python');
+    answerFoundation(lang().item, 'Go 1.23');
     const file = readFileSync(join(foundationDir(r), 'stack.md'), 'utf8');
     expect(file).toContain('Go 1.23');
     expect(file).not.toContain('Python');
@@ -150,7 +180,7 @@ describe('the guided questions', () => {
   test('a question removed from the file since it was read is refused', () => {
     const r = root();
     scaffoldFoundation(r);
-    const q = guidedQuestions(r)[0]!;
+    const q = guidedQuestions(r).find((x) => x.title === 'Stack')!;
     writeFileSync(q.item.file, '# Stack\n\n## Something else\n\nTBD\n');
     expect(answerFoundation(q.item, 'Bun').ok).toBe(false);
   });
