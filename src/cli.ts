@@ -17,6 +17,9 @@ import {
   type ReviewByArtifact,
 } from './core/pipeline.ts';
 import { loadChangeReview, specFilesOf, specsArtifactId } from './core/change-review.ts';
+import { openSession, type ReviewSession } from './core/session.ts';
+import { saveReview } from './core/review.ts';
+import type { OpenSpecChangeStatus } from './adapter/types.ts';
 import { renderOverview } from './render/text.ts';
 
 interface Args {
@@ -53,8 +56,13 @@ Options:
 async function loadPipelines(
   adapter: OpenSpecAdapter,
   projectRoot: string,
-): Promise<{ pipelines: ChangePipeline[]; failed: string[] }> {
+): Promise<{
+  pipelines: ChangePipeline[];
+  failed: string[];
+  statuses: Map<string, OpenSpecChangeStatus>;
+}> {
   const { changes, failed } = await adapter.statusAll();
+  const statuses = new Map(changes.map((c) => [c.changeName, c]));
 
   const pipelines = changes.map((status) => {
     const reviews: Record<string, ReviewByArtifact[string]> = {};
@@ -68,7 +76,7 @@ async function loadPipelines(
     return buildPipeline(status, reviews);
   });
 
-  return { pipelines: sortByProgress(pipelines), failed };
+  return { pipelines: sortByProgress(pipelines), failed, statuses };
 }
 
 async function main(): Promise<number> {
@@ -91,7 +99,7 @@ async function main(): Promise<number> {
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
   try {
-    const { pipelines, failed } = await loadPipelines(adapter, args.cwd);
+    const { pipelines, failed, statuses } = await loadPipelines(adapter, args.cwd);
 
     if (args.print || !process.stdout.isTTY) {
       process.stdout.write(
@@ -108,7 +116,31 @@ async function main(): Promise<number> {
     // so a headless environment can run the text path even if the TUI's
     // native dependencies are unavailable.
     const { startTui } = await import('./tui/app.tsx');
-    await startTui({ pipelines, failed, root: args.cwd });
+
+    const queueFor = (change: string) => {
+      const status = statuses.get(change);
+      if (!status || specFilesOf(status).length === 0) return null;
+      return loadChangeReview(args.cwd, status);
+    };
+
+    await startTui({
+      pipelines,
+      failed,
+      root: args.cwd,
+      openReview: (change): ReviewSession | null => {
+        const queue = queueFor(change);
+        if (!queue) return null;
+        return openSession(
+          change,
+          queue.requirements.map((r) => r.requirement),
+          queue.review,
+        );
+      },
+      saveSession: (session) => saveReview(args.cwd, session.review),
+      reparse: (change) =>
+        queueFor(change)?.requirements.map((r) => r.requirement) ?? [],
+      reloadPipelines: async () => (await loadPipelines(adapter, args.cwd)).pipelines,
+    });
     return 0;
   } catch (err) {
     if (err instanceof OpenSpecError) {
