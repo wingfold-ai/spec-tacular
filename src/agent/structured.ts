@@ -52,10 +52,14 @@ function runOnce(
   timeoutMs: number,
 ): Promise<unknown> {
   const structured = driver.structured!;
-  const { command, args } = structured.build({ prompt, cwd, schema, mode });
+  const { command, args, env } = structured.build({ prompt, cwd, schema, mode });
 
   return new Promise((resolve, reject) => {
-    const child = adopt(spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const child = adopt(spawn(command, args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: env ? { ...process.env, ...env } : process.env,
+    }));
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {

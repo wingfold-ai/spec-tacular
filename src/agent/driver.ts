@@ -19,6 +19,8 @@ export type StructuredMode = 'research' | 'think' | 'quick';
 export interface AgentCommand {
   command: string;
   args: string[];
+  /** Added to the environment it runs in. */
+  env?: Record<string, string>;
 }
 
 export interface AgentDriver {

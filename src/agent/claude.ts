@@ -33,6 +33,16 @@ function extraArgs(): string[] {
   return (process.env['SPECTACULAR_CLAUDE_ARGS'] ?? '').split(/\s+/).filter(Boolean);
 }
 
+/**
+ * Extended thinking, off unless asked for. It is most of what an advisor
+ * request costs in time: measured on one follow-up with haiku, 3,500 output
+ * tokens and 39 s with it, 490 tokens and 7 s without — for options of the
+ * same quality. SPECTACULAR_ADVISOR_THINKING=1 turns it back on.
+ */
+function structuredEnv(): Record<string, string> | undefined {
+  return process.env['SPECTACULAR_ADVISOR_THINKING'] ? undefined : { MAX_THINKING_TOKENS: '0' };
+}
+
 /** Model, tools and schema for a structured request, one-shot or session. */
 function structuredFlags(schema: object, mode: StructuredMode = 'research'): string[] {
   return [
@@ -90,6 +100,7 @@ export class StreamJsonSession implements StructuredSession {
     const child = spawn(this.command.command, this.command.args, {
       cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: this.command.env ? { ...process.env, ...this.command.env } : process.env,
     });
     adopt(child);
     this.child = child;
@@ -210,6 +221,7 @@ export const claudeDriver: AgentDriver = {
       return {
         command: 'claude',
         args: ['-p', request.prompt, '--output-format', 'json', ...structuredFlags(request.schema, request.mode)],
+        env: structuredEnv(),
       };
     },
     parse(stdout: string): unknown {
@@ -240,6 +252,7 @@ export const claudeDriver: AgentDriver = {
             '--verbose',
             ...structuredFlags(schema, mode),
           ],
+          env: structuredEnv(),
         },
         cwd,
       );

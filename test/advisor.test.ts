@@ -257,6 +257,19 @@ describe('reaching the model', () => {
     expect(args).toContain('--strict-mcp-config');
   });
 
+  test('claude answers without extended thinking unless asked to', () => {
+    const saved = process.env['SPECTACULAR_ADVISOR_THINKING'];
+    try {
+      delete process.env['SPECTACULAR_ADVISOR_THINKING'];
+      expect(claudeDriver.structured!.build({ prompt: 'P', cwd: '/', schema: {} }).env).toEqual({ MAX_THINKING_TOKENS: '0' });
+      process.env['SPECTACULAR_ADVISOR_THINKING'] = '1';
+      expect(claudeDriver.structured!.build({ prompt: 'P', cwd: '/', schema: {} }).env).toBeUndefined();
+    } finally {
+      if (saved === undefined) delete process.env['SPECTACULAR_ADVISOR_THINKING'];
+      else process.env['SPECTACULAR_ADVISOR_THINKING'] = saved;
+    }
+  });
+
   test('claude’s structured output is unwrapped, and its errors surface', () => {
     const parse = claudeDriver.structured!.parse;
     expect(parse(JSON.stringify({ structured_output: { a: 1 } }))).toEqual({ a: 1 });
