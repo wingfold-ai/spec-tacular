@@ -25,7 +25,10 @@ import {
   type GuidedQuestion,
 } from './foundation.ts';
 import { buildCodeFenceMask, normalizeContent, SECTION_HEADER } from './markdown.ts';
+import { matchPresets } from './presets.ts';
 import { slugify } from './requirements.ts';
+import type { StructuredMode } from '../agent/driver.ts';
+import { renderPrompt, type ContextSection, type PromptParts } from '../agent/prompt.ts';
 
 export interface AdviceOption {
   /** The answer itself, as it would be written: `uv`, `3.14`. */
@@ -84,6 +87,11 @@ export interface QuestionMeta {
   derived?: { answer: string; reason: string };
   /** Plain-words explanation, from asking for help. */
   explain?: string;
+  /**
+   * The question or its options came from the preset table, instantly, and
+   * the advisor has not refined them yet.
+   */
+  preset?: boolean;
 }
 
 /** How far follow-ups may nest. Past this, an answer is detailed enough. */
@@ -150,46 +158,90 @@ export interface AdviceRequest {
   answered?: { question: GuidedQuestion; answer: string; depth: number };
   /** The question to propose options for, if any. */
   upcoming?: GuidedQuestion;
+  /** Options already shown for `upcoming` from the preset table, to improve on. */
+  upcomingOptions?: AdviceOption[];
 }
 
-/** What every advisor prompt starts with: the project as decided so far. */
-function preamble(questions: GuidedQuestion[]): string[] {
-  const decided = questions
-    .filter((q) => q.answered)
-    .map((q) => `- [${q.title}] ${q.item.name}\n  ${q.item.text.replace(/\n+/g, ' ')}`);
-  const open = questions
-    .filter((q) => !q.answered)
-    .map((q) => `- [${q.title}] ${q.item.name}`);
+// ---------------------------------------------------------------------------
+// Research or think
+
+/**
+ * Questions where current facts matter: which release is latest, which tool
+ * the ecosystem has moved to. Everything in the Stack document, and anything
+ * elsewhere that names tooling.
+ */
+const LOOKUP = /\b(versions?|runtimes?|frameworks?|librar(y|ies)|packages?|dependenc(y|ies)|tool(s|ing)?|sdks?|test runner|linter|formatter|datastore|database|orm|migrations?|build)\b/i;
+
+export function needsLookup(question: GuidedQuestion): boolean {
+  return question.title === 'Stack' || LOOKUP.test(question.item.name);
+}
+
+/**
+ * Web search only when a request touches such a question. It is what makes a
+ * research request slow — a search round-trip per lookup — and most ground
+ * rules (domain terms, layering, review rules) have nothing to look up.
+ */
+export function adviceMode(request: AdviceRequest): StructuredMode {
+  const { answered, upcoming } = request;
+  if (answered && answered.depth < MAX_DEPTH && needsLookup(answered.question)) return 'research';
+  if (upcoming && needsLookup(upcoming)) return 'research';
+  return 'think';
+}
+
+// ---------------------------------------------------------------------------
+// Prompts
+
+const INTRO = [
+  'You are helping a developer settle the ground rules of a software project',
+  'before any code is written: its stack, domain, architecture and conventions.',
+  'Every coding agent that works on the project later reads these answers.',
+].join('\n');
+
+/** The project as decided so far: what a session is sent only changes of. */
+function projectContext(questions: GuidedQuestion[]): ContextSection[] {
   return [
-    'You are helping a developer settle the ground rules of a software project',
-    'before any code is written: its stack, domain, architecture and conventions.',
-    'Every coding agent that works on the project later reads these answers.',
-    '',
-    'Decided so far:',
-    ...(decided.length > 0 ? decided : ['(nothing yet)']),
-    '',
-    'Still open (never ask these again):',
-    ...(open.length > 0 ? open : ['(none)']),
-    '',
+    {
+      heading: 'Decided so far',
+      lines: questions
+        .filter((q) => q.answered)
+        .map((q) => `- [${q.title}] ${q.item.name}\n  ${q.item.text.replace(/\n+/g, ' ')}`),
+      empty: '(nothing yet)',
+    },
+    {
+      heading: 'Still open (never ask these again)',
+      lines: questions.filter((q) => !q.answered).map((q) => `- [${q.title}] ${q.item.name}`),
+      empty: '(none)',
+    },
   ];
 }
 
-const OPTION_RULES = [
-  `Options: 2 to ${MAX_OPTIONS}, best first, exactly one with recommended: true. A label is`,
-  'the literal answer, short (for example "uv", "3.14", "pytest"); the detail is one',
-  'line on why or the trade-off. Prefer what is current state of the art. For',
-  'versions, recommend the most recent stable release — look it up with web search',
-  'rather than relying on memory, and never propose a pre-release. A question\'s',
-  '"ask" is the question text alone, with no [Section] prefix; its "why" says in',
-  'one line what depends on the decision. Keep every detail under 70 characters.',
-];
+/** How options are written. Only research may name versions: it looks them up. */
+function optionRules(mode: StructuredMode): string {
+  return [
+    `Options: 2 to ${MAX_OPTIONS}, best first, exactly one with recommended: true. A label is`,
+    'the literal answer, short (for example "uv", "3.14", "pytest"); the detail is one',
+    'line on why or the trade-off. Prefer what is current state of the art.',
+    ...(mode === 'research'
+      ? [
+          'For versions, recommend the most recent stable release — look it up with',
+          'web search rather than relying on memory, and never propose a pre-release.',
+        ]
+      : [
+          'You cannot look anything up here, so never propose a specific version number;',
+          'a question that needs one is asked where it can be looked up.',
+        ]),
+    'A question\'s "ask" is the question text alone, with no [Section] prefix; its',
+    '"why" says in one line what depends on the decision. Keep every detail under 70',
+    'characters.',
+  ].join('\n');
+}
 
-export function buildAdvicePrompt(request: AdviceRequest): string {
-  const lines = preamble(request.questions);
+export function buildAdviceParts(request: AdviceRequest, mode = adviceMode(request)): PromptParts {
+  const task: string[] = [];
 
   if (request.answered) {
     const { question, answer, depth } = request.answered;
-    lines.push(
+    task.push(
       `Just answered — [${question.title}] ${question.item.name}`,
       `Answer: ${answer}`,
       '',
@@ -201,27 +253,33 @@ export function buildAdvicePrompt(request: AdviceRequest): string {
             'without a version; a language without its package manager, test runner or',
             'linter; a datastore without its migration tool; an architecture style without',
             'where its boundaries sit. Return an empty list when the answer is already',
-            `specific enough. At most ${MAX_FOLLOW_UPS}. Never repeat a question listed above.`,
+            `specific enough. At most ${MAX_FOLLOW_UPS}. Never repeat a question listed as open.`,
           ].join('\n'),
       '',
     );
   } else {
-    lines.push('followUps: return an empty list.', '');
+    task.push('followUps: return an empty list.', '');
   }
 
   if (request.upcoming) {
-    lines.push(
+    task.push(
       `upcoming: options for the next question — [${request.upcoming.title}] ${request.upcoming.item.name}`,
       'consistent with everything decided so far. Return an empty list when only the',
       'developer can answer it: the project\'s purpose, its domain terms, its rules,',
       'what is out of scope, or anything about their team.',
-      '',
     );
+    if (request.upcomingOptions && request.upcomingOptions.length > 0) {
+      task.push(
+        `Generic options are shown for it already: ${request.upcomingOptions.map((o) => o.label).join('; ')}.`,
+        'Return better ones for this project where you can, or these same ones.',
+      );
+    }
+    task.push('');
   } else {
-    lines.push('upcoming: return an empty list.', '');
+    task.push('upcoming: return an empty list.', '');
   }
 
-  lines.push(
+  task.push(
     'derived: for questions listed under "Still open" whose answer already follows',
     'from what is decided — stated outright or clearly implied — propose that answer.',
     'Examples: "uv" decided for packages implies nothing about tests, but "pytest via',
@@ -229,32 +287,48 @@ export function buildAdvicePrompt(request: AdviceRequest): string {
     'Copy the question text exactly, give the answer as it would be written, and a',
     'one-line reason naming the earlier answer it comes from. Only when confident;',
     'the developer confirms each one. Return an empty list otherwise.',
-    '',
   );
 
-  lines.push(...OPTION_RULES);
-  return lines.join('\n');
+  return { preamble: INTRO, context: projectContext(request.questions), task: task.join('\n'), rules: optionRules(mode) };
+}
+
+export function buildAdvicePrompt(request: AdviceRequest): string {
+  return renderPrompt(buildAdviceParts(request));
+}
+
+export function coachMode(question: GuidedQuestion): StructuredMode {
+  return needsLookup(question) ? 'research' : 'think';
 }
 
 /** For a question the developer does not know how to answer. */
+export function buildCoachParts(
+  questions: GuidedQuestion[],
+  question: GuidedQuestion,
+  mode = coachMode(question),
+): PromptParts {
+  return {
+    preamble: INTRO,
+    context: projectContext(questions),
+    task: [
+      `The developer does not know how to answer — [${question.title}] ${question.item.name}`,
+      '',
+      'explain: in two or three short sentences of plain words, what this question is',
+      'asking and what later depends on it. No jargon without saying what it means.',
+      '',
+      'examples: concrete answers that would fit THIS project given what is decided,',
+      'as options to pick from or adapt.',
+      '',
+      'probes: up to 3 simpler questions — ones a developer can answer from what they',
+      'want the project to do, without knowing the technical term — whose answers',
+      'would let you settle this question for them. Each with options. Return an',
+      'empty list when the examples alone are enough to choose from.',
+    ].join('\n'),
+    rules: optionRules(mode),
+  };
+}
+
 export function buildCoachPrompt(questions: GuidedQuestion[], question: GuidedQuestion): string {
-  return [
-    ...preamble(questions),
-    `The developer does not know how to answer — [${question.title}] ${question.item.name}`,
-    '',
-    'explain: in two or three short sentences of plain words, what this question is',
-    'asking and what later depends on it. No jargon without saying what it means.',
-    '',
-    'examples: concrete answers that would fit THIS project given what is decided,',
-    'as options to pick from or adapt.',
-    '',
-    'probes: up to 3 simpler questions — ones a developer can answer from what they',
-    'want the project to do, without knowing the technical term — whose answers',
-    'would let you settle this question for them. Each with options. Return an',
-    'empty list when the examples alone are enough to choose from.',
-    '',
-    ...OPTION_RULES,
-  ].join('\n');
+  return renderPrompt(buildCoachParts(questions, question));
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -420,8 +494,18 @@ export function removeQuestion(question: GuidedQuestion): boolean {
 // ---------------------------------------------------------------------------
 // The advisor
 
-/** Sends a prompt, returns the model's structured output. */
-export type Ask = (prompt: string, schema: object) => Promise<unknown>;
+export interface AskOptions {
+  /** Whether it may search the web; see `adviceMode`. */
+  mode?: StructuredMode;
+  /** The prompt in parts, for a session that has seen most of it already. */
+  parts?: PromptParts;
+}
+
+/**
+ * Sends a prompt, returns the model's structured output. `prompt` is always
+ * complete on its own; `options.parts` only lets a session send less.
+ */
+export type Ask = (prompt: string, schema: object, options?: AskOptions) => Promise<unknown>;
 
 export class FoundationAdvisor {
   constructor(
@@ -457,6 +541,51 @@ export class FoundationAdvisor {
   }
 
   /**
+   * Writes the model's options for a question — unless it was answered while
+   * the model was thinking, which settles it. Options that came back empty
+   * never replace the preset table's: something to pick beats nothing.
+   */
+  private offer(id: string, options: AdviceOption[]): void {
+    const now = guidedQuestions(this.projectRoot).find((q) => q.item.id === id);
+    if (!now || now.answered) return;
+    if (options.length === 0 && this.meta()[id]?.preset) {
+      updateMeta(this.projectRoot, id, { suggested: true });
+      return;
+    }
+    updateMeta(this.projectRoot, id, { options, suggested: true, preset: undefined });
+  }
+
+  /**
+   * Called the moment an answer is saved, before any model is asked: the
+   * preset table's follow-ups for it (core/presets.ts), and its options for
+   * questions already in the Foundation that nobody has advised on yet.
+   * Returns the follow-ups added, by name, in order.
+   */
+  presets(question: GuidedQuestion, answer: string): string[] {
+    const match = matchPresets(question, answer);
+    const meta = this.meta();
+    const questions = guidedQuestions(this.projectRoot);
+
+    for (const { question: pattern, options } of match.options) {
+      for (const q of questions) {
+        if (q.answered || !pattern.test(q.item.name)) continue;
+        const m = meta[q.item.id];
+        if (m?.suggested || (m?.options?.length ?? 0) > 0) continue;
+        updateMeta(this.projectRoot, q.item.id, { options, preset: true });
+      }
+    }
+
+    const depth = meta[question.item.id]?.depth ?? 0;
+    if (depth >= MAX_DEPTH || match.followUps.length === 0) return [];
+    const added = insertFollowUps(question, match.followUps, questions);
+    // Not `suggested`: the advisor still gets to look at them.
+    this.recordAdded(question.item.file, added, () => ({
+      parent: question.item.name, depth: depth + 1, preset: true, suggested: false,
+    }));
+    return added.map((f) => f.ask);
+  }
+
+  /**
    * Called after an answer is saved: asks for follow-ups on it, options for
    * the next question, and answers later questions now follow from — all in
    * one request. Returns what was added and derived.
@@ -469,23 +598,27 @@ export class FoundationAdvisor {
     const meta = this.meta();
     const depth = meta[question.item.id]?.depth ?? 0;
     const upcoming = this.nextUnadvised(question, questions);
+    const request: AdviceRequest = {
+      questions,
+      answered: { question, answer, depth },
+      upcoming,
+      upcomingOptions: upcoming && meta[upcoming.item.id]?.preset ? meta[upcoming.item.id]?.options : undefined,
+    };
+    const mode = adviceMode(request);
+    const parts = buildAdviceParts(request, mode);
 
-    const advice = parseAdvice(
-      await this.ask(
-        buildAdvicePrompt({ questions, answered: { question, answer, depth }, upcoming }),
-        ADVICE_SCHEMA,
-      ),
-    );
+    const advice = parseAdvice(await this.ask(renderPrompt(parts), ADVICE_SCHEMA, { mode, parts }));
 
-    if (upcoming) {
-      updateMeta(this.projectRoot, upcoming.item.id, { options: advice.upcoming, suggested: true });
-    }
+    if (upcoming) this.offer(upcoming.item.id, advice.upcoming);
+
+    // Read again: the developer kept answering while the model thought.
+    const now = guidedQuestions(this.projectRoot);
 
     // Only for questions still open and asked exactly — a derived answer
     // attached to the wrong question would be worse than none.
     const derived: string[] = [];
     for (const d of advice.derived) {
-      const target = questions.find(
+      const target = now.find(
         (q) => !q.answered && q.item.id !== question.item.id &&
           (q.item.name === d.question || slugify(q.item.name) === slugify(d.question)),
       );
@@ -494,19 +627,35 @@ export class FoundationAdvisor {
       derived.push(target.item.name);
     }
 
-    const added = depth >= MAX_DEPTH ? [] : insertFollowUps(question, advice.followUps, questions);
+    // After the follow-ups already there — the preset table's, typically —
+    // so the one the developer is looking at does not move down the list.
+    const after = this.meta();
+    const from = now.findIndex((q) => q.item.id === question.item.id);
+    let anchor = now[from] ?? question;
+    for (let i = from + 1; from >= 0 && i < now.length; i++) {
+      const q = now[i]!;
+      if (q.item.file !== question.item.file || after[q.item.id]?.parent !== question.item.name) break;
+      anchor = q;
+    }
+    const added = depth >= MAX_DEPTH ? [] : insertFollowUps(anchor, advice.followUps, now);
     this.recordAdded(question.item.file, added, () => ({ parent: question.item.name, depth: depth + 1 }));
     return { added, derived };
   }
 
   /** Options for one question, when it is shown and nobody has asked yet. */
   async suggest(question: GuidedQuestion): Promise<void> {
-    if (this.meta()[question.item.id]?.suggested) return;
+    const meta = this.meta()[question.item.id];
+    if (meta?.suggested) return;
     const questions = guidedQuestions(this.projectRoot);
-    const advice = parseAdvice(
-      await this.ask(buildAdvicePrompt({ questions, upcoming: question }), ADVICE_SCHEMA),
-    );
-    updateMeta(this.projectRoot, question.item.id, { options: advice.upcoming, suggested: true });
+    const request: AdviceRequest = {
+      questions,
+      upcoming: question,
+      upcomingOptions: meta?.preset ? meta.options : undefined,
+    };
+    const mode = adviceMode(request);
+    const parts = buildAdviceParts(request, mode);
+    const advice = parseAdvice(await this.ask(renderPrompt(parts), ADVICE_SCHEMA, { mode, parts }));
+    this.offer(question.item.id, advice.upcoming);
   }
 
   /**
@@ -517,12 +666,12 @@ export class FoundationAdvisor {
   async coach(question: GuidedQuestion): Promise<{ explain: string; probes: FollowUp[] }> {
     const questions = guidedQuestions(this.projectRoot);
     const depth = this.meta()[question.item.id]?.depth ?? 0;
-    const coaching = parseCoaching(
-      await this.ask(buildCoachPrompt(questions, question), COACH_SCHEMA),
-    );
+    const mode = coachMode(question);
+    const parts = buildCoachParts(questions, question, mode);
+    const coaching = parseCoaching(await this.ask(renderPrompt(parts), COACH_SCHEMA, { mode, parts }));
     updateMeta(this.projectRoot, question.item.id, {
       explain: coaching.explain,
-      ...(coaching.examples.length > 0 ? { options: coaching.examples } : {}),
+      ...(coaching.examples.length > 0 ? { options: coaching.examples, preset: undefined } : {}),
       suggested: true,
     });
     const probes = insertFollowUps(question, coaching.probes, questions, 'before');

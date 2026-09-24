@@ -264,7 +264,8 @@ describe('reaching the model', () => {
   });
 
   test('a driver without structured output cannot advise', () => {
-    expect(advisorUnavailable(opencodeDriver)).toContain('cannot answer structured requests');
+    const plain: AgentDriver = { ...opencodeDriver, structured: undefined };
+    expect(advisorUnavailable(plain)).toContain('cannot answer structured requests');
   });
 
   test('runs the command and parses its stdout', async () => {
