@@ -1531,6 +1531,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "futures-core",
  "hex",
  "libc",
  "ratatui",

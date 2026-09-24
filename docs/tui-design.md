@@ -81,12 +81,22 @@ Verify one here and it merges into the main specs.
 | `n` `p` | next · previous requirement |
 | `p` | promote a global decision to an ADR; on any other item, previous |
 | `g` then `d`/`r`/`j`/`k`/`v` | go to dashboard · review · jobs · decisions · pending validation |
-| `ctrl+j` | toggle the job overlay, from anywhere including mid-review |
+| `ctrl+j` | toggle the job overlay, from anywhere — the start screen, the overview, mid-prompt, mid-review |
 | `x` | cancel the selected job (asks first) |
 | `Enter` | descend the hierarchy (a change → its review queue) |
-| `ctrl+c` | cancel a prompt, or go back one level |
+| `ctrl+c` | cancel a prompt, close an overlay, or go back one level — **never quits**; where there is nothing left to cancel it says that `q` quits |
 | `?` | context-sensitive help |
-| `q` | back, or quit at the top level |
+| `q` | back, or quit at the top level (the start screen and the overview) |
+
+What the shell (stage 5) binds today:
+
+| Where | Keys |
+| --- | --- |
+| Start screen | `←`/`→`/`↑`/`↓`/`tab` choose a button · `enter`/`space` press it · click · `q` quit |
+| Overview | `j`/`k`/`↑`/`↓` select a change (or click) · `←`/`→`/`tab` choose a next-step button · `enter` press it · `n` new change · `w` let an agent draft the next artifact · `e` write it yourself in `$EDITOR` · `f` the ground rules · `r` review · `h` start screen · `?` help · `q` quit |
+| New-change prompt | type · `enter` next / create · `tab` next suggested name · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
+| Help | any key closes it |
+| Job pane | `j`/`k`/`↑`/`↓` select (or click) · `x` cancel the selected job, then `y` · `p` clear finished jobs · `q`/`ctrl+c`/`ctrl+j` close |
 
 `g`-prefixed chords come from `@opentui/keymap`, matching opencode's leader-key
 feel. All bindings are remappable from config.

@@ -165,6 +165,50 @@ impl OpenSpecAdapter {
         Ok(raw.template.unwrap_or_default())
     }
 
+    /// The file an artifact is written in by hand, seeded with the schema's
+    /// template when it does not exist yet — `e` on the overview, the
+    /// TypeScript `artifactFile`.
+    ///
+    /// The one place this module writes a file, and it is not one OpenSpec
+    /// owns: an artifact is the developer's own document, which OpenSpec reads
+    /// and which agents write just the same. What is OpenSpec-shaped is
+    /// *where* it goes and what it starts as, and both come from OpenSpec —
+    /// the path from `status`, the text from `instructions --json`. A blank
+    /// page is never the starting point.
+    pub async fn artifact_file(
+        &self,
+        status: &OpenSpecChangeStatus,
+        artifact: &str,
+    ) -> Result<PathBuf, OpenSpecError> {
+        let change = status.change_name.as_str();
+        let Some(paths) = status.artifact_paths.get(artifact) else {
+            return Err(OpenSpecError::new(format!(
+                "{change} has no artifact called {artifact}"
+            )));
+        };
+        let file = PathBuf::from(&paths.resolved_output_path);
+        if paths.resolved_output_path.contains('*') {
+            return Err(OpenSpecError::new(format!(
+                "{artifact} spans one file per capability — w lets an agent draft them"
+            )));
+        }
+        if !file.exists() {
+            let template = self.template(artifact, change).await?;
+            let seeded = template.replace("<!-- Change name -->", change);
+            let written = file
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&file, seeded));
+            if let Err(error) = written {
+                return Err(OpenSpecError::new(format!(
+                    "Could not create {}: {error}",
+                    file.display()
+                )));
+            }
+        }
+        Ok(file)
+    }
+
     /// Archives a change through OpenSpec.
     ///
     /// `--yes` is passed because spec-tacular has already resolved what it

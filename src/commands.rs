@@ -9,11 +9,13 @@
 //! `std::io::stdout` directly, so a test asserts on the exact bytes a user
 //! would see, exit code included, without running a process.
 
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::Write;
 use std::path::Path;
 
 use crate::adapter::openspec::{OpenSpecAdapter, OpenSpecError};
+use crate::adapter::types::OpenSpecChangeStatus;
 use crate::agent::default_registry;
 use crate::agent::driver::AgentRequest;
 use crate::core::archive::{plan_archive, prepare_archive};
@@ -59,12 +61,12 @@ impl Streams<'_> {
 pub struct Loaded {
     pub pipelines: Vec<ChangePipeline>,
     pub failed: Vec<String>,
+    /// OpenSpec's own status for each change, keyed by name — what the TUI
+    /// needs to find an artifact's file for `e`.
+    pub statuses: BTreeMap<String, OpenSpecChangeStatus>,
 }
 
-/// The TypeScript `loadPipelines`.
-///
-/// Its third return value — the statuses, keyed by change — is what the TUI
-/// reloads from; it arrives with the TUI rather than being carried unused.
+/// The TypeScript `loadPipelines`, all three of its return values.
 pub async fn load_pipelines(
     adapter: &OpenSpecAdapter,
     project_root: &Path,
@@ -93,6 +95,11 @@ pub async fn load_pipelines(
     Ok(Loaded {
         pipelines: sort_by_progress(&pipelines),
         failed: status.failed,
+        statuses: status
+            .changes
+            .into_iter()
+            .map(|change| (change.change_name.clone(), change))
+            .collect(),
     })
 }
 
@@ -465,8 +472,7 @@ pub fn run_jobs(cwd: &Path, job_id: Option<&str>, cancel: bool, io: &mut Streams
 ///
 /// It lives here rather than in the TUI so the two paths into an agent cannot
 /// drift: whatever `run` refuses, this refuses, in the same order. Its caller
-/// is the jobs pane, in stage 5.
-#[allow(dead_code)]
+/// is the overview's `w`.
 pub async fn dispatch(
     adapter: &OpenSpecAdapter,
     cwd: &Path,
