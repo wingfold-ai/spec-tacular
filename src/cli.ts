@@ -10,7 +10,13 @@
  */
 
 import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject } from './adapter/openspec.ts';
-import { buildPipeline, sortByProgress, type ChangePipeline } from './core/pipeline.ts';
+import {
+  buildPipeline,
+  sortByProgress,
+  type ChangePipeline,
+  type ReviewByArtifact,
+} from './core/pipeline.ts';
+import { loadChangeReview, specFilesOf, specsArtifactId } from './core/change-review.ts';
 import { renderOverview } from './render/text.ts';
 
 interface Args {
@@ -46,9 +52,23 @@ Options:
 
 async function loadPipelines(
   adapter: OpenSpecAdapter,
+  projectRoot: string,
 ): Promise<{ pipelines: ChangePipeline[]; failed: string[] }> {
   const { changes, failed } = await adapter.statusAll();
-  return { pipelines: sortByProgress(changes.map(buildPipeline)), failed };
+
+  const pipelines = changes.map((status) => {
+    const reviews: Record<string, ReviewByArtifact[string]> = {};
+    // Only an artifact that actually carries requirements gets review state.
+    // Attaching an empty summary elsewhere would read as "reviewed, zero
+    // requirements" and wrongly mark the stage accepted.
+    const specsId = specsArtifactId(status);
+    if (specsId && specFilesOf(status).length > 0) {
+      reviews[specsId] = loadChangeReview(projectRoot, status).summary;
+    }
+    return buildPipeline(status, reviews);
+  });
+
+  return { pipelines: sortByProgress(pipelines), failed };
 }
 
 async function main(): Promise<number> {
@@ -71,7 +91,7 @@ async function main(): Promise<number> {
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
   try {
-    const { pipelines, failed } = await loadPipelines(adapter);
+    const { pipelines, failed } = await loadPipelines(adapter, args.cwd);
 
     if (args.print || !process.stdout.isTTY) {
       process.stdout.write(

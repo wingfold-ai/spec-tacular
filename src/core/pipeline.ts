@@ -7,21 +7,24 @@
  * `spec-driven`, with spec-tacular's own schema, and with any custom schema a
  * project forks.
  *
- * Scope note (M1): every state here is derived from OpenSpec's own
- * file-existence truth. `done` therefore means "the file is written", NOT
- * "a human accepted it". Acceptance is M2; until it lands, nothing in this
- * module may claim a requirement was reviewed.
+ * Two different truths live here and must not be confused. `written` is
+ * OpenSpec's: the file exists. `accepted` is spec-tacular's: a human reviewed
+ * every requirement in it. An artifact with no review data can only ever reach
+ * `written`, never `accepted` — absence of review is never evidence of review.
  */
 
 import type { OpenSpecArtifact, OpenSpecChangeStatus } from '../adapter/types.ts';
+import type { ReviewSummary } from './review.ts';
 
 export type StageState =
   /** Prerequisites unmet — cannot be started. */
   | 'blocked'
   /** Prerequisites met, not yet written. */
   | 'ready'
-  /** Written. Not necessarily reviewed — see the scope note above. */
-  | 'written';
+  /** Written to disk. Reviewed? Unknown, or known to be unfinished. */
+  | 'written'
+  /** Written AND every requirement accepted or deferred, with no drift. */
+  | 'accepted';
 
 export interface Stage {
   id: string;
@@ -29,6 +32,8 @@ export interface Stage {
   requires: string[];
   /** Why this stage is blocked: the prerequisite IDs that are not yet written. */
   blockedBy: string[];
+  /** Review progress, when this artifact carries reviewable requirements. */
+  review?: ReviewSummary;
 }
 
 /**
@@ -61,25 +66,46 @@ export interface ChangePipeline {
   /** The stage a human should look at next, or null when planning is finished. */
   current: Stage | null;
   written: number;
+  accepted: number;
   total: number;
 }
 
-function toState(artifact: OpenSpecArtifact, writtenIds: ReadonlySet<string>): Stage {
+function toState(
+  artifact: OpenSpecArtifact,
+  writtenIds: ReadonlySet<string>,
+  review: ReviewSummary | undefined,
+): Stage {
   const blockedBy = artifact.requires.filter((r) => !writtenIds.has(r));
   // OpenSpec's own status is trusted for done/blocked, but `blockedBy` is
   // recomputed here: its `ready` and `blocked` do not carry the reason, and
   // the reason is the whole point of showing a blocked stage in the UI.
-  const state: StageState =
-    artifact.status === 'done' ? 'written' : blockedBy.length > 0 ? 'blocked' : 'ready';
-  return { id: artifact.id, state, requires: artifact.requires, blockedBy };
+  let state: StageState;
+  if (artifact.status !== 'done') {
+    state = blockedBy.length > 0 ? 'blocked' : 'ready';
+  } else {
+    state = review?.complete ? 'accepted' : 'written';
+  }
+  return {
+    id: artifact.id,
+    state,
+    requires: artifact.requires,
+    blockedBy,
+    ...(review ? { review } : {}),
+  };
 }
 
-export function buildPipeline(status: OpenSpecChangeStatus): ChangePipeline {
+/** Review summaries keyed by artifact id. Only `specs` carries one today. */
+export type ReviewByArtifact = Readonly<Record<string, ReviewSummary>>;
+
+export function buildPipeline(
+  status: OpenSpecChangeStatus,
+  reviews: ReviewByArtifact = {},
+): ChangePipeline {
   const written = new Set(
     status.artifacts.filter((a) => a.status === 'done').map((a) => a.id),
   );
 
-  const stages = status.artifacts.map((a) => toState(a, written));
+  const stages = status.artifacts.map((a) => toState(a, written, reviews[a.id]));
 
   const applyBlockedBy = status.applyRequires.filter((r) => !written.has(r));
   const apply: Stage = {
@@ -99,9 +125,14 @@ export function buildPipeline(status: OpenSpecChangeStatus): ChangePipeline {
     if (missing.length > 0) gaps.push({ artifact: a.id, missing });
   }
 
-  // The first stage a human can act on. A blocked stage is skipped: acting on
-  // it is impossible, so pointing at it would be useless advice.
-  const current = stages.find((s) => s.state === 'ready') ?? null;
+  // The first stage a human can act on. A blocked stage is skipped (acting on
+  // it is impossible), but a written-and-unreviewed one is NOT: reviewing it
+  // is exactly the work this tool exists for, and it comes before writing the
+  // next artifact.
+  const current =
+    stages.find((s) => s.state === 'written' && s.review !== undefined) ??
+    stages.find((s) => s.state === 'ready') ??
+    null;
 
   return {
     name: status.changeName,
@@ -112,6 +143,7 @@ export function buildPipeline(status: OpenSpecChangeStatus): ChangePipeline {
     gaps,
     current,
     written: written.size,
+    accepted: stages.filter((s) => s.state === 'accepted').length,
     total: status.artifacts.length,
   };
 }
