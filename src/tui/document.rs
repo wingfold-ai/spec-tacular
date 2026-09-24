@@ -469,10 +469,7 @@ impl App {
             return Vec::new();
         };
         self.close_doc();
-        vec![spawn(
-            ports.dispatch(&doc.change, &doc.artifact, Some(feedback)),
-            Msg::Dispatched,
-        )]
+        self.start_draft(ports, doc.change, doc.artifact, Some(feedback.to_owned()))
     }
 
     /// Back from editing the document: read it again, and the overview too.

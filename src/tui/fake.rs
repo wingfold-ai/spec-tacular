@@ -20,12 +20,15 @@ use tempfile::TempDir;
 use tokio::sync::oneshot;
 
 use super::ports::{
-    ask_names, jobs_view, promote, read_document, run_vision_step, JobsView, PortFuture, Ports,
-    Snapshot, VisionAnswer, VisionStep,
+    ask_names, jobs_view, promote, read_document, run_vision_step, DraftMode, JobsView, PortFuture,
+    Ports, Snapshot, VisionAnswer, VisionStep,
 };
 use crate::adapter::types::{
     OpenSpecArtifact, OpenSpecArtifactPaths, OpenSpecArtifactStatus, OpenSpecChangeStatus,
 };
+use crate::agent::acp::fake_agent;
+use crate::agent::acp::run::{AcpRun, RunStart, StartRun};
+use crate::agent::driver::AgentCommand;
 use crate::core::advisor::{AfterAnswer, Ask, Coached, FoundationAdvisor, Meta};
 use crate::core::change_review::{load_change_review, spec_files_of, specs_artifact_id};
 use crate::core::concreteness::LintConfig;
@@ -195,6 +198,10 @@ pub struct FakePorts {
     pub vision: Option<VisionInterviewer>,
     /// Every prompt the name model was sent.
     pub name_prompts: std::sync::Arc<Mutex<Vec<String>>>,
+    /// How drafting reaches an agent: jobs unless a test asks for ACP.
+    pub draft_mode: Mutex<DraftMode>,
+    /// The ACP agent's command — the scripted fake, when a test uses ACP.
+    pub acp: Mutex<Option<AgentCommand>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -221,7 +228,41 @@ impl FakePorts {
             advisor: None,
             vision: None,
             name_prompts: std::sync::Arc::default(),
+            draft_mode: Mutex::new(DraftMode::Jobs { why: None }),
+            acp: Mutex::default(),
         }
+    }
+
+    /// Drafting over ACP, with the scripted agent playing `script` (see
+    /// `tests/support/fake_acp_agent.rs`); it notes what it saw in
+    /// [`FakePorts::agent_log`].
+    pub fn use_acp(&self, script: &str) {
+        let record = self.dir.path().join(".fake-acp.log");
+        *lock(&self.acp) = Some(fake_agent(&[
+            "--script",
+            script,
+            "--record",
+            &record.display().to_string(),
+        ]));
+        *lock(&self.draft_mode) = DraftMode::Acp {
+            label: "Fake agent".to_owned(),
+        };
+    }
+
+    /// What the scripted agent noted: `prompt <n> <session>`, `wrote …`.
+    pub fn agent_log(&self) -> String {
+        fs::read_to_string(self.dir.path().join(".fake-acp.log")).unwrap_or_default()
+    }
+
+    /// The prose artifacts an agent wrote to disk for `name`, in order —
+    /// the fake's stand-in for `openspec status` noticing a new file.
+    fn agent_written(&self, name: &str) -> Option<ChangePipeline> {
+        let dir = self.dir.path().join("openspec/changes").join(name);
+        let written = ORDER
+            .iter()
+            .take_while(|a| **a != "specs" && dir.join(format!("{a}.md")).exists())
+            .count();
+        (written > 0).then(|| change_with(name, &ORDER[..written]))
     }
 
     /// With a vision interview whose model is `ask`.
@@ -387,7 +428,11 @@ impl Ports for FakePorts {
     fn reload(&self) -> PortFuture<Result<Snapshot, String>> {
         let pipelines = lock(&self.changes)
             .iter()
-            .map(|p| self.real_pipeline(&p.name).unwrap_or_else(|| p.clone()))
+            .map(|p| {
+                self.real_pipeline(&p.name)
+                    .or_else(|| self.agent_written(&p.name))
+                    .unwrap_or_else(|| p.clone())
+            })
             .collect();
         Box::pin(async move {
             Ok(Snapshot {
@@ -399,9 +444,19 @@ impl Ports for FakePorts {
 
     fn read_jobs(&self, selected: usize, change: Option<&str>) -> PortFuture<JobsView> {
         let tails = lock(&self.tails).clone();
+        // The scripted jobs, then any an ACP session recorded on disk.
+        let mut jobs = lock(&self.jobs).clone();
+        let recorded = crate::core::jobs::list_jobs(self.dir.path());
+        jobs.extend(recorded.iter().cloned());
         let view = jobs_view(
-            lock(&self.jobs).clone(),
-            |job| tails.get(&job.id).cloned().unwrap_or_default(),
+            jobs,
+            |job| match tails.get(&job.id) {
+                Some(lines) => lines.clone(),
+                None if recorded.iter().any(|r| r.id == job.id) => {
+                    crate::core::jobs::tail_job(job, 200)
+                }
+                None => Vec::new(),
+            },
             selected,
             change,
         );
@@ -440,6 +495,39 @@ impl Ports for FakePorts {
         );
         let message = format!("drafting {change}/{artifact}");
         Box::pin(async move { Ok(message) })
+    }
+
+    fn draft_mode(&self) -> DraftMode {
+        lock(&self.draft_mode).clone()
+    }
+
+    fn start_acp(
+        &self,
+        change: &str,
+        artifact: &str,
+        feedback: Option<&str>,
+    ) -> PortFuture<RunStart> {
+        lock(&self.dispatched).push(match feedback {
+            Some(feedback) => format!("acp {change}/{artifact} ({feedback})"),
+            None => format!("acp {change}/{artifact}"),
+        });
+        let Some(command) = lock(&self.acp).clone() else {
+            return Box::pin(async { RunStart::Unavailable("no ACP agent here".to_owned()) });
+        };
+        let mut prompt = format!(
+            "Draft the {artifact} of {change}.\nwrite: openspec/changes/{change}/{artifact}.md\n"
+        );
+        if let Some(feedback) = feedback {
+            prompt.push_str(&format!("\n> {feedback}\n"));
+        }
+        let options = StartRun {
+            root: self.path(),
+            change: change.to_owned(),
+            artifact: artifact.to_owned(),
+            command,
+            prompt,
+        };
+        Box::pin(AcpRun::start(options))
     }
 
     fn open_review(&self, change: &str) -> PortFuture<Option<ReviewSession>> {
@@ -504,11 +592,23 @@ impl Ports for FakePorts {
                 content,
             )),
             None => {
+                let written = self
+                    .dir
+                    .path()
+                    .join("openspec/changes")
+                    .join(change)
+                    .join(format!("{artifact}.md"));
                 let file = self
                     .real_status(change)
                     .and_then(|s| s.artifact_paths.get(artifact).cloned())
                     .map(|p| p.resolved_output_path)
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| {
+                        if written.exists() {
+                            written.display().to_string()
+                        } else {
+                            String::new()
+                        }
+                    });
                 read_document(&file, artifact)
             }
         };

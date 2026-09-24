@@ -16,11 +16,15 @@
 //! - [`ground_rules`] — `onboarding-e2e`'s "the ground rules", with the
 //!   advisor's model scripted, and [`ground_rules_screen`] — each of its
 //!   states, drawn;
+//! - [`acp`] — drafting over ACP against the scripted agent, a real child
+//!   process: streamed text, tool calls and diffs, the permission overlay,
+//!   cancel, a redraft on the same session, and the fall-backs to jobs;
 //! - [`vision_e2e`] — `vision-e2e`'s "a new project starts from its vision",
 //!   with the interviewer's model scripted, and [`vision_screen`] — each of
 //!   its states, drawn. `onboarding-e2e`'s "a new change" (the model's name
 //!   proposals) is in [`shell`].
 
+mod acp;
 mod concurrency_e2e;
 mod draft;
 mod ground_rules;
@@ -145,6 +149,24 @@ impl Ui {
     pub(super) fn reload(&mut self) {
         let effect = self.app.reload(self.ports.as_ref(), None, None, None);
         self.run(vec![effect]);
+        self.frame();
+    }
+
+    /// Lets spawned work run — a real agent process answering — until
+    /// `done` holds, feeding its results back as they come.
+    #[track_caller]
+    pub(super) fn wait_until(&mut self, what: &str, done: impl Fn(&App) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !done(&self.app) {
+            if std::time::Instant::now() > deadline {
+                let frame = self.frame();
+                panic!("timed out waiting for {what}:\n{frame}");
+            }
+            self.runtime.block_on(async {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            });
+            self.settle();
+        }
         self.frame();
     }
 

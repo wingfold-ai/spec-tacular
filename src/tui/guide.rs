@@ -29,14 +29,16 @@ pub const FIRST_CHANGE_LINES: [&str; 14] = [
 ];
 
 /// Every overview key, and what the pipeline marks mean.
-pub const HELP_LINES: [&str; 18] = [
+pub const HELP_LINES: [&str; 20] = [
     "Overview",
     "  ↑ / ↓, j / k   select a change (or click it)",
     "  ← / →, tab     choose between the next-step buttons",
     "  enter          press the highlighted button — the next step",
     "  r              review the selected change, one requirement at a time",
     "  n              start a new change",
-    "  w              let an agent draft the next artifact, in the background",
+    "  w              let an agent draft the next artifact while you keep working",
+    "  1 / 2 / 3      answer the agent when it asks permission (or click)",
+    "  x              stop the agent drafting the selected change",
     "  e              write the next artifact yourself, in $EDITOR",
     "  v              read the latest draft — proposal, design, tasks",
     "  f              the ground rules: stack, domain, architecture, conventions",

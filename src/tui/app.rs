@@ -22,12 +22,15 @@ use crossterm::event::{
 };
 use ratatui::layout::{Position, Rect};
 
+use super::acp::AcpState;
 use super::document::Document;
 use super::foundation::{FoundationScreen, GroundRules};
 use super::input::{edit_line, is_cancel, is_ctrl, is_enter};
-use super::ports::{JobsView, PortFuture, Ports, Snapshot, VisionAnswer};
+use super::ports::{DraftMode, JobsView, PortFuture, Ports, Snapshot, VisionAnswer};
 use super::review::Review;
 use super::vision::{StepKind, VisionButton, VisionScreen, VisionState};
+use crate::agent::acp::events::AcpEvent;
+use crate::agent::acp::run::{RunStart, ACP_DRIVER};
 use crate::core::advisor::{AfterAnswer, Coached, Meta};
 use crate::core::concreteness::LintConfig;
 use crate::core::foundation::GuidedQuestion;
@@ -182,6 +185,10 @@ pub enum Target {
     VisionRow(usize),
     /// A proposed slice.
     SliceRow(usize),
+    /// Option `i` of the permission overlay.
+    Permission(usize),
+    /// "Cancel  x" under an ACP session's running block.
+    CancelAcp,
 }
 
 /// Where each clickable thing was drawn last frame.
@@ -359,6 +366,22 @@ pub enum Msg {
         notice: String,
         result: Result<(), String>,
     },
+    /// An ACP session started drafting — or could not.
+    AcpStarted {
+        /// Which session this is: see [`AcpState::generation`].
+        generation: u64,
+        result: RunStart,
+    },
+    /// A follow-up prompt went to a live session — or could not.
+    AcpPrompted {
+        generation: u64,
+        result: Result<(), String>,
+    },
+    /// The next thing an ACP session said; `None` once it is gone.
+    AcpEvent {
+        generation: u64,
+        event: Option<AcpEvent>,
+    },
 }
 
 /// The newest request of each kind whose answer replaces state wholesale.
@@ -382,6 +405,8 @@ pub struct Latest {
     pub names: u64,
     /// The newest request of the vision interview.
     pub vision: u64,
+    /// The newest ACP session.
+    pub acp: u64,
 }
 
 impl Latest {
@@ -458,6 +483,13 @@ pub struct App {
     pub vision: VisionState,
     /// The vision screen, on [`Screen::Vision`].
     pub vision_screen: Option<VisionScreen>,
+    /// How `w` and a redraft reach an agent: an ACP session, or a job.
+    pub draft_mode: DraftMode,
+    /// The ACP session drafting, while there is one ([`super::acp`]).
+    pub acp: Option<AcpState>,
+    /// `q` was pressed once while an ACP turn was running: a second quits,
+    /// and cancels it.
+    pub confirm_quit: bool,
 }
 
 impl App {
@@ -507,6 +539,9 @@ impl App {
                 ..VisionState::default()
             },
             vision_screen: None,
+            draft_mode: ports.draft_mode(),
+            acp: None,
+            confirm_quit: false,
         };
         let jobs = app.read_jobs(ports, false);
         let first = app.reload(ports, None, None, None);
@@ -695,6 +730,9 @@ impl App {
         if buttons > 0 {
             keys.push(("enter", "go"));
         }
+        if self.acp_working().is_some() {
+            keys.push(("x", "cancel"));
+        }
         keys.extend([
             ("n", "new change"),
             ("f", "ground rules"),
@@ -711,6 +749,7 @@ impl App {
             || self.home.busy.is_some()
             || self.prompt.as_ref().is_some_and(|p| p.naming)
             || (self.screen == Screen::Overview && self.running().is_some())
+            || (self.screen == Screen::Overview && self.acp_working().is_some())
             || self.ground_animating()
             || self.vision_animating()
     }
@@ -762,6 +801,8 @@ impl App {
             .iter()
             .filter(|j| {
                 j.status != JobStatus::Running
+                    // A session reports its own turns as they end.
+                    && j.driver != ACP_DRIVER
                     && before
                         .iter()
                         .any(|b| b.id == j.id && b.status == JobStatus::Running)
@@ -786,6 +827,16 @@ impl App {
         // Only presses: a terminal speaking the kitty protocol also reports
         // releases, and acting on both would do everything twice.
         if key.kind != KeyEventKind::Press {
+            return Vec::new();
+        }
+        // A second `q` quits; anything else keeps the session.
+        let confirming = std::mem::take(&mut self.confirm_quit);
+        // The permission overlay's numbers, wherever a number is not text.
+        if let Some(effects) = self.permission_key(key) {
+            return effects;
+        }
+        if confirming && plain(key, 'q') && self.may_quit_here() {
+            self.quit = true;
             return Vec::new();
         }
         // The job pane owns the keyboard while it is up — that is what makes
@@ -855,6 +906,11 @@ impl App {
             Target::GroundRow(_) | Target::GroundButton => self.foundation_click(ports, target),
             Target::VisionButton(_) | Target::VisionRow(_) | Target::SliceRow(_) => {
                 self.vision_click(ports, target)
+            }
+            Target::Permission(i) => self.answer_permission(i),
+            Target::CancelAcp => {
+                self.cancel_acp();
+                Vec::new()
             }
         }
     }
@@ -1112,6 +1168,9 @@ impl App {
                 notice,
                 result,
             } => self.vision_created(ports, generation, name, notice, result),
+            Msg::AcpStarted { generation, result } => self.acp_started(ports, generation, result),
+            Msg::AcpPrompted { generation, result } => self.acp_prompted(ports, generation, result),
+            Msg::AcpEvent { generation, event } => self.acp_event(ports, generation, event),
         }
     }
 
@@ -1123,7 +1182,7 @@ impl App {
             return Vec::new();
         }
         if plain(key, 'q') {
-            self.quit = true;
+            self.request_quit();
             return Vec::new();
         }
         if self.home.busy.is_some() {
@@ -1236,7 +1295,12 @@ impl App {
                 }
             }
             KeyCode::Char(c) if !has_modifier(key) => match c {
-                'q' => self.quit = true,
+                'q' => self.request_quit(),
+                'x' => {
+                    if !self.cancel_acp() {
+                        self.notice = Some("Nothing to cancel here — ctrl+j lists the jobs".into());
+                    }
+                }
                 'j' => return self.move_selection(ports, 1),
                 'k' => return self.move_selection(ports, -1),
                 'r' => return self.enter_review(ports),
@@ -1403,10 +1467,7 @@ impl App {
             });
             return Vec::new();
         };
-        vec![spawn(
-            ports.dispatch(&change, &artifact, None),
-            Msg::Dispatched,
-        )]
+        self.start_draft(ports, change, artifact, None)
     }
 
     fn write_next(&mut self, ports: &dyn Ports) -> Vec<Effect> {
@@ -1444,7 +1505,11 @@ impl App {
             self.confirm_cancel = false;
             if plain(key, 'y') {
                 if let Some(job) = self.jobs.get(self.job_index).cloned() {
-                    ports.cancel_job(&job);
+                    // A turn of the live session is stopped through it: its
+                    // pid is the agent's, which the session still needs.
+                    if !(self.is_acp_job(&job.id) && self.cancel_acp()) {
+                        ports.cancel_job(&job);
+                    }
                     return vec![self.read_jobs(ports, false)];
                 }
             }
@@ -1507,7 +1572,7 @@ impl App {
     /// lines, read off the loop's thread and delivered as
     /// [`Msg::JobsRead`]. Every path that shows jobs goes through here, so
     /// the pane, the header and the block under a change always agree.
-    fn read_jobs(&self, ports: &dyn Ports, poll: bool) -> Effect {
+    pub(super) fn read_jobs(&self, ports: &dyn Ports, poll: bool) -> Effect {
         let change = self.selected().map(|p| p.name.clone());
         let job_index = self.job_index;
         spawn(ports.read_jobs(job_index, change.as_deref()), move |view| {

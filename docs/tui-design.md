@@ -70,8 +70,39 @@ split into 3–8 slices, reviewed as a checklist before anything is written. The
 first kept slice becomes the first change. "Not a new project" leaves for a
 single change and is never offered again.
 
+### An agent drafting
+`w` or a redraft opens an ACP session with the agent, and the change's panel
+shows it at work: the last lines of its reply, the step of its plan, its tool
+calls with their state and the diffs they make, how long it has been and
+what it has cost. When it asks permission — to write a file, to run a
+command — an overlay asks you, with the agent's own options numbered; only
+that decision waits for you, and everything else keeps working. `x` stops
+it. When it is done the draft opens to be read; "↻ Redraft with feedback"
+sends your words to the same session, which already knows the change.
+
+```
+  ⠸ Claude Code is drafting the proposal · 28s · $0.27 · waiting for you
+
+  │ Reading the ground rules and the change's README.
+  │ plan 2/3 · Write the proposal
+  │ ✓ ls openspec spec-tacular
+  │ ○ Write openspec/changes/add-due-dates/proposal.md
+  │   ± proposal.md +36 −0
+
+ ╭ ✦ Claude Code asks ─────────────────────────────────────────────────────╮
+ │ Claude Code wants to write openspec/changes/add-due-dates/proposal.md    │
+ │ 1 allow once · 2 allow always · 3 deny                                   │
+ │ [ 1 allow once ]  [ 2 allow always ]  [ 3 deny ]                         │
+ ╰──────────────────────────────────────────────────────────────────────────╯
+```
+
+The session lives in the TUI: quitting ends it (the first `q` with a turn
+running asks). Work that must outlive the TUI is a detached job —
+`spectacular run`, or `SPECTACULAR_AGENT_MODE=jobs`.
+
 ### Jobs
-Running and finished jobs, streamed output, cancel. `Ctrl-J` toggles it as an
+Running and finished jobs, streamed output, cancel. An agent drafting over
+ACP is listed here too, its events as the log. `Ctrl-J` toggles it as an
 overlay from anywhere, so you can glance at an `apply` mid-review without losing
 your place in the queue.
 
@@ -98,12 +129,12 @@ Verify one here and it merges into the main specs.
 | `?` | context-sensitive help |
 | `q` | back, or quit at the top level (the start screen and the overview) |
 
-What the TUI binds today (stages 5 to 8):
+What the TUI binds today (stages 5 to 9):
 
 | Where | Keys |
 | --- | --- |
 | Start screen | `←`/`→`/`↑`/`↓`/`tab` choose a button · `enter`/`space` press it · click · `q` quit. A new project with its ground rules settled is offered "Describe your vision" (or "Continue your vision" once started) |
-| Overview | `j`/`k`/`↑`/`↓` select a change (or click) · `←`/`→`/`tab` choose a next-step button · `enter` press it · `n` new change (refused until the ground rules are settled) · `w` let an agent draft the next artifact · `e` write it yourself in `$EDITOR` · `v` read the latest draft · `f` the ground rules, at the first open question · `r` review · `h` start screen · `?` help · `q` quit |
+| Overview | `j`/`k`/`↑`/`↓` select a change (or click) · `←`/`→`/`tab` choose a next-step button · `enter` press it · `n` new change (refused until the ground rules are settled) · `w` let an agent draft the next artifact · `x` stop the agent drafting the selected change (or click "Cancel  x") · `e` write it yourself in `$EDITOR` · `v` read the latest draft · `f` the ground rules, at the first open question · `r` review · `h` start screen · `?` help · `q` quit (with an ACP turn running, `q` twice) |
 | Review | `a` accept · `r` reject (asks why; empty is allowed) · `d` defer (asks what would verify it; required) · `s` skip · `e` edit in `$EDITOR` at the item's line, then re-read (an edit after a decision is drift) · `m` then `1`–`9` mark a flagged value as an example · `n`/`j`/`↓` next · `p`/`k`/`↑` previous — `p` promotes instead on a global design decision · `?` help (any key closes it) · `q`/`ctrl+c` back to the overview, saved |
 | Review prompt | type · `enter` confirm · `backspace` · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
 | Document | `↑`/`↓`/`j`/`k` scroll · `space`/`pagedown`, `pageup` a page · `g`/`G` top, bottom · wheel · `←`/`→`/`tab` choose a button · `enter` press it (or click) · `n` looks good (and draft the next artifact) · `e` edit in `$EDITOR` · `f` redraft with feedback · `q`/`ctrl+c` back |
@@ -118,8 +149,9 @@ What the TUI binds today (stages 5 to 8):
 | Vision: the slices | `↑`/`↓`/`j`/`k` move (or click) · `space`/`x` keep or drop · `enter` write the roadmap and create the first slice's change · `ctrl+c` back |
 | Redraft feedback | type · `enter` redraft (not when empty) · `ctrl+c` cancel |
 | New-change prompt | type · `enter` next / create · `tab` next suggested name (the model's proposals arrive under the input — "✦ proposing a better name…", then "suggestions: … (tab cycles)" — and never overwrite a name you already edited) · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
+| An agent asks permission (an overlay, on any screen) | `1`/`2`/`3`/`4` pick the agent's option — allow once, allow always, deny, deny always, in that order — or click one; the numbers work wherever they are not being typed as text (the start screen, the overview, the document viewer, the review, the job pane), and elsewhere a click answers |
 | Help | any key closes it |
-| Job pane | `j`/`k`/`↑`/`↓` select (or click) · `x` cancel the selected job, then `y` · `p` clear finished jobs · `q`/`ctrl+c`/`ctrl+j` close |
+| Job pane | `j`/`k`/`↑`/`↓` select (or click) · `x` cancel the selected job, then `y` (an ACP turn is cancelled through its session, which stays open) · `p` clear finished jobs · `q`/`ctrl+c`/`ctrl+j` close |
 
 `g`-prefixed chords come from `@opentui/keymap`, matching opencode's leader-key
 feel. All bindings are remappable from config.

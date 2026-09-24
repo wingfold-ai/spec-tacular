@@ -10,7 +10,7 @@
 | Async | **tokio** (`rt-multi-thread`, `process`, `sync`, `time`) | One runtime for the three things that must happen at once: drawing, reading keys (`crossterm`'s `event-stream`), and streaming a subprocess agent's output into the job pane. |
 | CLI | **clap** (derive) | The command surface is a contract — `--print` is used in CI — so it is declared once, checked at build time, and renders its own help. |
 | Serialisation | **serde** + `serde_json` / `serde_yml` | `openspec --json` output, the review sidecars and the roadmap, all parsed into typed structs that ignore unknown fields, so an upstream addition is never a breaking change. |
-| Agent execution | Pluggable driver | Claude Code / opencode / codex invoked as subprocesses, streaming JSON today. **ACP** (the Agent Client Protocol) replaces the transport later, behind the same trait: permission prompts and tool/diff events in the UI, resumable sessions. Never hardcode one vendor. |
+| Agent execution | Pluggable driver, and **ACP** | Two paths. Detached **jobs**: Claude Code / opencode invoked as subprocesses in a session of their own, streaming JSON into a log — what `spectacular run` uses, and what outlives the TUI. **ACP** (the Agent Client Protocol, `agent-client-protocol` crate): the TUI's interactive layer — a conversation over the agent's stdio with its reply, tool calls and diffs live in the UI, permission prompts answered by a person, and a session kept open so a redraft continues it. Never hardcode one vendor: the ACP agent is `opencode acp`, Claude Code's `claude-agent-acp` adapter, or any command. |
 | State | JSON sidecar files in-repo | Reviewable in git, diffable, no database, survives clone. |
 
 **The load-bearing decision: wrap, do not fork.** `openspec/` on disk stays the
@@ -25,6 +25,7 @@ spec-tacular costs you nothing but the review history.
 ┌──────────────────────────────────────────────────────────┐
 │  TUI  (Ratatui + crossterm, tokio event loop)             │
 │  pipeline bar · review queue · job pane · ADRs · roadmap │
+│  ACP running block · permission overlay                   │
 └──────────────────────────────────────────────────────────┘
                           │ renders the model
 ┌──────────────────────────────────────────────────────────┐
@@ -34,7 +35,7 @@ spec-tacular costs you nothing but the review history.
 └──────────────────────────────────────────────────────────┘
         │                        │                     │
 ┌───────────────┐   ┌─────────────────────┐   ┌──────────────┐
-│ OpenSpec      │   │ Agent drivers       │   │ Job runner   │
+│ OpenSpec      │   │ Agent drivers · ACP │   │ Job runner   │
 │ adapter       │   │ claude / opencode   │   │ background   │
 └───────────────┘   └─────────────────────┘   └──────────────┘
         │
@@ -159,9 +160,14 @@ trait AgentDriver {
 }
 ```
 
-The transport behind this trait is a subprocess emitting JSON lines today and
-ACP later. The trait is what the rest of the program sees either way, which is
-what keeps the switch a change to `agent/` alone.
+The transport behind this trait is a subprocess emitting JSON lines, run as a
+detached job. The interactive path is ACP (`agent/acp/`): a session per
+draft, held by the TUI, whose `session/update`s become a handful of plain
+`AcpEvent`s (reply text, tool calls with their diffs, the plan, the cost, the
+stop reason) and whose `session/request_permission` is answered from the UI.
+Nothing outside `agent/` speaks the protocol: the TUI sees events and
+answers, and the commands layer composes the same prompt behind the same
+gates for both paths (`commands::prepare_dispatch`).
 
 Every agent call receives the Foundation documents and accepted ADRs in its
 context bundle. That is the mechanism by which ground rules actually constrain
@@ -176,8 +182,15 @@ review loop and a running `apply` are concurrent by construction — that is the
 point of §7 in the problem analysis, and the reason the TUI is event-driven
 rather than a prompt loop.
 
-Concurrency rule: at most one job may write to a given change at a time. Reviews
-are reads and always allowed.
+An ACP turn is recorded as a job too (driver `acp`): the record says
+`running` with the agent's pid while the turn runs, and its log is the
+session's events rendered as lines, so the job pane and `spectacular jobs`
+list interactive and detached work alike. What an ACP record cannot do is
+outlive the TUI: the session is a conversation with it, and ends when it
+quits — `spectacular run` is the path for work that must keep going.
+
+Concurrency rule: at most one job may write to a given change at a time,
+whichever path started it. Reviews are reads and always allowed.
 
 ## The rule that holds it together
 

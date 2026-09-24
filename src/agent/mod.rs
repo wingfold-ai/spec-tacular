@@ -1,11 +1,15 @@
 //! Coding agents, and the registry that picks one.
 //!
-//! `driver` defines the trait, `claude` and `opencode` implement it, and
+//! `driver` defines the trait, `claude` and `opencode` implement it,
 //! `structured` is the one-shot request the TUI makes when it needs an answer
-//! rather than a job. Nothing above this module names a vendor: commands ask
+//! rather than a job, and `acp` is the conversation the TUI holds with an
+//! agent that is drafting. Nothing above this module names a vendor: commands ask
 //! the registry for an id and get back something that builds a command line
 //! and renders its output.
 
+/// ACP: the interactive agent layer — sessions, permission prompts, live
+/// tool and diff events.
+pub mod acp;
 pub mod claude;
 pub mod driver;
 pub mod opencode;

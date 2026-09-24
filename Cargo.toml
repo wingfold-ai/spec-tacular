@@ -11,7 +11,20 @@ readme = "README.md"
 name = "spectacular"
 path = "src/main.rs"
 
+# A scripted ACP agent the tests talk to instead of a real one (and so
+# instead of spending money): tests/support/fake_acp_agent.rs. It is a
+# binary because the point is the real thing — a child process, JSON-RPC
+# over its stdio, a process group to clean up.
+[[bin]]
+name = "fake-acp-agent"
+path = "tests/support/fake_acp_agent.rs"
+test = false
+doc = false
+
 [dependencies]
+# The Agent Client Protocol: JSON-RPC to an agent over its stdio, typed.
+# Pure Rust (futures, serde, async-io) — nothing compiles C.
+agent-client-protocol = "2.2.0"
 anyhow = "1.0.104"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4.6.7", features = ["derive"] }
@@ -19,6 +32,8 @@ crossterm = { version = "0.29.0", features = ["event-stream"] }
 # The `Stream` trait crossterm's `EventStream` implements, polled without
 # pulling in the whole `futures` family.
 futures-core = "0.3.31"
+# `Sink`/`Stream` adapters over the agent's pipes, for the ACP transport.
+futures = "0.3.31"
 hex = "0.4.3"
 # Signals and setsid: FFI declarations only — libc compiles no C, so the
 # no-C-toolchain build in docs/rust-port.md still holds.
