@@ -32,10 +32,14 @@ export function adopt(child: ChildProcess): ChildProcess {
     hooked = true;
     // 'exit' handlers must be synchronous; kill() is.
     process.once('exit', killAll);
-    for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
+    // A signal ends the process without 'exit' handlers running, so each is
+    // caught here too. The TUI's renderer listens for the same signals to
+    // restore the terminal — it registered first, so it has run by now.
+    const codes = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 } as const;
+    for (const signal of Object.keys(codes) as (keyof typeof codes)[]) {
       process.once(signal, () => {
         killAll();
-        process.exit(128 + (signal === 'SIGTERM' ? 15 : 1));
+        process.exit(codes[signal]);
       });
     }
   }

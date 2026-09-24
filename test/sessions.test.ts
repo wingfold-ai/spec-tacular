@@ -78,6 +78,22 @@ describe('a stream-json session', () => {
   });
 });
 
+describe('when spec-tacular is stopped', () => {
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+    test(`${signal} takes its agent sessions with it`, async () => {
+      const holder = Bun.spawn([process.execPath, join(import.meta.dir, 'support', 'session-holder.ts')], { stdout: 'pipe' });
+      const reader = holder.stdout.getReader();
+      const { value } = await reader.read();
+      const pid = Number(new TextDecoder().decode(value).trim());
+      expect(() => process.kill(pid, 0)).not.toThrow();
+      holder.kill(signal);
+      await holder.exited;
+      await Bun.sleep(300);
+      expect(() => process.kill(pid, 0)).toThrow();
+    });
+  }
+});
+
 // ---------------------------------------------------------------------------
 
 /** A driver whose sessions are the fake agent, counting what it starts. */
