@@ -46,7 +46,7 @@ over a pipe and in CI.
 
 ## Status
 
-**M0–M5 done** (M1 mostly). The review loop works: open a change, walk its
+**M0–M6 done** (M1 mostly). The review loop works: open a change, walk its
 requirements one at a time, and `a`ccept / `r`eject / `d`efer / `e`dit each one
 from the keyboard. Decisions persist immediately, drift is detected when a
 reviewed requirement is edited afterwards, and reopening resumes where you
@@ -61,6 +61,29 @@ Agents run in the background. `spectacular run <artifact> -c <change>`
 dispatches Claude Code or opencode and returns immediately, so you keep
 reviewing while it works. `ctrl+j` pulls up the job pane mid-review without
 losing your place.
+
+Premature specificity gets questioned. A requirement naming an endpoint, a
+column or a class it has not earned is flagged during review, and `m` marks a
+value as `{{example: ...}}` — an illustration rather than a contract. Advisory
+only: it never blocks a stage.
+
+```
+ The system SHALL let a user export their data in a portable format CSV,
+ exposed as POST /v1/export and persisted to the user_exports table by
+ `ExportController`.
+
+   examples, not contracts: CSV
+
+   1. names an HTTP endpoint: POST /v1/export
+   2. names a field or table: user_exports
+   3. names a class or symbol: ExportController
+```
+
+Tune it per project with `spec-tacular/lint.json`:
+
+```json
+{ "allow": ["tasks.md", "proposal.md", "openspec"] }
+```
 
 Verified against the largest change in the OpenSpec repo — 26 requirements,
 reviewed end to end by keystroke in tests that assert on the real rendered
