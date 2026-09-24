@@ -123,7 +123,7 @@ is the same renderer, so this is not a mock of the UI.
 
 ---
 
-## M4 — Gating and the custom schema
+## M4 — Gating and the custom schema  ✅ done
 
 **Goal:** `proposal → specs → design → tasks`, enforced.
 
@@ -137,6 +137,39 @@ is the same renderer, so this is not a mock of the UI.
 
 **Exit:** with pending spec requirements, generating `design` is refused and the
 UI says precisely why.
+
+**Result:** met, verified against a real project. `spectacular init` installs
+the schema, OpenSpec itself validates it (`openspec schema validate
+spec-tacular` → valid), and a change created afterwards reports
+`design <- [specs]` where `spec-driven` reports `design <- [proposal]`.
+
+```
+$ spectacular instructions design --change try-gating
+Refused: design is not ready to be written
+  - specs: 2 pending of 2 requirements
+$ echo $?
+1
+```
+
+Accepting both requirements opens the gate and OpenSpec's real instructions
+flow through. Editing an accepted requirement afterwards re-blocks it and
+flags the downstream artifact:
+
+```
+try-gating   * proposal  * specs  * design  > tasks  o apply
+             specs: 1/2 accepted · 1 pending  ! 1 changed since review
+             ! design may be stale — specs changed after review (1 requirement)
+```
+
+That last line is the failure the whole sequencing argument is about, and
+OpenSpec cannot see it: both files exist, so it reports the change as fine.
+
+**One honest limitation.** Acceptance is enforced only where it can be
+measured. Only `specs` carries per-requirement review, so a prose artifact
+(proposal, design, tasks) is still gated on existence alone. Requiring
+acceptance there would block every change forever; assuming it would be a lie.
+Document-level review — accepting `design.md` decision by decision — is the
+missing piece, and it belongs with the design-review screen in M7.
 
 ---
 
