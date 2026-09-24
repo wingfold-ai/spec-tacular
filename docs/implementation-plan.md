@@ -11,7 +11,7 @@ exists would mean building them twice.
 
 ---
 
-## M0 — Skeleton
+## M0 — Skeleton  ✅ done
 
 **Goal:** `spectacular` launches, reads a real OpenSpec project, exits cleanly.
 
@@ -23,18 +23,34 @@ exists would mean building them twice.
 **Exit:** run it in the OpenSpec repo itself (it has ~25 active changes and ~35
 specs — a good stress case) and list the changes.
 
+**Result:** met. Reads all 26 active changes in the OpenSpec repo. Delivered:
+
+- `src/adapter/` — typed subprocess adapter over `openspec --json`, the single
+  coupling point to OpenSpec.
+- `src/core/pipeline.ts` — schema-agnostic stage derivation, so this works
+  unchanged with `spec-driven`, spec-tacular's schema, or any fork.
+- `src/render/text.ts` — headless renderer. `--print` makes the overview work
+  over a pipe and in CI, and makes the layout unit-testable without a terminal.
+- `src/tui/app.tsx` — OpenTUI + Solid shell with the constant frame.
+- 19 tests, typecheck clean.
+
+Also landed early, from M1: the pipeline bar, change list sorted least-complete
+first, and prerequisite-gap reporting.
+
 ---
 
-## M1 — The always-visible pipeline
+## M1 — The always-visible pipeline  ◐ partly done
 
 **Goal:** your "clear overview at all times" requirement, standalone.
 
-- **Pipeline bar**, persistent on every screen: the eight stages with the
-  current one highlighted and per-stage counts.
-- Change list with stage, acceptance progress, blocked reason.
-- Header breadcrumb (`project › change › artifact › requirement`) — the opencode
-  hierarchy cue.
-- Live refresh on filesystem change (watch `openspec/`).
+- ✅ **Pipeline bar**, persistent on every screen: stages with the current one
+  highlighted. Stages are derived from the change's schema rather than
+  hardcoded, so a custom schema renders correctly with no code change.
+- ✅ Change list with stage and blocked reason. (Acceptance progress needs M2.)
+- ☐ Header breadcrumb (`project › change › artifact › requirement`) — the
+  opencode hierarchy cue.
+- ☐ Live refresh on filesystem change (watch `openspec/`).
+- ☐ Per-stage counts (blocked on M2's acceptance state).
 
 **Exit:** at any moment, without scrolling, you can see which stage the active
 change is in and how much of it is accepted.
