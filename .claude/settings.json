@@ -1,0 +1,14 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-skills": {
+      "source": {
+        "source": "github",
+        "repo": "mhoegger/claude-skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "software-architecture@claude-skills": true,
+    "git-conventions@claude-skills": true
+  }
+}
