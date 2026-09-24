@@ -10,7 +10,8 @@
 import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
 
 const MARK: Record<StageState, string> = {
-  written: '*', //  written to disk (not yet "accepted" — that is M2)
+  accepted: '+', // written AND fully reviewed
+  written: '*', //  written to disk, review unfinished or unknown
   ready: '>', //    actionable now
   blocked: 'o', //  prerequisites unmet
 };
@@ -23,6 +24,7 @@ export interface RenderOptions {
 const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
 const YELLOW = '\x1b[33m';
+const GREEN = '\x1b[32m';
 const RESET = '\x1b[0m';
 
 function paint(s: string, code: string, on: boolean): string {
@@ -36,6 +38,7 @@ export function renderPipelineBar(p: ChangePipeline, opts: RenderOptions = {}): 
     const cell = `${MARK[s.state]} ${s.id}`;
     if (s.state === 'ready') return paint(cell, BOLD, color);
     if (s.state === 'blocked') return paint(cell, DIM, color);
+    if (s.state === 'accepted') return paint(cell, GREEN, color);
     return cell;
   });
   return cells.join('  ');
@@ -67,9 +70,26 @@ export function renderOverview(
     );
 
     const next = p.current
-      ? `next: ${p.current.id}`
+      ? `next: ${p.current.id}${p.current.state === 'written' ? ' (review)' : ''}`
       : 'planning complete — ready to apply';
     out.push(`${' '.repeat(width)}  ${paint(next, DIM, color)}`);
+
+    for (const stage of p.stages) {
+      const r = stage.review;
+      if (!r) continue;
+      const bits = [`${r.accepted}/${r.total} accepted`];
+      if (r.rejected) bits.push(`${r.rejected} rejected`);
+      if (r.deferred) bits.push(`${r.deferred} deferred`);
+      if (r.pending) bits.push(`${r.pending} pending`);
+      // Drift is called out separately and in warning colour: it means a
+      // decision a human already made is no longer valid.
+      const line = `${stage.id}: ${bits.join(' · ')}`;
+      out.push(
+        `${' '.repeat(width)}  ` +
+          paint(line, r.complete ? GREEN : DIM, color) +
+          (r.drifted ? paint(`  ! ${r.drifted} changed since review`, YELLOW, color) : ''),
+      );
+    }
 
     for (const g of p.gaps) {
       // Worded as an observation, not a verdict: an optional artifact that was
@@ -108,9 +128,9 @@ export function renderOverview(
 
   out.push(
     paint(
-      'note: "written" means the file exists, not that anyone accepted it —\n' +
-        'review state arrives in M2. A "?" marks an artifact whose prerequisite\n' +
-        'was never written; under spec-driven that may be a deliberate skip.',
+      'legend: + accepted · * written (review unfinished) · > ready · o blocked.\n' +
+        'A "?" marks an artifact whose prerequisite was never written; under\n' +
+        'spec-driven that may be a deliberate skip.',
       DIM,
       color,
     ),
