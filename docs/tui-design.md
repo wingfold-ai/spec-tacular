@@ -81,12 +81,19 @@ Verify one here and it merges into the main specs.
 | `p` | promote decision to ADR (design review only) |
 | `g` then `d`/`r`/`j`/`k`/`v` | go to dashboard · review · jobs · decisions · pending validation |
 | `Ctrl-J` | toggle job overlay |
-| `Enter` / `Esc` | descend · ascend the hierarchy |
+| `Enter` | descend the hierarchy (a change → its review queue) |
+| `ctrl+c` | cancel a prompt, or go back one level |
 | `?` | context-sensitive help |
 | `q` | back, or quit at the top level |
 
 `g`-prefixed chords come from `@opentui/keymap`, matching opencode's leader-key
 feel. All bindings are remappable from config.
+
+**Not `escape`.** A lone ESC is the prefix of every escape sequence, so a
+terminal parser cannot deliver it until it sees what follows — pressed alone it
+yields no event at all, and pressed before `x` it arrives as alt-x. `ctrl+c` is
+the cancel that always works. `escape` is still handled for terminals that
+resolve it, but no interaction may depend on it.
 
 ## Principles
 

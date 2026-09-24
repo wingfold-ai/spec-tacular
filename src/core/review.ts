@@ -37,6 +37,14 @@ export interface ChangeReview {
   change: string;
   schemaVersion: number;
   requirements: Record<string, RequirementReview>;
+  /**
+   * Where the last review session stopped, as a requirement id.
+   *
+   * An id rather than an index: an index silently points at a different
+   * requirement as soon as one is inserted above it, and resuming matters most
+   * exactly when the specs have been revised.
+   */
+  cursor?: string | null;
 }
 
 /** A requirement joined with its review state, as the UI consumes it. */
@@ -102,6 +110,7 @@ export function loadReview(projectRoot: string, change: string): ChangeReview {
       change,
       schemaVersion: parsed.schemaVersion,
       requirements: parsed.requirements ?? {},
+      cursor: parsed.cursor ?? null,
     };
   } catch {
     return emptyReview(change);
