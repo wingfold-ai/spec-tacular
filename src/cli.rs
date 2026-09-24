@@ -7,8 +7,8 @@
 //!
 //! Nothing here does any work. Dispatch decides *which* command was asked for
 //! and whether the project is one spec-tacular can act on; what each command
-//! does lives in `commands.rs`, over `core/` and `adapter/`, and the ones that
-//! are not ported yet still decline rather than pretend.
+//! does lives in `commands.rs`, over `core/` and `adapter/`. Every subcommand
+//! now does its work; only the TUI still declines rather than pretending.
 
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
@@ -149,14 +149,17 @@ pub enum Command {
 
     /// Merge accepted requirements, divert deferred ones to the register
     Archive {
-        // NOTE(stage 4): there are two ways to name the change here, and they
-        // are not equal. The TypeScript parser falls back to this positional
-        // *only when `-c` was not given* (src/cli.ts:140,
-        // `if (second && !args.change) args.change = second`), so `-c` wins on
-        // a conflict and the positional is the shorthand. clap parses both
-        // independently, so whoever implements `archive` has to reconcile
-        // them explicitly rather than inheriting that precedence.
+        // Two ways to name the change, and they are not equal. The TypeScript
+        // parser fell back to this positional *only when `-c` was not given*
+        // (src/cli.ts:140, `if (second && !args.change) args.change = second`),
+        // so `-c` wins on a conflict and the positional is the shorthand.
+        // `cli.rs` reconciles them at dispatch, because clap parses both.
+        //
+        // The id is not `change`: a positional sharing the global `--change`
+        // flag's id shadows it here, and `spectacular archive x -c y` would be
+        // a usage error rather than the precedence above.
         /// The change to archive (or pass it with -c)
+        #[arg(id = "archive-change", value_name = "change")]
         change: Option<String>,
 
         /// Report what would happen and write nothing
@@ -187,40 +190,6 @@ pub enum Command {
         #[arg(long, value_name = "slice")]
         done: Option<String>,
     },
-}
-
-impl Command {
-    /// Which stage of the port implements this command, for the placeholder
-    /// message. The stages are the ones listed in README.md.
-    fn stage(&self) -> u8 {
-        match self {
-            // Stage 3 landed these; `run` never asks them for a stage.
-            Command::Init | Command::Instructions { .. } | Command::Adr | Command::Foundation => 3,
-            // The background jobs and the archive half.
-            Command::Run { .. }
-            | Command::Jobs { .. }
-            | Command::Archive { .. }
-            | Command::Pending
-            | Command::Verify { .. }
-            | Command::Roadmap { .. } => 4,
-        }
-    }
-
-    /// The name as it is typed, for the placeholder message.
-    fn name(&self) -> &'static str {
-        match self {
-            Command::Init => "init",
-            Command::Instructions { .. } => "instructions",
-            Command::Run { .. } => "run",
-            Command::Jobs { .. } => "jobs",
-            Command::Adr => "adr",
-            Command::Foundation => "foundation",
-            Command::Archive { .. } => "archive",
-            Command::Pending => "pending",
-            Command::Verify { .. } => "verify",
-            Command::Roadmap { .. } => "roadmap",
-        }
-    }
 }
 
 /// Parse and dispatch. Returns the process exit code rather than exiting, so
@@ -273,6 +242,13 @@ where
         Some(Command::Init) => commands::run_init(&cwd, cli.force, &mut io),
         Some(Command::Adr) => commands::run_adrs(&cwd, &mut io),
         Some(Command::Foundation) => commands::run_foundation(&cwd, &mut io),
+        Some(Command::Pending) => commands::run_pending(&cwd, &mut io),
+        Some(Command::Jobs { job, cancel }) => {
+            commands::run_jobs(&cwd, job.as_deref(), *cancel, &mut io)
+        }
+        Some(Command::Roadmap { promote, done }) => {
+            commands::run_roadmap(&cwd, promote.as_deref(), done.as_deref(), &mut io)
+        }
         Some(Command::Instructions { artifact }) => {
             let Some(runtime) = runtime(&mut io) else {
                 return 1;
@@ -287,7 +263,51 @@ where
             ));
             report(result, &mut io)
         }
-        Some(command) => not_implemented(command.name(), command.stage()),
+        Some(Command::Run { artifact }) => {
+            let Some(runtime) = runtime(&mut io) else {
+                return 1;
+            };
+            let adapter = adapter(&cli, &cwd);
+            let result = runtime.block_on(commands::run_agent(
+                &adapter,
+                &cwd,
+                artifact.as_deref(),
+                cli.change.as_deref(),
+                &cli.driver,
+                &mut io,
+            ));
+            report(result, &mut io)
+        }
+        Some(Command::Archive { change, dry_run }) => {
+            let Some(runtime) = runtime(&mut io) else {
+                return 1;
+            };
+            let adapter = adapter(&cli, &cwd);
+            // `-c` wins over the positional, as the TypeScript parser had it:
+            // the fallback only fired when `--change` was absent.
+            let change = cli.change.as_deref().or(change.as_deref());
+            let result = runtime.block_on(commands::run_archive(
+                &adapter, &cwd, change, *dry_run, &mut io,
+            ));
+            report(result, &mut io)
+        }
+        Some(Command::Verify {
+            capability,
+            requirement,
+        }) => {
+            let Some(runtime) = runtime(&mut io) else {
+                return 1;
+            };
+            let adapter = adapter(&cli, &cwd);
+            let result = runtime.block_on(commands::run_verify(
+                &adapter,
+                &cwd,
+                capability.as_deref(),
+                requirement.as_deref(),
+                &mut io,
+            ));
+            report(result, &mut io)
+        }
         // The TUI is stage 5. Everything it would show is already here — the
         // overview below is the same model, rendered without a terminal.
         None if tui => not_implemented("the TUI", 5),
@@ -392,11 +412,27 @@ mod tests {
 
     #[test]
     fn archive_takes_its_change_positionally() {
-        let cli = Cli::try_parse_from(["spectacular", "archive", "add-auth", "--dry-run"]).unwrap();
+        let cli = Cli::try_parse_from(["spectacular", "archive", "add-auth", "--dry-run"])
+            .expect("parse");
         match cli.command {
             Some(Command::Archive { change, dry_run }) => {
                 assert_eq!(change.as_deref(), Some("add-auth"));
                 assert!(dry_run);
+            }
+            other => panic!("expected archive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn archive_still_accepts_the_change_as_a_flag() {
+        // The positional and `-c` are both spellings of one thing, and the
+        // positional must not shadow the global flag.
+        let cli = Cli::try_parse_from(["spectacular", "archive", "add-auth", "-c", "other"])
+            .expect("parse");
+        assert_eq!(cli.change.as_deref(), Some("other"));
+        match cli.command {
+            Some(Command::Archive { change, .. }) => {
+                assert_eq!(change.as_deref(), Some("add-auth"))
             }
             other => panic!("expected archive, got {other:?}"),
         }
@@ -427,8 +463,10 @@ mod tests {
     }
 
     #[test]
-    fn what_is_left_declines_with_the_stage_that_brings_it() {
-        assert_eq!(Command::Pending.stage(), 4);
-        assert_eq!(Command::Adr.stage(), 3);
+    fn every_verb_now_runs_rather_than_declining() {
+        // Stage 4 is the last one that removes a placeholder from a
+        // subcommand. Only the TUI still declines, and it is not a subcommand.
+        let help = Cli::command().render_help().to_string();
+        assert!(!help.contains("not implemented"), "{help}");
     }
 }
