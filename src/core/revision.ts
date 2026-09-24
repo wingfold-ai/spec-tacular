@@ -8,24 +8,24 @@
  * (docs/problem-analysis.md §3).
  */
 
-import type { ReviewedRequirement } from './review.ts';
+import type { ReviewedItem } from './review.ts';
 
 export interface RevisionBundle {
   change: string;
-  rejected: ReviewedRequirement[];
+  rejected: ReviewedItem[];
   /** Markdown instruction to hand to the agent. */
   instruction: string;
 }
 
 export function buildRevisionBundle(
   change: string,
-  items: ReviewedRequirement[],
+  items: ReviewedItem[],
 ): RevisionBundle {
   const rejected = items.filter((i) => i.state === 'rejected');
   return { change, rejected, instruction: renderInstruction(change, rejected) };
 }
 
-function renderInstruction(change: string, rejected: ReviewedRequirement[]): string {
+function renderInstruction(change: string, rejected: ReviewedItem[]): string {
   if (rejected.length === 0) {
     return `No requirements were rejected in ${change}. Nothing to revise.`;
   }
@@ -42,17 +42,17 @@ function renderInstruction(change: string, rejected: ReviewedRequirement[]): str
   // Grouped by capability so the agent opens each spec file once, and so a
   // reviewer reading this back can see whether one file attracted every
   // rejection.
-  const byCapability = new Map<string, ReviewedRequirement[]>();
+  const byCapability = new Map<string, ReviewedItem[]>();
   for (const item of rejected) {
-    const key = item.requirement.capability;
+    const key = item.item.capability;
     byCapability.set(key, [...(byCapability.get(key) ?? []), item]);
   }
 
   for (const [capability, items] of [...byCapability].sort(([a], [b]) => a.localeCompare(b))) {
     lines.push(`## ${capability}`, '');
-    lines.push(`File: \`${items[0]!.requirement.file}\``, '');
+    lines.push(`File: \`${items[0]!.item.file}\``, '');
     for (const item of items) {
-      lines.push(`### Requirement: ${item.requirement.name}`, '');
+      lines.push(`### Requirement: ${item.item.name}`, '');
       lines.push(
         item.review.note?.trim()
           ? `**Reason for rejection:** ${item.review.note.trim()}`

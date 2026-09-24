@@ -15,7 +15,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Requirement, Rename } from './requirements.ts';
+import type { ReviewItem, Rename } from './requirements.ts';
 
 export type ReviewState = 'pending' | 'accepted' | 'rejected' | 'deferred';
 
@@ -47,9 +47,9 @@ export interface ChangeReview {
   cursor?: string | null;
 }
 
-/** A requirement joined with its review state, as the UI consumes it. */
-export interface ReviewedRequirement {
-  requirement: Requirement;
+/** A review item joined with its state, as the UI consumes it. */
+export interface ReviewedItem {
+  item: ReviewItem;
   state: ReviewState;
   review: RequirementReview;
   /**
@@ -166,19 +166,16 @@ function idFor(capability: string, name: string): string {
  * an annotation on it. A requirement the parser no longer sees simply
  * disappears from the queue, and its stale entry is dropped on the next save.
  */
-export function reconcile(
-  requirements: Requirement[],
-  review: ChangeReview,
-): ReviewedRequirement[] {
-  return requirements.map((requirement) => {
-    const stored = review.requirements[requirement.id] ?? PENDING;
+export function reconcile(items: ReviewItem[], review: ChangeReview): ReviewedItem[] {
+  return items.map((item) => {
+    const stored = review.requirements[item.id] ?? PENDING;
     // A pending entry has no hash and cannot have drifted — only a decision
     // can be invalidated by an edit.
     const drifted =
-      stored.state !== 'pending' && stored.hash !== null && stored.hash !== requirement.hash;
+      stored.state !== 'pending' && stored.hash !== null && stored.hash !== item.hash;
 
     return {
-      requirement,
+      item,
       state: drifted ? 'pending' : stored.state,
       review: stored,
       drifted,
@@ -186,7 +183,7 @@ export function reconcile(
   });
 }
 
-export function summarize(reviewed: ReviewedRequirement[]): ReviewSummary {
+export function summarize(reviewed: ReviewedItem[]): ReviewSummary {
   const count = (s: ReviewState) => reviewed.filter((r) => r.state === s).length;
   const accepted = count('accepted');
   const deferred = count('deferred');
@@ -208,19 +205,19 @@ export function summarize(reviewed: ReviewedRequirement[]): ReviewSummary {
 /** Records a decision, stamping the hash of the exact text that was reviewed. */
 export function setState(
   review: ChangeReview,
-  requirement: Requirement,
+  item: ReviewItem,
   state: ReviewState,
   extra: { note?: string; deferReason?: string } = {},
 ): ChangeReview {
   const entry: RequirementReview = {
     state,
-    hash: state === 'pending' ? null : requirement.hash,
+    hash: state === 'pending' ? null : item.hash,
     reviewedAt: state === 'pending' ? null : new Date().toISOString(),
     ...(extra.note ? { note: extra.note } : {}),
     ...(extra.deferReason ? { deferReason: extra.deferReason } : {}),
   };
   return {
     ...review,
-    requirements: { ...review.requirements, [requirement.id]: entry },
+    requirements: { ...review.requirements, [item.id]: entry },
   };
 }

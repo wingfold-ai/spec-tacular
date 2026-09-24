@@ -20,7 +20,7 @@ import {
   skip as skipItem,
   type ReviewSession,
 } from '../core/session.ts';
-import type { Requirement } from '../core/requirements.ts';
+import { isRequirement, type ReviewItem } from '../core/requirements.ts';
 import { currentItem } from '../core/session.ts';
 import { openInEditor } from './editor.ts';
 import { JobPane, summarizeJobs } from './jobs.tsx';
@@ -29,6 +29,7 @@ import { THEME } from './theme.ts';
 import type { Job } from '../core/jobs.ts';
 import { lintRequirement, type LintConfig } from '../core/concreteness.ts';
 import { markExampleInFile } from '../core/mark.ts';
+import type { Decision } from '../core/decisions.ts';
 
 export interface TuiInput {
   pipelines: ChangePipeline[];
@@ -39,7 +40,7 @@ export interface TuiInput {
   /** Persists a session's decisions and cursor. */
   saveSession: (session: ReviewSession) => void;
   /** Re-parses a change's specs, for after an external edit. */
-  reparse: (change: string) => Requirement[];
+  reparse: (change: string) => ReviewItem[];
   /** Per-project linter tuning. */
   lintConfig: LintConfig;
   /** Recomputes the overview after review changed something. */
@@ -49,6 +50,8 @@ export interface TuiInput {
   /** Rendered log lines for one job. */
   tailJob: (job: Job) => string[];
   cancelJob: (job: Job) => void;
+  /** Lifts a global design decision to a project-wide ADR. */
+  promote: (change: string, decision: Decision) => { ok: true; adr: string } | { ok: false; reason: string };
 }
 
 const STAGE_COLOR: Record<StageState, string> = {
@@ -184,15 +187,40 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const findings = createMemo(() => {
     const current = session();
     const item = current ? currentItem(current) : null;
-    return item ? lintRequirement(item.requirement, props.input.lintConfig) : [];
+    // Only a spec requirement is linted for premature concreteness; a design
+    // decision is supposed to be concrete.
+    return item && isRequirement(item.item)
+      ? lintRequirement(item.item, props.input.lintConfig)
+      : [];
   });
+
+  /** A global-scope design decision is the only promotable item. */
+  const promotable = createMemo(() => {
+    const current = session();
+    const item = current ? currentItem(current) : null;
+    const decision = item?.item as Decision | undefined;
+    return decision?.capability === 'design' && decision.scope === 'global';
+  });
+
+  const onPromote = () => {
+    const current = session();
+    const item = current ? currentItem(current) : null;
+    if (!current || !item) return;
+    const result = props.input.promote(current.change, item.item as Decision);
+    setNotice(result.ok ? `promoted to ${result.adr}` : result.reason);
+    if (result.ok) {
+      // Re-parsed: promotion rewrites design.md, so the decision's text
+      // changed and its acceptance must reset like any other edit.
+      setSession(refresh(current, props.input.reparse(current.change)));
+    }
+  };
 
   const onEdit = () => {
     const current = session();
     const item = current ? currentItem(current) : null;
     if (!current || !item) return;
 
-    const result = openInEditor(renderer, item.requirement.file, item.requirement.line);
+    const result = openInEditor(renderer, item.item.file, item.item.line);
     if (!result.ok) {
       setNotice(result.reason ?? 'Could not open an editor');
       return;
@@ -285,11 +313,13 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           onEdit={onEdit}
           onMove={(d) => commit(moveCursor(session()!, d))}
           findings={findings()}
+          promotable={promotable()}
+          onPromote={onPromote}
           onMarkExample={(finding) => {
             const current = session();
             const item = current ? currentItem(current) : null;
-            if (!current || !item) return;
-            const result = markExampleInFile(item.requirement, finding.value);
+            if (!current || !item || !isRequirement(item.item)) return;
+            const result = markExampleInFile(item.item, finding.value);
             if (!result.ok) {
               setNotice(result.reason);
               return;

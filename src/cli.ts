@@ -23,7 +23,7 @@ import { openSession, type ReviewSession } from './core/session.ts';
 import { saveReview } from './core/review.ts';
 import type { OpenSpecChangeStatus } from './adapter/types.ts';
 import { renderOverview } from './render/text.ts';
-import { gateFor } from './core/gate.ts';
+import { foundationGate, gateFor } from './core/gate.ts';
 import { initProject, SCHEMA_NAME } from './core/init.ts';
 import { buildContext, buildPrompt } from './core/context.ts';
 import {
@@ -36,8 +36,10 @@ import {
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
 import { loadLintConfig } from './core/concreteness.ts';
+import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
+import { foundationDir, isUnanswered, loadFoundation } from './core/foundation.ts';
 
-type Command = 'overview' | 'init' | 'instructions' | 'run' | 'jobs';
+type Command = 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation';
 
 interface Args {
   command: Command;
@@ -88,6 +90,8 @@ function parseArgs(argv: string[]): Args {
   const [first, second] = positional;
   if (first === 'init') args.command = 'init';
   else if (first === 'jobs') args.command = 'jobs';
+  else if (first === 'adr') args.command = 'adr';
+  else if (first === 'foundation') args.command = 'foundation';
   else if (first === 'instructions' || first === 'run') {
     args.command = first === 'run' ? 'run' : 'instructions';
     args.artifact = second;
@@ -110,6 +114,9 @@ Usage:
   spectacular jobs                         List background jobs
   spectacular jobs --job <id>              Tail one job's output
   spectacular jobs --job <id> --cancel     Stop a running job
+  spectacular foundation                   Show the project's ground rules and
+                                           what is still unanswered
+  spectacular adr                          List architectural decision records
 
 Options:
   -p, --print            Print the overview as text and exit
@@ -161,6 +168,13 @@ function runInit(args: Args): number {
   const result = initProject(args.cwd);
   process.stdout.write(`Installed the ${SCHEMA_NAME} schema to ${result.schemaDir}\n`);
   for (const file of result.files) process.stdout.write(`  ${file}\n`);
+  if (result.foundationCreated.length > 0) {
+    process.stdout.write(`\nScaffolded the Foundation at ${foundationDir(args.cwd)}\n`);
+    for (const file of result.foundationCreated) process.stdout.write(`  ${file}\n`);
+  }
+  for (const file of result.foundationSkipped) {
+    process.stdout.write(`  ${file} (kept — it already had answers)\n`);
+  }
   for (const note of result.notes) process.stdout.write(`\n${note}\n`);
   process.stdout.write(
     '\ndesign now requires specs, so a design cannot be written against\n' +
@@ -188,6 +202,23 @@ async function checkGate(
   if (!pipeline) {
     process.stderr.write(`No change called '${args.change}'.\n`);
     return { ok: false, code: 1 };
+  }
+
+  // The first artifact of a change is where the ground rules have to already
+  // exist; later ones are downstream of a proposal that already passed this.
+  const target = [...pipeline.stages, pipeline.apply].find((st) => st.id === args.artifact);
+  if (target && target.requires.length === 0) {
+    const foundation = foundationGate(args.cwd);
+    for (const warning of foundation.warnings) process.stderr.write(`Warning: ${warning}\n`);
+    if (!foundation.allowed) {
+      process.stderr.write(`Refused: ${foundation.reason}\n`);
+      for (const blocker of foundation.blockers) process.stderr.write(`  - ${blocker}\n`);
+      process.stderr.write(
+        `\nAnswer them in ${args.cwd}/spec-tacular/foundation, then try again.\n` +
+          'See what is outstanding with: spectacular foundation\n',
+      );
+      return { ok: false, code: 1 };
+    }
   }
 
   const gate = gateFor(pipeline, args.artifact);
@@ -328,6 +359,62 @@ function runJobs(args: Args): number {
   return 0;
 }
 
+/** `spectacular adr` — the project's durable decisions. */
+function runAdrs(args: Args): number {
+  const adrs = listAdrs(args.cwd);
+  if (adrs.length === 0) {
+    process.stdout.write(
+      'No architectural decisions recorded yet.\n' +
+        'Promote one while reviewing a design: press p on a decision.\n',
+    );
+    return 0;
+  }
+  for (const adr of adrs) {
+    const padded = String(adr.number).padStart(4, '0');
+    const status =
+      adr.status === 'superseded'
+        ? `superseded${adr.supersededBy ? ` by ADR-${String(adr.supersededBy).padStart(4, '0')}` : ''}`
+        : 'accepted';
+    process.stdout.write(`ADR-${padded}  ${status.padEnd(26)} ${adr.title}\n`);
+  }
+  return 0;
+}
+
+/** `spectacular foundation` — the ground rules, and what is still TBD. */
+function runFoundation(args: Args): number {
+  const items = loadFoundation(args.cwd);
+  if (items.length === 0) {
+    process.stderr.write(
+      `No Foundation at ${foundationDir(args.cwd)}.\n` +
+        'Run `spectacular init` to scaffold it.\n',
+    );
+    return 1;
+  }
+
+  const unanswered = items.filter(isUnanswered);
+  let group = '';
+  for (const item of items) {
+    if (item.capability !== group) {
+      group = item.capability;
+      process.stdout.write(`\n${group}\n`);
+    }
+    process.stdout.write(`  ${isUnanswered(item) ? '○' : '●'} ${item.name}\n`);
+  }
+
+  process.stdout.write(
+    `\n${items.length - unanswered.length}/${items.length} answered\n`,
+  );
+  if (unanswered.length > 0) {
+    // Not an error: a half-answered Foundation is a normal state to be in
+    // while setting a project up.
+    process.stdout.write(
+      'Unanswered questions are not carried into an agent\'s context — they are\n' +
+        'decisions nobody has made yet, not constraints.\n',
+    );
+  }
+  return 0;
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -347,6 +434,8 @@ async function main(): Promise<number> {
 
   if (args.command === 'init') return runInit(args);
   if (args.command === 'jobs') return runJobs(args);
+  if (args.command === 'adr') return runAdrs(args);
+  if (args.command === 'foundation') return runFoundation(args);
 
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
@@ -375,7 +464,9 @@ async function main(): Promise<number> {
     const queueFor = (change: string) => {
       const status = statuses.get(change);
       if (!status || specFilesOf(status).length === 0) return null;
-      return loadChangeReview(args.cwd, status);
+      // Decisions ride along in the TUI queue, so reviewing a change walks
+      // its requirements and then its design decisions in one pass.
+      return loadChangeReview(args.cwd, status, { includeDecisions: true });
     };
 
     await startTui({
@@ -387,14 +478,14 @@ async function main(): Promise<number> {
         if (!queue) return null;
         return openSession(
           change,
-          queue.requirements.map((r) => r.requirement),
+          queue.requirements.map((r) => r.item),
           queue.review,
         );
       },
       saveSession: (session) => saveReview(args.cwd, session.review),
       lintConfig: loadLintConfig(args.cwd),
       reparse: (change) =>
-        queueFor(change)?.requirements.map((r) => r.requirement) ?? [],
+        queueFor(change)?.requirements.map((r) => r.item) ?? [],
       reloadPipelines: async () => (await loadPipelines(adapter, args.cwd)).pipelines,
       listJobs: () => listJobs(args.cwd),
       tailJob: (job) => {
@@ -412,6 +503,16 @@ async function main(): Promise<number> {
       },
       cancelJob: (job) => {
         cancelJob(args.cwd, job.id);
+      },
+      promote: (change, decision) => {
+        try {
+          const { adr, reference } = promoteDecision(args.cwd, decision, { change });
+          const replaced = replaceDecisionBody(decision, reference);
+          if (!replaced.ok) return replaced;
+          return { ok: true, adr: `ADR-${String(adr.number).padStart(4, '0')}` };
+        } catch (err) {
+          return { ok: false, reason: (err as Error).message };
+        }
       },
     });
     return 0;

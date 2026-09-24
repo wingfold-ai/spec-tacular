@@ -79,7 +79,7 @@ Verify one here and it merges into the main specs.
 | `a` `r` `e` `d` `s` | accept · reject · edit · defer · skip |
 | `m` then `1`–`9` | mark a flagged value as an example, not a contract |
 | `n` `p` | next · previous requirement |
-| `p` | promote decision to ADR (design review only) |
+| `p` | promote a global decision to an ADR; on any other item, previous |
 | `g` then `d`/`r`/`j`/`k`/`v` | go to dashboard · review · jobs · decisions · pending validation |
 | `ctrl+j` | toggle the job overlay, from anywhere including mid-review |
 | `x` | cancel the selected job (asks first) |

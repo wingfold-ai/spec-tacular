@@ -9,7 +9,8 @@
  * a requirement looks like.
  */
 
-import type { ReviewedRequirement } from '../core/review.ts';
+import { isRequirement } from '../core/requirements.ts';
+import type { ReviewedItem } from '../core/review.ts';
 import type { ReviewSummary } from '../core/review.ts';
 
 export interface RequirementViewOptions {
@@ -67,28 +68,36 @@ export function renderCounts(summary: ReviewSummary): string {
 }
 
 export function renderRequirement(
-  item: ReviewedRequirement,
+  item: ReviewedItem,
   opts: RequirementViewOptions,
 ): string {
   const width = opts.width ?? DEFAULT_WIDTH;
-  const r = item.requirement;
+  const r = item.item;
   const out: string[] = [];
 
-  out.push(`${r.capability}   requirement ${opts.index} of ${opts.total}   [${r.operation}]`);
+  const noun = isRequirement(r)
+    ? 'requirement'
+    : r.capability.startsWith('foundation/')
+      ? 'ground rule'
+      : 'decision';
+  const operation = isRequirement(r) ? `   [${r.operation}]` : '';
+  out.push(`${r.capability}   ${noun} ${opts.index} of ${opts.total}${operation}`);
   out.push('');
-  out.push(`Requirement: ${r.name}`);
+  out.push(`${noun.charAt(0).toUpperCase()}${noun.slice(1)}: ${r.name}`);
   out.push('');
   out.push(...wrap(r.text, width));
   out.push('');
 
-  for (const scenario of r.scenarios) {
+  const scenarios = isRequirement(r) ? r.scenarios : [];
+  for (const scenario of scenarios) {
     out.push(`  Scenario: ${scenario.name}`);
     for (const line of scenario.body) out.push(`    ${line}`);
     out.push('');
   }
-  if (r.scenarios.length === 0) {
+  if (isRequirement(r) && scenarios.length === 0) {
     // Worth saying out loud: OpenSpec requires at least one scenario, so none
-    // is a defect in the spec, not merely an empty section.
+    // is a defect in the spec, not merely an empty section. A decision has
+    // none by nature, so the warning is scoped to requirements.
     out.push('  (no scenarios — every requirement must have at least one)');
     out.push('');
   }
