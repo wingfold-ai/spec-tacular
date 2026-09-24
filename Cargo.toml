@@ -1,0 +1,33 @@
+[package]
+name = "spec-tacular"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A terminal UI for spec-driven development built on OpenSpec"
+repository = "https://github.com/marius-hoegger/spec-tacular"
+readme = "README.md"
+
+[[bin]]
+name = "spectacular"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4.6.7", features = ["derive"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+hex = "0.4.3"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_yml = "0.0.13"
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time"] }
+
+# A single static binary people download is the point of the port, so the
+# release profile optimises for size as much as for speed.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

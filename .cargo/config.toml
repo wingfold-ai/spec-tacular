@@ -1,0 +1,14 @@
+# No C toolchain on the dev machine (no `cc`/`gcc`, no sudo), so the default
+# `x86_64-unknown-linux-gnu` target cannot link. Building against musl with
+# Rust's bundled `rust-lld` and a self-contained sysroot removes the need for
+# a system linker entirely, and gives a fully static binary as a bonus.
+#
+# If you do have a working C toolchain, `cargo build --target
+# x86_64-unknown-linux-gnu` still works; nothing here is load-bearing for the
+# source.
+[build]
+target = "x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-self-contained=yes"]
