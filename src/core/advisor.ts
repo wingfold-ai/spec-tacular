@@ -24,6 +24,7 @@ import {
   guidedQuestions,
   type GuidedQuestion,
 } from './foundation.ts';
+import { deriveFromArchitecture } from './derivations.ts';
 import { buildCodeFenceMask, normalizeContent, SECTION_HEADER } from './markdown.ts';
 import { matchPresets } from './presets.ts';
 import { slugify } from './requirements.ts';
@@ -83,8 +84,11 @@ export interface QuestionMeta {
   depth?: number;
   /** Set on a simpler question added to help decide another: that question. */
   helps?: string;
-  /** Proposed from earlier answers; shown first, confirmed by the developer. */
-  derived?: { answer: string; reason: string };
+  /**
+   * Proposed from earlier answers; shown first, confirmed by the developer.
+   * `table`: from core/derivations.ts, instantly, not yet refined by the advisor.
+   */
+  derived?: { answer: string; reason: string; table?: boolean };
   /** Plain-words explanation, from asking for help. */
   explain?: string;
   /**
@@ -160,6 +164,8 @@ export interface AdviceRequest {
   upcoming?: GuidedQuestion;
   /** Options already shown for `upcoming` from the preset table, to improve on. */
   upcomingOptions?: AdviceOption[];
+  /** Answers already proposed for open questions, to refine rather than repeat. */
+  derivedAlready?: Derived[];
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +215,9 @@ function projectContext(questions: GuidedQuestion[]): ContextSection[] {
     },
     {
       heading: 'Still open (never ask these again)',
-      lines: questions.filter((q) => !q.answered).map((q) => `- [${q.title}] ${q.item.name}`),
+      lines: questions
+        .filter((q) => !q.answered)
+        .map((q) => `- [${q.title}] ${q.item.name}${q.derive ? ' (propose)' : ''}`),
       empty: '(none)',
     },
   ];
@@ -288,6 +296,29 @@ export function buildAdviceParts(request: AdviceRequest, mode = adviceMode(reque
     'one-line reason naming the earlier answer it comes from. Only when confident;',
     'the developer confirms each one. Return an empty list otherwise.',
   );
+
+  if (request.answered?.question.title === 'Domain') {
+    // The domain comes first so that the rest need not be asked cold.
+    task.push(
+      '',
+      'The domain was asked first so that the rest can follow from it. So derived',
+      'also proposes an answer for every open question marked (propose): the choice',
+      'you would recommend for a project like this one — conventional, current,',
+      'consistent with everything decided — with a reason naming what about the',
+      'domain it follows from. A proposal is better than none: the developer confirms',
+      'or replaces each. Keep each answer to one or two lines.',
+    );
+  }
+
+  if (request.derivedAlready && request.derivedAlready.length > 0) {
+    task.push(
+      '',
+      'Already proposed for open questions (refine each for this project — its',
+      'language, its folder names — and return it under derived, or leave it out to',
+      'keep it as it is):',
+      ...request.derivedAlready.map((d) => `- ${d.question}: ${d.answer}`),
+    );
+  }
 
   return { preamble: INTRO, context: projectContext(request.questions), task: task.join('\n'), rules: optionRules(mode) };
 }
@@ -558,13 +589,23 @@ export class FoundationAdvisor {
   /**
    * Called the moment an answer is saved, before any model is asked: the
    * preset table's follow-ups for it (core/presets.ts), and its options for
-   * questions already in the Foundation that nobody has advised on yet.
-   * Returns the follow-ups added, by name, in order.
+   * questions already in the Foundation that nobody has advised on yet; and
+   * the answers an architecture style decides (core/derivations.ts), as
+   * derived proposals. Returns the follow-ups added, by name, in order.
    */
   presets(question: GuidedQuestion, answer: string): string[] {
     const match = matchPresets(question, answer);
     const meta = this.meta();
     const questions = guidedQuestions(this.projectRoot);
+
+    // Over whatever was proposed before: the style was just chosen, and what
+    // it decides is no longer a guess.
+    for (const d of deriveFromArchitecture(question, answer)) {
+      for (const q of questions) {
+        if (q.answered || !d.question.test(q.item.name)) continue;
+        updateMeta(this.projectRoot, q.item.id, { derived: { answer: d.answer, reason: d.reason, table: true } });
+      }
+    }
 
     for (const { question: pattern, options } of match.options) {
       for (const q of questions) {
@@ -603,6 +644,10 @@ export class FoundationAdvisor {
       answered: { question, answer, depth },
       upcoming,
       upcomingOptions: upcoming && meta[upcoming.item.id]?.preset ? meta[upcoming.item.id]?.options : undefined,
+      // The table's derivations, for the advisor to fit to this project.
+      derivedAlready: questions
+        .filter((q) => !q.answered && meta[q.item.id]?.derived?.table)
+        .map((q) => ({ question: q.item.name, ...meta[q.item.id]!.derived! })),
     };
     const mode = adviceMode(request);
     const parts = buildAdviceParts(request, mode);
