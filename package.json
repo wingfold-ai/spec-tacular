@@ -1,0 +1,24 @@
+{
+  "name": "spec-tacular",
+  "version": "0.0.0",
+  "description": "A terminal UI for spec-driven development, built on OpenSpec",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "spectacular": "./src/cli.ts" },
+  "engines": { "node": ">=20.19.0" },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.11",
+    "@opentui/solid": "^0.5.11",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "^1.13.1",
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,6 @@
+# The Solid JSX transform. Without it OpenTUI components render once and never
+# update — Solid's reactivity is a compile-time transform, not a runtime one.
+preload = ["@opentui/solid/preload"]
+
+[test]
+preload = ["@opentui/solid/preload"]

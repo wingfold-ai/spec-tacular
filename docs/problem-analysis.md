@@ -31,10 +31,25 @@ against it, silently.
 first-class support for this (`openspec schema fork spec-driven <name>`, schemas
 resolved from `openspec/schemas/`), so this costs one YAML file, not a fork.
 
-**But that alone is not enough.** `requires` is satisfied by *file existence*
-(see §2), so `design` would unblock the moment `specs/**/*.md` is written — not
-when you have accepted it. The schema gives us ordering; the review gate (§2) is
-what gives it teeth.
+**But that alone is not enough**, for two reasons.
+
+*One:* `requires` is satisfied by *file existence* (see §2), so `design` would
+unblock the moment `specs/**/*.md` is written — not when you have accepted it.
+The schema gives us ordering; the review gate (§2) is what gives it teeth.
+
+*Two:* in `spec-driven`, design is **optional** — its instruction says "When to
+include design.md (create only if any apply)". But OpenSpec's schema format has
+no way to *declare* an artifact optional, so "deliberately skipped" and "written
+out of order" are indistinguishable on disk. Measured against OpenSpec's own
+repo, 8 of its 26 active changes have a `tasks.md` but no `design.md`. Since
+`tasks.requires: [specs, design]`, every one of those task lists was written
+without the design it declares a dependency on — and OpenSpec reports all of
+them as fine.
+
+spec-tacular's schema makes design mandatory, which removes the ambiguity: once
+every artifact is required, a missing prerequisite is unambiguously an ordering
+violation. Until then the TUI reports these as *observations*, never as errors —
+see `PrerequisiteGap` in `src/core/pipeline.ts`.
 
 ---
 
