@@ -336,7 +336,7 @@ that is a matter of extending the gate to read their review state.
 
 ---
 
-## M8 — Deferral, archive split, and roadmap
+## M8 — Deferral, archive split, and roadmap  ✅ done
 
 **Goal:** the last two structural gaps.
 

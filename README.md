@@ -42,6 +42,11 @@ bun run src/cli.ts jobs --cwd /path/to/project
 # Ground rules and durable decisions
 bun run src/cli.ts foundation --cwd /path/to/project
 bun run src/cli.ts adr --cwd /path/to/project
+
+# Close a change, and the work it left unverified
+bun run src/cli.ts archive <change> --dry-run --cwd /path/to/project
+bun run src/cli.ts pending --cwd /path/to/project
+bun run src/cli.ts roadmap --cwd /path/to/project
 ```
 
 Drop `--print` for the TUI; `enter` opens the review queue for the selected
@@ -50,7 +55,8 @@ over a pipe and in CI.
 
 ## Status
 
-**M0–M7 done** (M1 mostly; M7 has one stated gap). The review loop works: open a change, walk its
+**M0–M8 done** (M1 mostly; M7 has one stated gap). Every structural problem
+from the original analysis is addressed. The review loop works: open a change, walk its
 requirements one at a time, and `a`ccept / `r`eject / `d`efer / `e`dit each one
 from the keyboard. Decisions persist immediately, drift is detected when a
 reviewed requirement is edited afterwards, and reopening resumes where you
@@ -97,6 +103,26 @@ $ spectacular adr
 ADR-0001  accepted   Errors are values
 ```
 
+Deployment-dependent work stops blocking a change. Defer a requirement that
+needs a running environment and the change archives without it: the verified
+requirements merge into `openspec/specs/`, the deferred one waits in
+`spec-tacular/pending-validation.md` with what would verify it.
+
+```
+$ spectacular archive add-export
+1 requirement(s) merge into the baseline
+1 divert to pending validation
+  data-export: Export completes against a deployment — a deployed instance to run against
+
+$ spectacular verify data-export --requirement "Export completes against a deployment"
+Verified into openspec/specs/data-export/spec.md
+Specification 'data-export' is valid
+```
+
+Greenfield gets sequenced. `spec-tacular/roadmap.yaml` holds the vision and an
+ordered list of slices; one is active at a time, so the review queue never
+exceeds a single change.
+
 Tune the linter per project with `spec-tacular/lint.json`:
 
 ```json
@@ -127,4 +153,5 @@ Source layout:
 | `src/core/` | Pure domain logic — requirement parsing, review state, drift detection, stage derivation. Schema-agnostic and terminal-free. |
 | `src/render/` | Headless text rendering, so the overview is testable and pipe-friendly. |
 | `src/agent/` | Agent drivers (Claude Code, opencode). Build a command; never talk to a model directly. |
+| `spec-tacular/` | What the tool writes for humans: foundation, ADRs, roadmap, pending-validation register. |
 | `src/tui/` | OpenTUI + Solid screens. Deliberately thin — they draw, `core/` decides. |
