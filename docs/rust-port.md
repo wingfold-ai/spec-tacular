@@ -74,6 +74,10 @@ src/
                    app.rs       the state, and events → state + effects
                    view.rs      drawing: pure functions of `&App`
                    home.rs      the start screen; logo.rs its wordmark
+                   review.rs    the review screen: one requirement or
+                                decision at a time, its keys and drawing
+                   document.rs  the document viewer: a drafted artifact,
+                                read in full, and what to do next
                    jobs.rs      the job pane; guide.rs the help and empty states
                    ports.rs     the `Ports` trait (the TypeScript `TuiInput`)
                                 and its real implementation
@@ -81,8 +85,11 @@ src/
                                 restoring them (Drop guard, panic hook)
                    editor.rs    `$VISUAL`/`$EDITOR`/nano/vim/vi at a line
                    widgets.rs, theme.rs, input.rs
-                   fake.rs, tests.rs   an in-memory `Ports` and the end-to-end
-                                tests that drive the app by keystroke
+                   fake.rs      an in-memory `Ports` (real files for the
+                                specs, the sidecar and the Foundation)
+                   tests/       the end-to-end tests that drive the app by
+                                keystroke: the harness, then one file per
+                                TypeScript suite
 ```
 
 The TUI is the Elm shape Ratatui suits. `App` holds what the TypeScript's
@@ -113,7 +120,7 @@ reviewable on its own.
 | 3 | `rust/03-adapter-commands` | OpenSpec adapter, context bundle, init, `--print` overview, `instructions`/`foundation`/`adr` |
 | 4 | `rust/04-jobs-agents` | background jobs, agent drivers (claude/opencode), `archive`/`pending`/`verify`/`roadmap` |
 | 5 | `rust/05-tui-shell` | TUI shell: event loop, theme, widgets, start screen, overview, help, jobs pane, describe-then-name new change, `$EDITOR` (ctrl+c never quits) |
-| 6 | `rust/06-review` | TUI review screen, document viewer, editor integration |
+| 6 | `rust/06-review-document` | TUI review screen, document viewer, editor integration |
 | 7 | `rust/07-setup` | guided setup: project stages, ground-rules screen, describe-then-name new change |
 | 8 | `rust/08-advisor` | AI advisor: structured requests, follow-ups/options/derived answers/help, name proposals, vision interview and slicing, draft opens when done, redraft with feedback |
 | 9 | `rust/09-acp` | ACP agent integration: permission prompts in the UI, live tool/diff events, session resume |
@@ -265,8 +272,9 @@ it).
 "Reading the project…" where its buttons go, and they appear when the answer
 does; `q` works meanwhile.
 
-**Stand-ins until the screens they need land.** Stage 5 ships the shell, not
-every screen, and says so rather than pretending:
+**Stand-ins until the screens they need land.** Stage 5 shipped the shell and
+stage 6 the review screen and the document viewer, not every screen, and they
+say so rather than pretending:
 
 - *The ground rules* (stage 7): Start sets the folder up and opens the
   overview, whose banner counts the answered questions; `f`, "Ground rules"
@@ -275,11 +283,6 @@ every screen, and says so rather than pretending:
 - *The vision interview* (stage 8): a new project at the vision step is
   offered "Start your first change" instead of "Describe your vision", and the
   overview shows the first-change guide.
-- *The review screen and the document viewer* (stage 6): `r` on a change with
-  specs says the review arrives in stage 6; `v` and "Read the …" are absent,
-  exactly as they were in the TypeScript when no `readArtifact` was wired; and
-  the running-agent block says you will be told when the draft is done rather
-  than that it opens for you.
 - *Name proposals from a model* (stage 8): the name is the instant one from
   the description's own words; `Ports::propose_names` is the hook, and the
   prompt already shows suggestions, tab-cycles them and never overwrites a
@@ -296,6 +299,55 @@ showed only an error under its buttons; the ctrl+c hint needs somewhere to
 appear there too, so a notice gets its own line in the same place. Everything
 else on that screen is placed as the TypeScript placed it, down to Yoga's
 rounding — a text line's edge floored, any other box's rounded half up.
+
+**The review shows its notices.** The TypeScript drew the notice line only in
+the overview's key bar, which the review screen replaces, so "promoted to
+ADR-0001", a refused mark ("the file changed since it was read") or a failed
+editor were set and never seen until you left the review. Here the review
+draws the notice above its progress bar, and the document viewer in its key
+bar.
+
+**Reading the queue is not done on the drawing thread.** `Ports::open_review`,
+`reparse`, `mark_example`, `promote` and `read_artifact` are futures whose
+real implementations read and write on a blocking thread, as `read_jobs` does;
+the TypeScript called them inline. A queue that arrives after you have left
+the overview does not pull you into it, and a fresh draft opens by itself only
+if you are still idle on the overview when it has been read — the TypeScript's
+condition, checked again when the file arrives. `save_session` alone stays
+synchronous: every decision is written before the next key is read, in order,
+which is what makes a crash mid-review lose nothing.
+
+**A stale answer never replaces a fresher one.** Reloads, re-parses of the
+review queue and document reads each carry a request number, and an answer
+older than the newest request of its kind is dropped — what it carried
+besides its data (a notice, a selection, a finished job) is handed on rather
+than lost. Without it, a reload started while a review was open could land
+after the one leaving the review asked for and show the specs as unreviewed
+again: `w` then said there was nothing to draft.
+
+**Reasons are typed with the shared line editor.** The reject and defer
+prompts, and the redraft feedback, take `ctrl+u` and `ctrl+w` like the
+new-change prompt. The TypeScript review prompts knew only backspace.
+
+**A page is what was drawn.** The TypeScript document viewer guessed its text
+height from the terminal's (13 or 16 rows less, for the chrome); here the
+viewer records where its text was drawn last frame, and `space`, `G` and the
+scroll percentage use that — so a page is exactly a page at any size. Lines
+are still wrapped where the TypeScript wrapped them, at the terminal's width
+less 8 (never under 30).
+
+**Buttons are measured in cells.** "📄 Read the proposal" has an emoji two
+cells wide; a button's width counts display cells, not characters, so its
+border closes where it should.
+
+**`v` is in the help.** The overview's help lists `v`, reading the latest
+draft; the TypeScript bound the key but never mentioned it.
+
+**The review end to end runs everywhere.** The TypeScript `review-e2e` read a
+checkout of OpenSpec at a fixed path and skipped when it was absent — which it
+was on every machine but one. Its 26-requirement change is copied into
+`tests/fixtures/simplify-skill-installation/`, with OpenSpec's MIT licence
+beside it, so the test always runs.
 
 **Button rows wrap.** A row of buttons too wide for its panel continues on the
 next line instead of being squeezed, as a flex row that is allowed to wrap

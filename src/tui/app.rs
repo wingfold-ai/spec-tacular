@@ -22,8 +22,11 @@ use crossterm::event::{
 };
 use ratatui::layout::{Position, Rect};
 
+use super::document::Document;
 use super::input::{edit_line, is_cancel, is_ctrl, is_enter};
 use super::ports::{JobsView, PortFuture, Ports, Snapshot};
+use super::review::Review;
+use crate::core::concreteness::LintConfig;
 use crate::core::gate::stale_artifacts;
 use crate::core::guide::{
     next_step, setup_step, validate_change_name, NextAction, NextStep, ProjectStage,
@@ -31,16 +34,23 @@ use crate::core::guide::{
 use crate::core::jobs::{Job, JobStatus};
 use crate::core::naming::name_from_description;
 use crate::core::pipeline::{ChangePipeline, StageState};
+use crate::core::requirements::ReviewItem;
 use crate::core::roadmap::Roadmap;
+use crate::core::session::ReviewSession;
 
-/// Which screen is up. The review screen, the document viewer, the ground
-/// rules and the vision interview join this in stages 6 to 8.
+/// Which screen is up. The ground rules and the vision interview join this
+/// in stages 7 and 8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     /// The logo, where the project stands, and one obvious next step.
     Home,
     /// The changes, and the selected one's pipeline and next step.
     Overview,
+    /// One change's requirements and decisions, one at a time
+    /// ([`super::review`]).
+    Review,
+    /// A drafted artifact, read in full ([`super::document`]).
+    Document,
 }
 
 /// Which half of the new-change prompt is showing.
@@ -118,13 +128,22 @@ impl HomeAction {
     }
 }
 
+/// What a next-step button on the selected change does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// The next step's own action.
+    Next(NextAction),
+    /// Open this artifact in the document viewer.
+    Read(String),
+}
+
 /// A next-step button on the selected change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionButton {
     pub label: String,
     /// The key that does the same, shown on the button.
     pub key: &'static str,
-    pub action: NextAction,
+    pub action: Action,
 }
 
 /// Something on screen a click lands on.
@@ -136,6 +155,10 @@ pub enum Target {
     NewChange,
     WatchLog,
     JobRow(usize),
+    /// A button under an open document.
+    DocButton(usize),
+    /// Where the document's text is drawn — how its keys know what a page is.
+    DocText,
 }
 
 /// Where each clickable thing was drawn last frame.
@@ -146,15 +169,27 @@ pub enum Effect {
     /// Run this and hand its result back through [`App::on_msg`].
     Spawn(PortFuture<Msg>),
     /// Hand the terminal to `$EDITOR` on `file`, then report back with
-    /// [`Msg::EditorClosed`], reloading and selecting `select`.
+    /// [`Msg::EditorClosed`], which does `then`.
     Editor {
         file: PathBuf,
         line: usize,
-        select: Option<String>,
+        then: AfterEditor,
     },
 }
 
-fn spawn<T: Send + 'static>(
+/// What happens once the editor closes: whatever was on screen is re-read
+/// from the file just edited.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AfterEditor {
+    /// Reload the overview, selecting this change.
+    Reload { select: Option<String> },
+    /// Re-parse the review queue of this change — the edit may be drift.
+    Reparse { change: String },
+    /// Read this document again.
+    Document { change: String, artifact: String },
+}
+
+pub(super) fn spawn<T: Send + 'static>(
     work: PortFuture<T>,
     to_msg: impl FnOnce(T) -> Msg + Send + 'static,
 ) -> Effect {
@@ -174,6 +209,8 @@ pub enum AfterSetup {
 #[derive(Debug)]
 pub enum Msg {
     Reloaded {
+        /// Which request this answers — see [`Latest`].
+        generation: u64,
         result: Result<Snapshot, String>,
         select: Option<String>,
         notice: Option<String>,
@@ -191,6 +228,36 @@ pub enum Msg {
         result: Result<(), String>,
     },
     Dispatched(Result<String, String>),
+    /// A change's review queue, or `None` when it has no specs.
+    ReviewOpened {
+        change: String,
+        session: Option<Box<ReviewSession>>,
+    },
+    /// The review queue of `change`, re-parsed from disk.
+    Reparsed {
+        generation: u64,
+        change: String,
+        items: Vec<ReviewItem>,
+    },
+    /// A value of the current requirement was marked as an example.
+    Marked {
+        change: String,
+        result: Result<(), String>,
+    },
+    /// A decision was promoted to an ADR; `Ok` carries its name.
+    Promoted {
+        change: String,
+        result: Result<String, String>,
+    },
+    /// An artifact read for the document viewer.
+    DocRead {
+        generation: u64,
+        change: String,
+        artifact: String,
+        result: Result<(PathBuf, String), String>,
+        /// The job poll opened it, not the developer.
+        just_drafted: bool,
+    },
     ArtifactFile {
         change: String,
         result: Result<PathBuf, String>,
@@ -207,8 +274,43 @@ pub enum Msg {
     },
     EditorClosed {
         result: Result<(), String>,
-        select: Option<String>,
+        then: AfterEditor,
     },
+}
+
+/// The newest request of each kind whose answer replaces state wholesale.
+///
+/// Answers come back in whatever order the work finishes, so an older one
+/// can land after a newer one — a reload started while a review was still
+/// open, say, arriving after the one its closing asked for, and putting the
+/// specs back as unreviewed. Each request takes the next number; an answer
+/// older than the newest request of its kind is stale and is dropped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Latest {
+    next: u64,
+    pub reload: u64,
+    /// The reload whose snapshot is on screen.
+    pub applied: u64,
+    pub reparse: u64,
+    pub doc: u64,
+}
+
+impl Latest {
+    /// A fresh number, for a request about to be made.
+    pub fn issue(&mut self) -> u64 {
+        self.next += 1;
+        self.next
+    }
+}
+
+/// What a stale reload was carrying besides its snapshot, handed on to the
+/// reload that supersedes it — a notice, a selection or a finished job must
+/// not be lost just because fresher data overtook them.
+#[derive(Debug, Default)]
+pub struct Carried {
+    pub select: Option<String>,
+    pub notice: Option<String>,
+    pub finished: Option<Box<Job>>,
 }
 
 /// The hint ctrl+c gives where there is nothing left to cancel.
@@ -241,6 +343,12 @@ pub struct App {
     pub home: Home,
     /// The focused next-step button on the selected change.
     pub action_focus: usize,
+    /// The review in progress, on [`Screen::Review`].
+    pub review: Option<Review>,
+    /// The document being read, on [`Screen::Document`].
+    pub doc: Option<Document>,
+    /// Per-project linter tuning, read once at start.
+    pub lint: LintConfig,
     /// Animation ticks since the screen was entered.
     pub tick: usize,
     pub now: DateTime<Utc>,
@@ -249,12 +357,16 @@ pub struct App {
     pub quit: bool,
     /// Where the clickable things were drawn, from the last frame.
     pub hits: Hits,
+    /// The newest request of each kind, so stale answers can be dropped.
+    pub latest: Latest,
+    /// What stale reloads carried, for the reload that overtook them.
+    pub carried: Carried,
 }
 
 impl App {
     /// The app as it opens — on the start screen, reading the project.
     pub fn new(ports: &dyn Ports) -> (Self, Vec<Effect>) {
-        let app = Self {
+        let mut app = Self {
             root: ports.root().display().to_string(),
             screen: Screen::Home,
             pipelines: Vec::new(),
@@ -277,11 +389,16 @@ impl App {
                 ..Home::default()
             },
             action_focus: 0,
+            review: None,
+            doc: None,
+            lint: ports.lint_config(),
             tick: 0,
             now: Utc::now(),
             loaded: false,
             quit: false,
             hits: Vec::new(),
+            latest: Latest::default(),
+            carried: Carried::default(),
         };
         let jobs = app.read_jobs(ports, false);
         let first = app.reload(ports, None, None, None);
@@ -359,7 +476,14 @@ impl App {
             out.push(ActionButton {
                 label,
                 key,
-                action: *action,
+                action: Action::Next(*action),
+            });
+        }
+        if let Some(latest) = self.readable().pop() {
+            out.push(ActionButton {
+                label: format!("📄 Read the {latest}"),
+                key: "v",
+                action: Action::Read(latest),
             });
         }
         out
@@ -549,10 +673,19 @@ impl App {
         match self.screen {
             Screen::Home => self.home_key(ports, key),
             Screen::Overview => self.overview_key(ports, key),
+            Screen::Review => self.review_key(ports, key),
+            Screen::Document => self.document_key(ports, key),
         }
     }
 
     pub fn on_mouse(&mut self, ports: &dyn Ports, mouse: &MouseEvent) -> Vec<Effect> {
+        if self.screen == Screen::Document && !self.jobs_open {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => self.doc_wheel(true),
+                MouseEventKind::ScrollUp => self.doc_wheel(false),
+                _ => {}
+            }
+        }
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return Vec::new();
         }
@@ -589,6 +722,8 @@ impl App {
             }
             Target::WatchLog => self.open_jobs(ports),
             Target::JobRow(i) => self.select_job(ports, i),
+            Target::DocButton(i) => self.press_doc(ports, i),
+            Target::DocText => Vec::new(),
         }
     }
 
@@ -596,11 +731,46 @@ impl App {
     pub fn on_msg(&mut self, ports: &dyn Ports, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::Reloaded {
+                generation,
                 result,
                 select,
                 notice,
                 finished,
             } => {
+                if generation < self.latest.reload {
+                    // Overtaken: its snapshot is older than one already
+                    // asked for, and must not replace it.
+                    if self.latest.applied < self.latest.reload {
+                        // The newer one is still on its way: it takes what
+                        // this one carried.
+                        let carried = &mut self.carried;
+                        carried.select = select.or(carried.select.take());
+                        carried.notice = notice.or(carried.notice.take());
+                        carried.finished = finished.or(carried.finished.take());
+                        return Vec::new();
+                    }
+                    // The newer one is already here: what this one carried
+                    // applies to the fresher state now on screen.
+                    if let Some(i) = select
+                        .as_deref()
+                        .and_then(|name| self.pipelines.iter().position(|p| p.name == name))
+                    {
+                        self.index = i;
+                        self.action_focus = 0;
+                    }
+                    if notice.is_some() {
+                        self.notice = notice;
+                    }
+                    return match finished {
+                        Some(job) => self.after_finished(ports, &job),
+                        None => Vec::new(),
+                    };
+                }
+                self.latest.applied = generation;
+                let carried = std::mem::take(&mut self.carried);
+                let select = select.or(carried.select);
+                let notice = notice.or(carried.notice);
+                let finished = finished.or(carried.finished);
                 self.loaded = true;
                 if self.home.busy.as_deref() == Some("Reading the project…") {
                     self.home.busy = None;
@@ -625,11 +795,12 @@ impl App {
                     Err(reason) => self.notice = Some(reason),
                 }
                 self.refresh_project(ports);
-                if let Some(job) = finished {
-                    self.check_finished(&job);
-                }
                 // The selection may have moved to another change.
-                vec![self.read_jobs(ports, false)]
+                let mut effects = vec![self.read_jobs(ports, false)];
+                if let Some(job) = finished {
+                    effects.extend(self.after_finished(ports, &job));
+                }
+                effects
             }
             Msg::SetUp { result, then } => {
                 self.home.busy = None;
@@ -697,11 +868,41 @@ impl App {
                 }
                 Vec::new()
             }
+            Msg::ReviewOpened { change, session } => {
+                self.review_opened(&change, session);
+                Vec::new()
+            }
+            Msg::Reparsed {
+                generation,
+                change,
+                items,
+            } => {
+                if generation >= self.latest.reparse {
+                    self.reparsed(&change, &items);
+                }
+                Vec::new()
+            }
+            Msg::Marked { change, result } => self.marked(ports, &change, result),
+            Msg::Promoted { change, result } => self.promoted(ports, &change, result),
+            Msg::DocRead {
+                generation,
+                change,
+                artifact,
+                result,
+                just_drafted,
+            } => {
+                if generation >= self.latest.doc {
+                    self.doc_read(change, artifact, result, just_drafted);
+                }
+                Vec::new()
+            }
             Msg::ArtifactFile { change, result } => match result {
                 Ok(file) => vec![Effect::Editor {
                     file,
                     line: 1,
-                    select: Some(change),
+                    then: AfterEditor::Reload {
+                        select: Some(change),
+                    },
                 }],
                 Err(reason) => {
                     self.notice = Some(reason);
@@ -730,13 +931,25 @@ impl App {
                 }
                 Vec::new()
             }
-            Msg::EditorClosed { result, select } => {
-                match result {
-                    Ok(()) => self.notice = None,
-                    Err(reason) => self.notice = Some(reason),
+            Msg::EditorClosed { result, then } => match then {
+                AfterEditor::Reload { select } => {
+                    match result {
+                        Ok(()) => self.notice = None,
+                        Err(reason) => self.notice = Some(reason),
+                    }
+                    vec![self.reload(ports, select, None, None)]
                 }
-                vec![self.reload(ports, select, None, None)]
-            }
+                AfterEditor::Reparse { change } => match result {
+                    Ok(()) => vec![self.reparse(ports, &change)],
+                    Err(reason) => {
+                        self.notice = Some(reason);
+                        Vec::new()
+                    }
+                },
+                AfterEditor::Document { change, artifact } => {
+                    self.doc_edited(ports, result, change, artifact)
+                }
+            },
         }
     }
 
@@ -860,7 +1073,8 @@ impl App {
                 'q' => self.quit = true,
                 'j' => return self.move_selection(ports, 1),
                 'k' => return self.move_selection(ports, -1),
-                'r' => self.enter_review(ports),
+                'r' => return self.enter_review(ports),
+                'v' => return self.read_latest(ports),
                 'n' => self.start_new_change(),
                 'w' => return self.draft_next(ports),
                 'e' => return self.write_next(ports),
@@ -975,31 +1189,15 @@ impl App {
             return Vec::new();
         };
         match button.action {
-            NextAction::Review => {
-                self.enter_review(ports);
-                Vec::new()
-            }
-            NextAction::Draft => self.draft_next(ports),
-            NextAction::Write => self.write_next(ports),
-            NextAction::Foundation => self.open_foundation(ports),
+            Action::Next(NextAction::Review) => self.enter_review(ports),
+            Action::Next(NextAction::Draft) => self.draft_next(ports),
+            Action::Next(NextAction::Write) => self.write_next(ports),
+            Action::Next(NextAction::Foundation) => self.open_foundation(ports),
+            Action::Read(artifact) => match self.selected().map(|p| p.name.clone()) {
+                Some(change) => vec![self.open_doc(ports, &change, &artifact, false)],
+                None => Vec::new(),
+            },
         }
-    }
-
-    /// `r`. The review screen is stage 6: until then a change with specs says
-    /// so, and one without says what the TypeScript said.
-    fn enter_review(&mut self, ports: &dyn Ports) {
-        let Some(pipeline) = self.selected() else {
-            return;
-        };
-        let change = pipeline.name.clone();
-        let has_specs = pipeline.stages.iter().any(|s| s.review.is_some());
-        self.notice = Some(match ports.open_review(&change) {
-            None if !has_specs => format!("{change} has no specs to review yet"),
-            _ => format!(
-                "Reviewing {change} one requirement at a time arrives with the review screen \
-                 in stage 6 of the port"
-            ),
-        });
     }
 
     fn start_new_change(&mut self) {
@@ -1011,7 +1209,7 @@ impl App {
         self.prompt = Some(Prompt::describe());
     }
 
-    fn draft_next(&mut self, ports: &dyn Ports) -> Vec<Effect> {
+    pub(super) fn draft_next(&mut self, ports: &dyn Ports) -> Vec<Effect> {
         let name = self.selected().map(|p| p.name.clone());
         if self.running().is_some() {
             self.notice = Some(format!(
@@ -1034,7 +1232,10 @@ impl App {
             });
             return Vec::new();
         };
-        vec![spawn(ports.dispatch(&change, &artifact), Msg::Dispatched)]
+        vec![spawn(
+            ports.dispatch(&change, &artifact, None),
+            Msg::Dispatched,
+        )]
     }
 
     fn write_next(&mut self, ports: &dyn Ports) -> Vec<Effect> {
@@ -1085,7 +1286,7 @@ impl App {
         vec![Effect::Editor {
             file: PathBuf::from(&question.item.file),
             line: question.item.line,
-            select: None,
+            then: AfterEditor::Reload { select: None },
         }]
     }
 
@@ -1174,12 +1375,16 @@ impl App {
         })
     }
 
+    /// A job finished and the overview has been re-read.
+    ///
     /// Exit 0 is not proof of work: an agent can finish without writing the
     /// file (denied, confused, out of turns). Say so rather than showing the
-    /// same next step again as if nothing had happened.
-    fn check_finished(&mut self, job: &Job) {
+    /// same next step again as if nothing had happened. Otherwise what was
+    /// drafted is what you want to see next — unless you are busy with
+    /// something else, in which case it waits behind its button.
+    fn after_finished(&mut self, ports: &dyn Ports, job: &Job) -> Vec<Effect> {
         if job.status != JobStatus::Succeeded {
-            return;
+            return Vec::new();
         }
         let stage = self
             .pipelines
@@ -1191,7 +1396,12 @@ impl App {
                 "The agent finished but did not write the {} — ctrl+j shows what it did",
                 job.artifact
             ));
+            return Vec::new();
         }
+        if self.idle() && self.selected().is_some_and(|p| p.name == job.change) {
+            return vec![self.open_doc(ports, &job.change, &job.artifact, true)];
+        }
+        Vec::new()
     }
 
     // --- reloading ------------------------------------------------------
@@ -1203,14 +1413,17 @@ impl App {
         self.roadmap = ports.roadmap();
     }
 
-    fn reload(
-        &self,
+    pub(super) fn reload(
+        &mut self,
         ports: &dyn Ports,
         select: Option<String>,
         notice: Option<String>,
         finished: Option<Box<Job>>,
     ) -> Effect {
+        let generation = self.latest.issue();
+        self.latest.reload = generation;
         spawn(ports.reload(), move |result| Msg::Reloaded {
+            generation,
             result,
             select,
             notice,

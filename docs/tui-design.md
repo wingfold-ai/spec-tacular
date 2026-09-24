@@ -88,12 +88,16 @@ Verify one here and it merges into the main specs.
 | `?` | context-sensitive help |
 | `q` | back, or quit at the top level (the start screen and the overview) |
 
-What the shell (stage 5) binds today:
+What the TUI binds today (stages 5 and 6):
 
 | Where | Keys |
 | --- | --- |
 | Start screen | `←`/`→`/`↑`/`↓`/`tab` choose a button · `enter`/`space` press it · click · `q` quit |
-| Overview | `j`/`k`/`↑`/`↓` select a change (or click) · `←`/`→`/`tab` choose a next-step button · `enter` press it · `n` new change · `w` let an agent draft the next artifact · `e` write it yourself in `$EDITOR` · `f` the ground rules · `r` review · `h` start screen · `?` help · `q` quit |
+| Overview | `j`/`k`/`↑`/`↓` select a change (or click) · `←`/`→`/`tab` choose a next-step button · `enter` press it · `n` new change · `w` let an agent draft the next artifact · `e` write it yourself in `$EDITOR` · `v` read the latest draft · `f` the ground rules · `r` review · `h` start screen · `?` help · `q` quit |
+| Review | `a` accept · `r` reject (asks why; empty is allowed) · `d` defer (asks what would verify it; required) · `s` skip · `e` edit in `$EDITOR` at the item's line, then re-read (an edit after a decision is drift) · `m` then `1`–`9` mark a flagged value as an example · `n`/`j`/`↓` next · `p`/`k`/`↑` previous — `p` promotes instead on a global design decision · `?` help (any key closes it) · `q`/`ctrl+c` back to the overview, saved |
+| Review prompt | type · `enter` confirm · `backspace` · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
+| Document | `↑`/`↓`/`j`/`k` scroll · `space`/`pagedown`, `pageup` a page · `g`/`G` top, bottom · wheel · `←`/`→`/`tab` choose a button · `enter` press it (or click) · `n` looks good (and draft the next artifact) · `e` edit in `$EDITOR` · `f` redraft with feedback · `q`/`ctrl+c` back |
+| Redraft feedback | type · `enter` redraft (not when empty) · `ctrl+c` cancel |
 | New-change prompt | type · `enter` next / create · `tab` next suggested name · `ctrl+u` clear · `ctrl+w` drop a word · `ctrl+c` cancel |
 | Help | any key closes it |
 | Job pane | `j`/`k`/`↑`/`↓` select (or click) · `x` cancel the selected job, then `y` · `p` clear finished jobs · `q`/`ctrl+c`/`ctrl+j` close |

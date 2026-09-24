@@ -144,7 +144,6 @@ mod tests {
     use crate::agent::driver::{AgentCommand, AgentRequest, StructuredDriver};
     use crate::agent::{claude::ClaudeDriver, opencode::OpencodeDriver};
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     /// A driver whose "agent" is a shell script, so the runner is exercised
@@ -165,7 +164,7 @@ mod tests {
             "Fake"
         }
         fn build(&self, _request: &AgentRequest<'_>) -> AgentCommand {
-            AgentCommand::new(self.script.clone(), Vec::<String>::new())
+            command(&self.script)
         }
         fn format_line(&self, line: &str) -> Option<String> {
             Some(line.to_owned())
@@ -181,7 +180,7 @@ mod tests {
 
     impl StructuredDriver for FakeStructured {
         fn build(&self, _request: &StructuredRequest<'_>) -> AgentCommand {
-            AgentCommand::new(self.script.clone(), Vec::<String>::new())
+            command(&self.script)
         }
         fn parse(&self, stdout: &str) -> Result<serde_json::Value, String> {
             let value: serde_json::Value =
@@ -193,10 +192,23 @@ mod tests {
         }
     }
 
+    /// `/bin/sh <script>`, or the bare path when there is no script — which
+    /// is how a missing binary looks to the runner.
+    fn command(script: &str) -> AgentCommand {
+        if Path::new(script).exists() {
+            AgentCommand::new("/bin/sh", [script])
+        } else {
+            AgentCommand::new(script, Vec::<String>::new())
+        }
+    }
+
+    /// The script is run by `/bin/sh` rather than executed itself: executing
+    /// a file just written races any other test thread sitting between `fork`
+    /// and `exec` with it still open, and loses with ETXTBSY
+    /// (`adapter::fake` has the long version).
     fn fake(dir: &Path, body: &str) -> FakeDriver {
         let script = dir.join("fake-agent");
         fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("write the fake");
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
         FakeDriver {
             script: script.display().to_string(),
         }

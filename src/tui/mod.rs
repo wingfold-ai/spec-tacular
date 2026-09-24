@@ -10,7 +10,8 @@
 //!
 //! - [`app`] holds the state and turns events into state changes and
 //!   [`app::Effect`]s — work to spawn, or the editor to run;
-//! - [`view`] (with [`home`] and [`jobs`]) draws a frame from `&App`;
+//! - [`view`] (with [`home`], [`review`], [`document`] and [`jobs`]) draws a
+//!   frame from `&App`;
 //! - [`ports`] is everything the app needs from the world, as a trait, with
 //!   the real implementation over `commands`/`adapter` and a fake for tests;
 //! - [`terminal`] takes the terminal over and always gives it back;
@@ -20,6 +21,7 @@
 //! it goes back or cancels one level, and `q` is what quits.
 
 pub mod app;
+pub mod document;
 pub mod editor;
 #[cfg(test)]
 mod fake;
@@ -29,6 +31,7 @@ pub mod input;
 pub mod jobs;
 pub mod logo;
 pub mod ports;
+pub mod review;
 pub mod terminal;
 #[cfg(test)]
 mod tests;
@@ -121,7 +124,7 @@ async fn event_loop(ports: Arc<dyn Ports>) -> io::Result<()> {
                         let _ = tx.send(work.await);
                     });
                 }
-                Effect::Editor { file, line, select } => {
+                Effect::Editor { file, line, then } => {
                     // The event stream reads stdin from a thread of its own;
                     // left running it would steal the editor's keystrokes.
                     drop(events.take());
@@ -130,8 +133,7 @@ async fn event_loop(ports: Arc<dyn Ports>) -> io::Result<()> {
                     tui.resume()?;
                     events = Some(EventStream::new());
                     dirty = true;
-                    pending
-                        .extend(app.on_msg(ports.as_ref(), Msg::EditorClosed { result, select }));
+                    pending.extend(app.on_msg(ports.as_ref(), Msg::EditorClosed { result, then }));
                 }
             }
         }
