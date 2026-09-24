@@ -57,7 +57,7 @@ change is in and how much of it is accepted.
 
 ---
 
-## M2 — Review state
+## M2 — Review state  ✅ done
 
 **Goal:** acceptance becomes real state. No UI yet beyond display.
 
@@ -70,6 +70,17 @@ change is in and how much of it is accepted.
 
 **Exit:** hand-edit a state file, restart, see it reflected; edit a requirement's
 Markdown, restart, see it drop back to `pending`.
+
+**Result:** met, verified end to end on a real change. Accepting its requirement
+moved the stage to `+ specs` and advanced `next` to `design`; a whitespace-only
+edit left it accepted; a wording change dropped it to `0/1 accepted · 1 pending
+! 1 changed since review` and sent `next` back to review.
+
+The parser was cross-checked against OpenSpec's own: across all 26 active
+changes in the OpenSpec repo it finds **138 requirements to OpenSpec's 138, with
+zero mismatches** in spec, operation or text. That agreement matters — a
+requirement this parser cannot see is one nobody can review, and one it invents
+is one that does not exist.
 
 ---
 

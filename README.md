@@ -33,8 +33,10 @@ overview also works over a pipe and in CI.
 
 ## Status
 
-**M0 done** — reads a real OpenSpec project and renders the pipeline for every
-change. M1 (always-visible overview) partly done. See the plan for what's next.
+**M0 and M2 done**, M1 mostly. Reads a real OpenSpec project, parses every
+requirement, tracks acceptance in a sidecar, and detects drift when a reviewed
+requirement is edited afterwards. The review *loop* (accepting things from the
+TUI) is M3 — until then state is set programmatically.
 
 The plan:
 
@@ -53,6 +55,6 @@ Source layout:
 | Path | What |
 | --- | --- |
 | `src/adapter/` | The only module that knows OpenSpec exists. Reads its `--json` CLI; never writes a file OpenSpec owns. |
-| `src/core/` | Pure domain logic — stage derivation, gating. Schema-agnostic and terminal-free. |
+| `src/core/` | Pure domain logic — requirement parsing, review state, drift detection, stage derivation. Schema-agnostic and terminal-free. |
 | `src/render/` | Headless text rendering, so the overview is testable and pipe-friendly. |
 | `src/tui/` | OpenTUI + Solid shell. Deliberately thin. |

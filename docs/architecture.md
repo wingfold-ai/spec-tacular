@@ -87,23 +87,22 @@ spec-tacular/                    # ours, human-facing, committed
 
 ```jsonc
 {
-  "change": "add-dark-mode",
+  "change": "add-status-next-step",
   "schemaVersion": 1,
-  "artifacts": {
-    "specs": {
-      "requirements": {
-        "theme-selection#user-can-toggle": {
-          "state": "accepted",        // pending | accepted | rejected | deferred
-          "hash": "sha256:8f3a…",     // hash of the requirement's normalized text
-          "reviewedAt": "2026-09-21T10:12:00Z",
-          "note": null,
-          "deferReason": null          // e.g. "awaiting-deployment"
-        }
-      }
+  "requirements": {
+    "cli-artifact-workflow#next-artifact-discovery": {
+      "state": "accepted",        // pending | accepted | rejected | deferred
+      "hash": "sha256:8f3a…",     // hash of the requirement's normalized text
+      "reviewedAt": "2026-09-21T10:12:00Z",
+      "note": "…",                // why it was rejected
+      "deferReason": "…"          // e.g. "awaiting-deployment"
     }
   }
 }
 ```
+
+Requirements are keyed flat rather than nested per artifact: the id already
+carries the capability, and only one artifact in a change holds requirements.
 
 **Requirement identity** is `<capability-path>#<slugified-requirement-name>`.
 OpenSpec's requirement headers (`### Requirement: <name>`) are the only stable
@@ -116,6 +115,10 @@ requirement's normalized text and compares. A mismatch means the text changed
 after review, so the state resets to `pending` and the UI marks it *changed
 since you accepted it*. This is what keeps the sidecar honest when someone
 (you, or an agent) edits Markdown outside the TUI — which they will.
+
+Normalization collapses whitespace and drops blank lines, so reformatting a
+spec does not revoke an acceptance, but any change to the words does. A tool
+that punished you for tidying a file would just teach you not to tidy files.
 
 ### Gating
 

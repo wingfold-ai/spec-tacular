@@ -29,12 +29,14 @@ const THEME = {
 } as const;
 
 const STAGE_COLOR: Record<StageState, string> = {
-  written: THEME.ok,
+  accepted: THEME.ok,
+  written: THEME.text,
   ready: THEME.accent,
   blocked: THEME.dim,
 };
 
 const STAGE_MARK: Record<StageState, string> = {
+  accepted: '✓',
   written: '●',
   ready: '◉',
   blocked: '○',
@@ -72,7 +74,7 @@ function ChangeRow(props: { pipeline: ChangePipeline; selected: boolean }) {
         {`${props.selected ? '›' : ' '} ${props.pipeline.name}`}
       </text>
       <text style={{ fg: THEME.dim }}>
-        {`  ${props.pipeline.written}/${props.pipeline.total}`}
+        {`  ${props.pipeline.accepted}/${props.pipeline.total} accepted`}
       </text>
       <Show when={props.pipeline.gaps.length > 0}>
         <text style={{ fg: THEME.warn }}>
