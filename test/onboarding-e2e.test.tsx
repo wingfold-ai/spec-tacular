@@ -660,6 +660,8 @@ describe('the overview', () => {
     expect(ui.frame()).toContain('let an agent draft the next artifact');
     expect(ui.frame()).toContain('the ground rules: domain, stack, architecture, conventions');
     expect(ui.frame()).toContain('ctrl+f         done: leave the open questions for later');
+    expect(ui.frame()).toContain('revise it with AI');
+    expect(ui.frame()).toContain('ctrl+v         paste the clipboard');
     await ui.press('x');
     expect(ui.frame()).not.toContain('Pipeline marks');
   });
