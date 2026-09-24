@@ -16,6 +16,11 @@ interface StreamEvent {
   is_error?: boolean;
 }
 
+/** Extra flags from the environment, split on whitespace. */
+function extraArgs(): string[] {
+  return (process.env['SPECTACULAR_CLAUDE_ARGS'] ?? '').split(/\s+/).filter(Boolean);
+}
+
 export const claudeDriver: AgentDriver = {
   id: 'claude',
   label: 'Claude Code',
@@ -31,8 +36,63 @@ export const claudeDriver: AgentDriver = {
         // stream-json requires --verbose; without it the CLI refuses to start,
         // which would look like a driver bug rather than a missing flag.
         '--verbose',
+        // Headless, nobody is there to approve a tool call, so each one is
+        // denied — and the agent "succeeds" having printed its artifact
+        // instead of writing it. Editing files in the project is the job;
+        // OpenSpec's read-only commands are how it looks at existing specs.
+        '--permission-mode',
+        'acceptEdits',
+        '--allowedTools',
+        'Bash(openspec list:*)',
+        'Bash(openspec show:*)',
+        'Bash(openspec status:*)',
+        'Bash(openspec validate:*)',
+        'Bash(ls:*)',
+        // Anything more — running tests during apply, say — is the project's
+        // call: SPECTACULAR_CLAUDE_ARGS='--allowedTools Bash(bun test:*)'.
+        ...extraArgs(),
       ],
     };
+  },
+
+  structured: {
+    build(request): AgentCommand {
+      return {
+        command: 'claude',
+        args: [
+          '-p',
+          request.prompt,
+          '--output-format',
+          'json',
+          '--json-schema',
+          JSON.stringify(request.schema),
+          '--model',
+          request.mode === 'quick'
+            ? (process.env['SPECTACULAR_QUICK_MODEL'] ?? 'haiku')
+            : (process.env['SPECTACULAR_ADVISOR_MODEL'] ?? 'sonnet'),
+          // Web search at most: the advisor looks up current versions, and has
+          // no business reading or editing the project. Other modes need none.
+          ...((request.mode ?? 'research') === 'research'
+            ? ['--tools', 'WebSearch', '--allowedTools', 'WebSearch']
+            : ['--tools', '']),
+          '--no-session-persistence',
+          // The user's MCP servers are irrelevant here and slow to start.
+          '--strict-mcp-config',
+        ],
+      };
+    },
+    parse(stdout: string): unknown {
+      const result = JSON.parse(stdout) as {
+        is_error?: boolean;
+        result?: string;
+        structured_output?: unknown;
+      };
+      if (result.is_error) throw new Error(result.result ?? 'Claude Code reported an error');
+      if (result.structured_output === undefined) {
+        throw new Error('Claude Code returned no structured output');
+      }
+      return result.structured_output;
+    },
   },
 
   formatLine(line: string): string | null {
