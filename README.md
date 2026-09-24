@@ -34,6 +34,10 @@ bun run src/cli.ts init --cwd /path/to/project
 
 # Ask for an artifact — refused while its prerequisites are unreviewed
 bun run src/cli.ts instructions design -c <change> --cwd /path/to/project
+
+# Dispatch an agent in the background; returns immediately
+bun run src/cli.ts run design -c <change> --cwd /path/to/project
+bun run src/cli.ts jobs --cwd /path/to/project
 ```
 
 Drop `--print` for the TUI; `enter` opens the review queue for the selected
@@ -42,7 +46,7 @@ over a pipe and in CI.
 
 ## Status
 
-**M0–M4 done** (M1 mostly). The review loop works: open a change, walk its
+**M0–M5 done** (M1 mostly). The review loop works: open a change, walk its
 requirements one at a time, and `a`ccept / `r`eject / `d`efer / `e`dit each one
 from the keyboard. Decisions persist immediately, drift is detected when a
 reviewed requirement is edited afterwards, and reopening resumes where you
@@ -52,6 +56,11 @@ Sequencing is enforced. `spectacular init` installs a schema where `design`
 requires `specs` (OpenSpec's own has it require only `proposal`), and
 `spectacular instructions design -c <change>` is refused — exit 1 — while any
 spec requirement is unreviewed.
+
+Agents run in the background. `spectacular run <artifact> -c <change>`
+dispatches Claude Code or opencode and returns immediately, so you keep
+reviewing while it works. `ctrl+j` pulls up the job pane mid-review without
+losing your place.
 
 Verified against the largest change in the OpenSpec repo — 26 requirements,
 reviewed end to end by keystroke in tests that assert on the real rendered
@@ -76,4 +85,5 @@ Source layout:
 | `src/adapter/` | The only module that knows OpenSpec exists. Reads its `--json` CLI; never writes a file OpenSpec owns. |
 | `src/core/` | Pure domain logic — requirement parsing, review state, drift detection, stage derivation. Schema-agnostic and terminal-free. |
 | `src/render/` | Headless text rendering, so the overview is testable and pipe-friendly. |
+| `src/agent/` | Agent drivers (Claude Code, opencode). Build a command; never talk to a model directly. |
 | `src/tui/` | OpenTUI + Solid screens. Deliberately thin — they draw, `core/` decides. |
