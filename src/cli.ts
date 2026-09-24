@@ -38,8 +38,22 @@ import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
 import { loadLintConfig } from './core/concreteness.ts';
 import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
 import { foundationDir, isUnanswered, loadFoundation } from './core/foundation.ts';
+import { ArchiveBlockedError, planArchive, prepareArchive } from './core/archive.ts';
+import { loadRegister, registerPath } from './core/pending.ts';
+import { verifyRequirement } from './core/verify.ts';
+import {
+  completeSlice,
+  loadRoadmap,
+  nextPromotable,
+  promoteSlice,
+  roadmapPath,
+  saveRoadmap,
+  scaffoldRoadmap,
+} from './core/roadmap.ts';
 
-type Command = 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation';
+type Command =
+  | 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation'
+  | 'archive' | 'pending' | 'verify' | 'roadmap';
 
 interface Args {
   command: Command;
@@ -55,6 +69,12 @@ interface Args {
   /** For `jobs`: a job id to cancel or tail. */
   job: string | undefined;
   cancel: boolean;
+  /** For `verify`: the requirement name. */
+  requirement: string | undefined;
+  /** For `roadmap`: the slice to promote or complete. */
+  slice: string | undefined;
+  done: boolean;
+  dryRun: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -70,6 +90,10 @@ function parseArgs(argv: string[]): Args {
     driver: DEFAULT_DRIVER,
     job: undefined,
     cancel: false,
+    requirement: undefined,
+    slice: undefined,
+    done: false,
+    dryRun: false,
   };
 
   const positional: string[] = [];
@@ -84,6 +108,10 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--driver') args.driver = argv[++i] ?? args.driver;
     else if (a === '--job') args.job = argv[++i];
     else if (a === '--cancel') args.cancel = true;
+    else if (a === '--requirement') args.requirement = argv[++i];
+    else if (a === '--promote') args.slice = argv[++i];
+    else if (a === '--done') { args.done = true; args.slice = argv[++i]; }
+    else if (a === '--dry-run') args.dryRun = true;
     else if (a !== undefined && !a.startsWith('-')) positional.push(a);
   }
 
@@ -92,6 +120,15 @@ function parseArgs(argv: string[]): Args {
   else if (first === 'jobs') args.command = 'jobs';
   else if (first === 'adr') args.command = 'adr';
   else if (first === 'foundation') args.command = 'foundation';
+  else if (first === 'pending') args.command = 'pending';
+  else if (first === 'roadmap') args.command = 'roadmap';
+  else if (first === 'archive') {
+    args.command = 'archive';
+    if (second && !args.change) args.change = second;
+  } else if (first === 'verify') {
+    args.command = 'verify';
+    args.artifact = second;
+  }
   else if (first === 'instructions' || first === 'run') {
     args.command = first === 'run' ? 'run' : 'instructions';
     args.artifact = second;
@@ -117,6 +154,14 @@ Usage:
   spectacular foundation                   Show the project's ground rules and
                                            what is still unanswered
   spectacular adr                          List architectural decision records
+  spectacular archive <change>             Merge accepted requirements, divert
+                                           deferred ones to the register
+  spectacular pending                      Requirements waiting on validation
+  spectacular verify <capability> --requirement <name>
+                                           Move one into the accepted baseline
+  spectacular roadmap                      Show the slices
+  spectacular roadmap --promote <slice>    Make a slice active
+  spectacular roadmap --done <slice>       Mark a slice finished
 
 Options:
   -p, --print            Print the overview as text and exit
@@ -415,6 +460,179 @@ function runFoundation(args: Args): number {
   return 0;
 }
 
+/** `spectacular pending` — what is waiting on validation. */
+function runPending(args: Args): number {
+  const entries = loadRegister(args.cwd);
+  if (entries.length === 0) {
+    process.stdout.write('Nothing is waiting on validation.\n');
+    return 0;
+  }
+
+  let capability = '';
+  for (const entry of entries) {
+    if (entry.capability !== capability) {
+      capability = entry.capability;
+      process.stdout.write(`\n${capability}\n`);
+    }
+    process.stdout.write(`  ${entry.name}\n`);
+    process.stdout.write(`    needs: ${entry.needs}\n`);
+    process.stdout.write(`    from:  ${entry.change} (${entry.deferred})\n`);
+  }
+  process.stdout.write(
+    `\n${entries.length} requirement(s) accepted but unverified — not in the baseline.\n` +
+      `Register: ${registerPath(args.cwd)}\n`,
+  );
+  return 0;
+}
+
+/** `spectacular verify <capability> --requirement <name>`. */
+async function runVerify(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  if (!args.artifact || !args.requirement) {
+    process.stderr.write(
+      'Usage: spectacular verify <capability> --requirement "<name>"\n',
+    );
+    return 1;
+  }
+
+  const result = verifyRequirement(args.cwd, args.artifact, args.requirement);
+  if (!result.ok) {
+    process.stderr.write(`${result.reason}\n`);
+    return 1;
+  }
+
+  process.stdout.write(
+    `Verified '${result.entry.name}' into ${result.specFile}\n` +
+      (result.created ? '  (the spec did not exist — fill in its Purpose)\n' : ''),
+  );
+
+  // This is the one place spec-tacular writes to openspec/specs/, so the
+  // result is handed straight back to OpenSpec to confirm it still parses.
+  try {
+    const validation = await adapter.validate(args.artifact);
+    process.stdout.write(validation.trim() ? `${validation.trim()}\n` : 'openspec validate: ok\n');
+  } catch (err) {
+    process.stderr.write(
+      `Written, but openspec could not validate it: ${(err as Error).message}\n`,
+    );
+    return 1;
+  }
+  return 0;
+}
+
+/** `spectacular archive <change>` — the split. */
+async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  if (!args.change) {
+    process.stderr.write('Usage: spectacular archive <change>\n');
+    return 1;
+  }
+
+  const { changes } = await adapter.statusAll();
+  const status = changes.find((c) => c.changeName === args.change);
+  if (!status) {
+    process.stderr.write(`No change called '${args.change}'.\n`);
+    return 1;
+  }
+
+  const queue = loadChangeReview(args.cwd, status);
+  const plan = planArchive(args.change, queue.requirements);
+
+  process.stdout.write(
+    `${plan.merging.length} requirement(s) merge into the baseline\n` +
+      `${plan.diverting.length} divert to pending validation\n`,
+  );
+  for (const entry of plan.diverting) {
+    process.stdout.write(`  ${entry.capability}: ${entry.name} — ${entry.needs}\n`);
+  }
+
+  if (plan.unresolved.length > 0) {
+    process.stderr.write(
+      `\nRefused: ${plan.unresolved.length} requirement(s) are neither accepted nor deferred.\n`,
+    );
+    for (const id of plan.unresolved) process.stderr.write(`  - ${id}\n`);
+    process.stderr.write(
+      '\nArchiving now would merge text nobody agreed to — exactly what `--yes` does.\n',
+    );
+    return 1;
+  }
+
+  if (args.dryRun) {
+    process.stdout.write('\nDry run — nothing written.\n');
+    return 0;
+  }
+
+  try {
+    const prepared = prepareArchive(args.cwd, args.change, queue.requirements);
+    for (const file of prepared.rewritten) process.stdout.write(`  rewrote ${file}\n`);
+    for (const file of prepared.removed) {
+      process.stdout.write(`  removed ${file} (every requirement in it deferred)\n`);
+    }
+  } catch (err) {
+    if (err instanceof ArchiveBlockedError) {
+      process.stderr.write(`${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+
+  // `--yes` is honest here: the only incomplete tasks are ones deliberately
+  // deferred, and every deferred requirement is now recorded in the register.
+  const output = await adapter.archive(args.change);
+  process.stdout.write(output);
+  return 0;
+}
+
+/** `spectacular roadmap` — show, promote, or complete a slice. */
+function runRoadmap(args: Args): number {
+  const roadmap = loadRoadmap(args.cwd);
+  if (!roadmap) {
+    if (scaffoldRoadmap(args.cwd)) {
+      process.stdout.write(
+        `Created ${roadmapPath(args.cwd)}\n` +
+          'Fill in the vision and the slices, then promote one at a time.\n',
+      );
+      return 0;
+    }
+    process.stderr.write(`Could not read ${roadmapPath(args.cwd)}.\n`);
+    return 1;
+  }
+
+  if (args.slice) {
+    const result = args.done
+      ? completeSlice(roadmap, args.slice)
+      : promoteSlice(roadmap, args.slice);
+    if (!result.ok) {
+      process.stderr.write(`${result.reason}\n`);
+      return 1;
+    }
+    saveRoadmap(args.cwd, result.roadmap);
+    process.stdout.write(
+      args.done
+        ? `'${result.slice.id}' is done.\n`
+        : `'${result.slice.id}' is now active. Open a change for it:\n` +
+            `  openspec new change ${result.slice.id}\n`,
+    );
+    return 0;
+  }
+
+  process.stdout.write(`${roadmap.vision.trim()}\n\n`);
+  const MARK: Record<string, string> = { planned: '○', active: '◉', done: '✓' };
+  for (const slice of roadmap.slices) {
+    const blocked = slice.dependsOn.length > 0 ? `  (after ${slice.dependsOn.join(', ')})` : '';
+    process.stdout.write(`${MARK[slice.status]} ${slice.id}${blocked}\n    ${slice.summary}\n`);
+  }
+
+  const next = nextPromotable(roadmap);
+  const active = roadmap.slices.find((s) => s.status === 'active');
+  process.stdout.write(
+    active
+      ? `\n'${active.id}' is active. One slice at a time keeps the review queue to one change.\n`
+      : next
+        ? `\nNext: spectacular roadmap --promote ${next.id}\n`
+        : '\nNothing left to promote.\n',
+  );
+  return 0;
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -436,12 +654,16 @@ async function main(): Promise<number> {
   if (args.command === 'jobs') return runJobs(args);
   if (args.command === 'adr') return runAdrs(args);
   if (args.command === 'foundation') return runFoundation(args);
+  if (args.command === 'pending') return runPending(args);
+  if (args.command === 'roadmap') return runRoadmap(args);
 
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
   try {
     if (args.command === 'instructions') return await runInstructions(args, adapter);
     if (args.command === 'run') return await runAgent(args, adapter);
+    if (args.command === 'archive') return await runArchive(args, adapter);
+    if (args.command === 'verify') return await runVerify(args, adapter);
 
     const { pipelines, failed, statuses } = await loadPipelines(adapter, args.cwd);
 
