@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { buildPipeline, type ReviewByArtifact } from '../src/core/pipeline.ts';
 import { gateFor, staleArtifacts } from '../src/core/gate.ts';
 import type { OpenSpecArtifact, OpenSpecChangeStatus } from '../src/adapter/types.ts';
@@ -182,5 +182,48 @@ describe('drift warnings', () => {
       'design',
     );
     expect(gate.warnings[0]).toContain('(3 requirements)');
+  });
+});
+
+describe('the Foundation gate', () => {
+  const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+  const { tmpdir } = require('node:os');
+  const { join } = require('node:path');
+  const { foundationGate } = require('../src/core/gate.ts');
+  const { foundationDir, scaffoldFoundation } = require('../src/core/foundation.ts');
+
+  const dirs: string[] = [];
+  const root = (): string => {
+    const d = mkdtempSync(join(tmpdir(), 'spectacular-fg-'));
+    dirs.push(d);
+    return d;
+  };
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  test('a scaffolded but unanswered Foundation blocks, naming what is open', () => {
+    const r = root();
+    scaffoldFoundation(r);
+    const gate = foundationGate(r);
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toContain('ground rules are not settled');
+    expect(gate.blockers.length).toBeGreaterThan(0);
+    expect(gate.blockers[0]).toContain('foundation/');
+  });
+
+  test('an answered Foundation allows', () => {
+    const r = root();
+    mkdirSync(foundationDir(r), { recursive: true });
+    writeFileSync(join(foundationDir(r), 'stack.md'), '# Stack\n\n## Language\n\nTypeScript.\n');
+    expect(foundationGate(r).allowed).toBe(true);
+  });
+
+  test('no Foundation at all warns but never blocks', () => {
+    // spec-tacular must stay usable on a repo that adopted OpenSpec before it
+    // existed.
+    const gate = foundationGate(root());
+    expect(gate.allowed).toBe(true);
+    expect(gate.warnings[0]).toContain('no Foundation yet');
   });
 });

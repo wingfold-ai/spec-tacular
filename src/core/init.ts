@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { scaffoldFoundation } from './foundation.ts';
 
 export const SCHEMA_NAME = 'spec-tacular';
 
@@ -33,6 +34,9 @@ export interface InitResult {
   /** True when an existing install was replaced. */
   replaced: boolean;
   configUpdated: boolean;
+  /** Foundation documents written, and those left alone because they existed. */
+  foundationCreated: string[];
+  foundationSkipped: string[];
   notes: string[];
 }
 
@@ -102,6 +106,15 @@ export function initProject(
     );
   }
 
+  const foundation = scaffoldFoundation(projectRoot);
+  if (foundation.created.length > 0) {
+    notes.push(
+      'Answer the Foundation questions before proposing a change. Every one is' +
+        ' left as TBD on purpose: a default nobody chose is indistinguishable' +
+        ' from a decision.',
+    );
+  }
+
   const configUpdated = options.setSchema === false ? false : setProjectSchema(projectRoot, SCHEMA_NAME);
   if (configUpdated) {
     // Existing changes pin their schema in their own .openspec.yaml, so this
@@ -110,5 +123,13 @@ export function initProject(
     notes.push('New changes will use this schema. Changes already in flight keep theirs.');
   }
 
-  return { schemaDir, files: files.sort(), replaced, configUpdated, notes };
+  return {
+    schemaDir,
+    files: files.sort(),
+    replaced,
+    configUpdated,
+    foundationCreated: foundation.created,
+    foundationSkipped: foundation.skipped,
+    notes,
+  };
 }

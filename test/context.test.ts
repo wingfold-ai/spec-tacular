@@ -42,8 +42,8 @@ describe('buildContext', () => {
   test('separates accepted from deferred and excludes rejected', () => {
     // A rejected requirement is not something to build against.
     const bundle = buildContext(root(), reviewed());
-    expect(bundle.accepted.map((r) => r.requirement.name)).toEqual(['Alpha']);
-    expect(bundle.deferred.map((r) => r.requirement.name)).toEqual(['Beta']);
+    expect(bundle.accepted.map((r) => r.item.name)).toEqual(['Alpha']);
+    expect(bundle.deferred.map((r) => r.item.name)).toEqual(['Beta']);
   });
 
   test('reads foundation documents and ADRs when they exist', () => {

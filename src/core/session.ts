@@ -8,20 +8,20 @@
  * here and tested without a terminal. The TUI only draws the current item.
  */
 
-import type { Requirement } from './requirements.ts';
+import type { ReviewItem } from './requirements.ts';
 import {
   reconcile,
   setState,
   summarize,
   type ChangeReview,
-  type ReviewedRequirement,
+  type ReviewedItem,
   type ReviewState,
   type ReviewSummary,
 } from './review.ts';
 
 export interface ReviewSession {
   change: string;
-  items: ReviewedRequirement[];
+  items: ReviewedItem[];
   /** Index into `items`. Always valid when `items` is non-empty. */
   cursor: number;
   review: ChangeReview;
@@ -29,23 +29,23 @@ export interface ReviewSession {
 }
 
 /** A state that means "this requirement still needs you". */
-function isOpen(item: ReviewedRequirement): boolean {
+function isOpen(item: ReviewedItem): boolean {
   return item.state === 'pending' || item.state === 'rejected';
 }
 
 function build(
   change: string,
-  requirements: Requirement[],
+  items: ReviewItem[],
   review: ChangeReview,
   cursor: number,
 ): ReviewSession {
-  const items = reconcile(requirements, review);
+  const reviewed = reconcile(items, review);
   return {
     change,
-    items,
-    cursor: items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1),
+    items: reviewed,
+    cursor: reviewed.length === 0 ? 0 : Math.min(Math.max(cursor, 0), reviewed.length - 1),
     review,
-    summary: summarize(items),
+    summary: summarize(reviewed),
   };
 }
 
@@ -58,19 +58,19 @@ function build(
  */
 export function openSession(
   change: string,
-  requirements: Requirement[],
+  items: ReviewItem[],
   review: ChangeReview,
 ): ReviewSession {
-  const items = reconcile(requirements, review);
-  const stored = review.cursor ? items.findIndex((i) => i.requirement.id === review.cursor) : -1;
+  const reviewed = reconcile(items, review);
+  const stored = review.cursor ? reviewed.findIndex((i) => i.item.id === review.cursor) : -1;
   // No stored position (or it points at a requirement that is gone): start at
   // the first thing that needs attention rather than at the top, so reopening
   // a mostly-reviewed change does not make you walk past the accepted ones.
-  const start = stored !== -1 ? stored : Math.max(items.findIndex(isOpen), 0);
-  return build(change, requirements, review, start);
+  const start = stored !== -1 ? stored : Math.max(reviewed.findIndex(isOpen), 0);
+  return build(change, items, review, start);
 }
 
-export function currentItem(session: ReviewSession): ReviewedRequirement | null {
+export function currentItem(session: ReviewSession): ReviewedItem | null {
   return session.items[session.cursor] ?? null;
 }
 
@@ -89,7 +89,7 @@ export function moveTo(session: ReviewSession, index: number): ReviewSession {
 }
 
 function withCursor(session: ReviewSession, cursor: number): ReviewSession {
-  const id = session.items[cursor]?.requirement.id ?? null;
+  const id = session.items[cursor]?.item.id ?? null;
   return { ...session, cursor, review: { ...session.review, cursor: id } };
 }
 
@@ -130,22 +130,19 @@ export function decide(
   const item = currentItem(session);
   if (!item) return session;
 
-  const review = setState(session.review, item.requirement, state, extra);
-  const requirements = session.items.map((i) => i.requirement);
+  const review = setState(session.review, item.item, state, extra);
+  const items = session.items.map((i) => i.item);
   // Rebuilt at the old cursor first so `nextOpenIndex` sees the decision that
   // was just made; otherwise accepting the last open item would loop back to it.
-  const updated = build(session.change, requirements, review, session.cursor);
+  const updated = build(session.change, items, review, session.cursor);
   return withCursor(updated, nextOpenIndex(updated, updated.cursor));
 }
 
 /** Re-reads the queue from freshly parsed Markdown, keeping your place. */
-export function refresh(
-  session: ReviewSession,
-  requirements: Requirement[],
-): ReviewSession {
-  const id = currentItem(session)?.requirement.id;
-  const rebuilt = build(session.change, requirements, session.review, session.cursor);
-  const at = id ? rebuilt.items.findIndex((i) => i.requirement.id === id) : -1;
+export function refresh(session: ReviewSession, items: ReviewItem[]): ReviewSession {
+  const id = currentItem(session)?.item.id;
+  const rebuilt = build(session.change, items, session.review, session.cursor);
+  const at = id ? rebuilt.items.findIndex((i) => i.item.id === id) : -1;
   return at === -1 ? rebuilt : withCursor(rebuilt, at);
 }
 
