@@ -80,7 +80,8 @@ Verify one here and it merges into the main specs.
 | `n` `p` | next · previous requirement |
 | `p` | promote decision to ADR (design review only) |
 | `g` then `d`/`r`/`j`/`k`/`v` | go to dashboard · review · jobs · decisions · pending validation |
-| `Ctrl-J` | toggle job overlay |
+| `ctrl+j` | toggle the job overlay, from anywhere including mid-review |
+| `x` | cancel the selected job (asks first) |
 | `Enter` | descend the hierarchy (a change → its review queue) |
 | `ctrl+c` | cancel a prompt, or go back one level |
 | `?` | context-sensitive help |

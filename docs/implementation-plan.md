@@ -173,7 +173,7 @@ missing piece, and it belongs with the design-review screen in M7.
 
 ---
 
-## M5 — Agent drivers and background jobs
+## M5 — Agent drivers and background jobs  ✅ done
 
 **Goal:** generation and `apply` stop blocking you.
 
@@ -188,6 +188,36 @@ missing piece, and it belongs with the design-review screen in M7.
 
 **Exit:** start `apply` on change A and review change B at the same time, in one
 terminal.
+
+**Result:** met. A 30-second job runs against change A while change B is
+reviewed to completion by keystroke in the same process, and the job is
+untouched by any of it. `spectacular run` returns in under two seconds —
+the wait is the OpenSpec call that composes the prompt, not the agent.
+
+```
+$ spectacular run design -c job-demo
+Started opencode on job-demo/design
+  job:  20260921T154150-job-demo-design-pe6o
+$ spectacular jobs
+failed      job-demo/design  2026-09-21T15:41:52.357Z  ...
+```
+
+**The bug that mattered.** Jobs are spawned detached and `run` exits
+immediately, so when the agent finishes there is no spec-tacular process left
+to record the outcome — every background job would have reported
+`interrupted` rather than succeeded or failed. Jobs now record their own exit
+code through a shell wrapper (`"$0" "$@"; ec=$?; printf %s "$ec" > …; exit
+"$ec"`), and `listJobs` reads it when it finds a dead process. The trailing
+`exit "$ec"` matters as much as the file: without it the wrapper exits with
+`printf`'s status and every job looks successful to a parent still watching.
+The wrapper passes argv through rather than interpolating, so a prompt
+containing quotes, `$(...)` or newlines is never re-parsed by the shell.
+
+**Scope note.** The context bundle reads `spec-tacular/foundation/` and
+`spec-tacular/decisions/` if they exist and says so when they do not, so it
+starts carrying ground rules the moment M7 creates those files. Today it
+carries the accepted and deferred requirements, which is what a design needs
+to know is settled.
 
 ---
 
