@@ -35,6 +35,7 @@ import {
   tailJob,
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
+import { loadLintConfig } from './core/concreteness.ts';
 
 type Command = 'overview' | 'init' | 'instructions' | 'run' | 'jobs';
 
@@ -391,6 +392,7 @@ async function main(): Promise<number> {
         );
       },
       saveSession: (session) => saveReview(args.cwd, session.review),
+      lintConfig: loadLintConfig(args.cwd),
       reparse: (change) =>
         queueFor(change)?.requirements.map((r) => r.requirement) ?? [],
       reloadPipelines: async () => (await loadPipelines(adapter, args.cwd)).pipelines,

@@ -14,6 +14,8 @@ import type { ReviewSession } from '../core/session.ts';
 import { currentItem, position } from '../core/session.ts';
 import { renderCounts, renderProgressBar, wrap } from '../render/requirement.ts';
 import type { KeyEvent } from '@opentui/core';
+import type { Finding } from '../core/concreteness.ts';
+import { exampleValues, renderExamples } from '../core/examples.ts';
 import { THEME } from './theme.ts';
 
 /** A decision that needs a typed reason before it is recorded. */
@@ -21,6 +23,10 @@ export type PromptKind = 'reject' | 'defer';
 
 export interface ReviewScreenProps {
   session: ReviewSession;
+  /** Concreteness findings for the current requirement. Advisory, never blocking. */
+  findings?: Finding[];
+  /** Marks a flagged value as an illustration rather than a contract. */
+  onMarkExample?: (finding: Finding) => void;
   onAccept: () => void;
   onReject: (note: string) => void;
   onDefer: (reason: string) => void;
@@ -50,9 +56,17 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [prompt, setPrompt] = createSignal<PromptKind | null>(null);
   const [draft, setDraft] = createSignal('');
   const [help, setHelp] = createSignal(false);
+  const [marking, setMarking] = createSignal(false);
 
   const item = createMemo(() => currentItem(props.session));
   const pos = createMemo(() => position(props.session));
+  const findings = createMemo(() => props.findings ?? []);
+  // Examples are shown by value rather than inline braces: the braces are
+  // noise on screen, but which values are illustrative is the point.
+  const examples = createMemo(() => {
+    const current = item();
+    return current ? exampleValues(current.requirement.text) : [];
+  });
 
   const closePrompt = () => {
     setPrompt(null);
@@ -84,6 +98,17 @@ export function ReviewScreen(props: ReviewScreenProps) {
     key.name === 'escape' || (key.ctrl === true && key.name === 'c');
 
   useKeyboard((key) => {
+    if (marking()) {
+      // Numbered rather than cycling: with several findings on one
+      // requirement, picking the wrong one rewrites the spec.
+      const pick = Number(key.sequence);
+      if (Number.isInteger(pick) && pick >= 1 && pick <= findings().length) {
+        props.onMarkExample?.(findings()[pick - 1]!);
+      }
+      setMarking(false);
+      return;
+    }
+
     if (prompt()) {
       if (isCancel(key)) closePrompt();
       else if (key.name === 'return' || key.name === 'enter') submitPrompt();
@@ -107,6 +132,9 @@ export function ReviewScreen(props: ReviewScreenProps) {
       case 'd': return setPrompt('defer');
       case 's': return props.onSkip();
       case 'e': return props.onEdit();
+      case 'm':
+        if (findings().length > 0) setMarking(true);
+        return;
       case 'n': case 'down': case 'j': return props.onMove(1);
       case 'p': case 'up': case 'k': return props.onMove(-1);
       case 'q': return props.onBack();
@@ -139,10 +167,17 @@ export function ReviewScreen(props: ReviewScreenProps) {
             {`Requirement: ${item()!.requirement.name}`}
           </text>
           <text>{' '}</text>
-          <For each={wrap(item()!.requirement.text, 76)}>
+          <For each={wrap(renderExamples(item()!.requirement.text), 76)}>
             {(line) => <text style={{ fg: THEME.text }}>{line || ' '}</text>}
           </For>
           <text>{' '}</text>
+
+          <Show when={examples().length > 0}>
+            <text style={{ fg: THEME.dim }}>
+              {`  examples, not contracts: ${examples().join(', ')}`}
+            </text>
+            <text>{' '}</text>
+          </Show>
 
           {/* Its scenarios */}
           <For each={item()!.requirement.scenarios}>
@@ -156,6 +191,18 @@ export function ReviewScreen(props: ReviewScreenProps) {
               </box>
             )}
           </For>
+
+          {/* Advisory only — a finding can never block a stage */}
+          <Show when={findings().length > 0}>
+            <For each={findings()}>
+              {(finding, i) => (
+                <text style={{ fg: THEME.warn }}>
+                  {`  ${i() + 1}. ${finding.question}: ${finding.value}`}
+                </text>
+              )}
+            </For>
+            <text>{' '}</text>
+          </Show>
 
           {/* Honest state: drift is never silent */}
           <Show when={item()!.drifted}>
@@ -193,17 +240,27 @@ export function ReviewScreen(props: ReviewScreenProps) {
         </box>
       </Show>
 
-      <Show when={!prompt() && help()}>
+      <Show when={!prompt() && marking()}>
+        <box style={{ paddingLeft: 1, paddingRight: 1 }}>
+          <text style={{ fg: THEME.warn }}>
+            {`Mark which as an example? 1-${findings().length} · any other key cancels`}
+          </text>
+        </box>
+      </Show>
+
+      <Show when={!prompt() && !marking() && help()}>
         <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.text }}>a accept · r reject (asks why) · d defer (asks what would verify it)</text>
           <text style={{ fg: THEME.text }}>e edit in $EDITOR · s skip · n/p move · q back · any key closes</text>
         </box>
       </Show>
 
-      <Show when={!prompt() && !help()}>
+      <Show when={!prompt() && !marking() && !help()}>
         <box style={{ paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.dim }}>
-            a accept · r reject · e edit · d defer · s skip · n/p move · ? help · q back
+            {findings().length > 0
+              ? 'a accept · r reject · e edit · d defer · m mark example · s skip · ? help · q back'
+              : 'a accept · r reject · e edit · d defer · s skip · n/p move · ? help · q back'}
           </text>
         </box>
       </Show>
