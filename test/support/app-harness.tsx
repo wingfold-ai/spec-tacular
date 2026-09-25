@@ -64,6 +64,11 @@ export async function mountApp(
     refine?: TuiInput['refine'];
     /** Never the real clipboard: a test that pastes brings its own. */
     clipboard?: TuiInput['clipboard'];
+    /** The AI usage sidebar's wiring, for tests that exercise it. */
+    driver?: TuiInput['driver'];
+    modelFor?: TuiInput['modelFor'];
+    onUsage?: TuiInput['onUsage'];
+    jobUsage?: TuiInput['jobUsage'];
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'spectacular-app-'));
@@ -130,6 +135,10 @@ export async function mountApp(
     advisor: options.ask ? new FoundationAdvisor(root, options.ask) : null,
     advisorNote: options.ask ? null : 'none in this test',
     nameChange: options.nameChange,
+    driver: options.driver ?? 'claude',
+    modelFor: options.modelFor,
+    onUsage: options.onUsage,
+    jobUsage: options.jobUsage,
     warm: (target) => warmed.push(target),
     greenfield: () => isGreenfield(root),
     roadmap: () => loadRoadmap(root),

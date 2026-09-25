@@ -18,6 +18,7 @@ import { exampleValues, renderExamples } from '../core/examples.ts';
 import { isRequirement, type Requirement, type ReviewItem } from '../core/requirements.ts';
 import type { RefineTurn, Refinement } from '../core/refine.ts';
 import { THEME } from './theme.ts';
+import { useContentWidth } from './layout.ts';
 import { isCancel, isPrintable } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { RevisePanel } from './revise.tsx';
@@ -77,6 +78,7 @@ const STATE_COLOR: Record<string, string> = {
 };
 
 export function ReviewScreen(props: ReviewScreenProps) {
+  const contentWidth = useContentWidth();
   const [prompt, setPrompt] = createSignal<PromptKind | null>(null);
   const [draft, setDraft] = createSignal('');
   const [help, setHelp] = createSignal(false);
@@ -267,7 +269,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
             {`${label()}: ${item()!.item.name}`}
           </text>
           <text>{' '}</text>
-          <For each={wrap(renderExamples(item()!.item.text), 76)}>
+          <For each={wrap(renderExamples(item()!.item.text), Math.max(Math.min(76, contentWidth() - 6), 30))}>
             {(line) => <text style={{ fg: THEME.text }}>{line || ' '}</text>}
           </For>
           <text>{' '}</text>

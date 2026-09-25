@@ -8,6 +8,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { adopt } from './children.ts';
+import type { Usage } from '../core/usage.ts';
 import {
   SessionError,
   SessionTimeoutError,
@@ -26,6 +27,41 @@ interface StreamEvent {
   is_error?: boolean;
   structured_output?: unknown;
   errors?: string[];
+  model?: string;
+  duration_ms?: number;
+  num_turns?: number;
+  total_cost_usd?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+  modelUsage?: Record<string, unknown>;
+}
+
+/**
+ * What a Claude `result` event says the request cost, or null when it carries
+ * no usage at all. `modelUsage` names the model that actually ran, which is
+ * more truthful than the flag that was asked for.
+ */
+export function usageFromResult(event: StreamEvent): Usage | null {
+  if (event.type !== 'result') return null;
+  const models = Object.keys(event.modelUsage ?? {});
+  const model = models[0] ?? event.model;
+  const usage = event.usage;
+  if (event.total_cost_usd === undefined && !usage && !model) return null;
+  return {
+    driver: 'claude',
+    ...(model ? { model } : {}),
+    ...(usage?.input_tokens !== undefined ? { inputTokens: usage.input_tokens } : {}),
+    ...(usage?.output_tokens !== undefined ? { outputTokens: usage.output_tokens } : {}),
+    ...(usage?.cache_read_input_tokens !== undefined ? { cacheReadTokens: usage.cache_read_input_tokens } : {}),
+    ...(usage?.cache_creation_input_tokens !== undefined ? { cacheWriteTokens: usage.cache_creation_input_tokens } : {}),
+    ...(event.total_cost_usd !== undefined ? { costUsd: event.total_cost_usd } : {}),
+    ...(event.duration_ms !== undefined ? { durationMs: event.duration_ms } : {}),
+    ...(event.num_turns !== undefined ? { turns: event.num_turns } : {}),
+  };
 }
 
 /** Extra flags from the environment, split on whitespace. */
@@ -80,6 +116,7 @@ export class StreamJsonSession implements StructuredSession {
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
   private dead = false;
+  private usage: Usage | null = null;
 
   constructor(
     private readonly command: AgentCommand,
@@ -89,6 +126,10 @@ export class StreamJsonSession implements StructuredSession {
 
   get alive(): boolean {
     return !this.dead;
+  }
+
+  lastUsage(): Usage | null {
+    return this.usage;
   }
 
   warm(): void {
@@ -156,6 +197,7 @@ export class StreamJsonSession implements StructuredSession {
     const { resolve, reject, timer } = this.pending;
     this.pending = null;
     clearTimeout(timer);
+    this.usage = usageFromResult(event);
     if (event.is_error || (event.subtype && event.subtype !== 'success')) {
       reject(new Error(event.result ?? event.errors?.join('; ') ?? `${this.label} reported an error`));
     } else if (event.structured_output === undefined) {
@@ -286,10 +328,27 @@ export const claudeDriver: AgentDriver = {
     }
 
     if (event.type === 'result') {
-      return event.is_error ? `failed: ${event.result ?? 'unknown error'}` : 'done';
+      const usage = usageFromResult(event);
+      const cost = usage?.costUsd !== undefined ? ` · $${usage.costUsd.toFixed(4)}` : '';
+      return event.is_error ? `failed: ${event.result ?? 'unknown error'}` : `done${cost}`;
     }
 
     // System init, user echoes, partial chunks: protocol noise.
     return null;
+  },
+
+  parseUsage(line: string): Usage | null {
+    try {
+      return usageFromResult(JSON.parse(line.trim()) as StreamEvent);
+    } catch {
+      return null;
+    }
+  },
+
+  model(mode?: StructuredMode): string | undefined {
+    if (mode === 'quick') return process.env['SPECTACULAR_QUICK_MODEL'] ?? 'haiku';
+    if (mode) return process.env['SPECTACULAR_ADVISOR_MODEL'] ?? 'sonnet';
+    // An artifact job runs on Claude Code's own default, which only it knows.
+    return undefined;
   },
 };

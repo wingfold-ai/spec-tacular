@@ -15,13 +15,14 @@
  * answered is then left for later — open, but not blocking the first change.
  */
 
-import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
+import { useKeyboard } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, Show, untrack } from 'solid-js';
 import type { AdviceOption, QuestionMeta } from '../core/advisor.ts';
 import type { GuidedQuestion } from '../core/foundation.ts';
 import { mergeOptions } from '../core/presets.ts';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
+import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
 import { Button, clip, KeyBar, Panel, Spinner } from './widgets.tsx';
@@ -107,7 +108,7 @@ const INTRO = [
 ];
 
 export function FoundationScreen(props: FoundationScreenProps) {
-  const dims = useTerminalDimensions();
+  const contentWidth = useContentWidth();
   const meta = () => props.meta ?? {};
   const [intro, setIntro] = createSignal(props.questions.every((q) => !q.answered));
   const [cursorId, setCursorId] = createSignal<string | null>(
@@ -178,7 +179,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
   const ownRow = createMemo(() => rows().length - 1);
   /** Wide enough for the longest proposal, within reason, so labels line up. */
   const labelWidth = createMemo(() =>
-    Math.min(Math.max(...options().map((o) => o.label.length), 12) + 2, Math.floor(dims().width / 2)),
+    Math.min(Math.max(...options().map((o) => o.label.length), 12) + 2, Math.floor(contentWidth() / 2)),
   );
   const hasChoices = createMemo(() => rows().some((r) => r.kind === 'option'));
   const answered = createMemo(() => props.questions.filter((q) => q.answered).length);
@@ -619,10 +620,10 @@ export function FoundationScreen(props: FoundationScreenProps) {
                 <Show when={row.kind === 'option' && (row as { derived?: string }).derived}>
                   <box style={{ flexDirection: 'column', flexGrow: 1 }}>
                     <text style={{ fg: sel() === i() ? THEME.accent : THEME.text }}>
-                      {`⇐ ${clip((row as { option: AdviceOption }).option.label, Math.max(dims().width - 12, 20))}`}
+                      {`⇐ ${clip((row as { option: AdviceOption }).option.label, Math.max(contentWidth() - 12, 20))}`}
                     </text>
                     <text style={{ fg: THEME.accent2 }}>
-                      {`  ${clip(`from your earlier answers: ${(row as { derived: string }).derived}`, Math.max(dims().width - 12, 20))}`}
+                      {`  ${clip(`from your earlier answers: ${(row as { derived: string }).derived}`, Math.max(contentWidth() - 12, 20))}`}
                     </text>
                   </box>
                 </Show>
@@ -634,7 +635,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
                     {(row as { option: AdviceOption }).option.recommended ? '★ ' : '  '}
                   </text>
                   <text style={{ fg: THEME.dim, flexGrow: 1 }}>
-                    {clip((row as { option: AdviceOption }).option.detail, Math.max(dims().width - labelWidth() - 14, 20))}
+                    {clip((row as { option: AdviceOption }).option.detail, Math.max(contentWidth() - labelWidth() - 14, 20))}
                   </text>
                 </Show>
                 <Show when={row.kind === 'skip'}>

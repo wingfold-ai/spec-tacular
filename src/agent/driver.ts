@@ -8,6 +8,8 @@
  * is that it works with the tools you have.
  */
 
+import type { Usage } from '../core/usage.ts';
+
 export interface AgentRequest {
   /** The full prompt: OpenSpec's instructions plus the context bundle. */
   prompt: string;
@@ -34,6 +36,16 @@ export interface AgentDriver {
    * Agents emit a lot of protocol noise that nobody wants tailing past.
    */
   formatLine(line: string): string | null;
+  /**
+   * Usage reported by one line of a finished job's output, or null. Optional:
+   * a driver that does not report cost simply shows no cost for its jobs.
+   */
+  parseUsage?(line: string): Usage | null;
+  /**
+   * The model this driver uses for a kind of request, when one is configured.
+   * `undefined` means the agent's own default, which only it knows.
+   */
+  model?(mode?: StructuredMode): string | undefined;
   /**
    * A one-shot request answered as JSON matching `schema` — for the advisor,
    * not for writing artifacts. Optional: a driver without it simply means no
@@ -70,6 +82,8 @@ export interface StructuredSession {
   send(text: string, options: { timeoutMs: number }): Promise<unknown>;
   /** Starts the agent ahead of the first message, so that one is quick too. */
   warm(): void;
+  /** Usage for the most recent turn, when the agent reports one. */
+  lastUsage?(): Usage | null;
   /** False once it died, errored beyond use, or was closed. */
   readonly alive: boolean;
   close(): void;

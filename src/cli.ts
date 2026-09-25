@@ -36,6 +36,7 @@ import {
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
 import { createAssistants, type Assistants } from './assistants.ts';
+import type { Usage } from './core/usage.ts';
 import { isGreenfield } from './core/vision.ts';
 import { loadLintConfig } from './core/concreteness.ts';
 import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
@@ -861,6 +862,29 @@ async function main(): Promise<number> {
         return fresh.pipelines;
       },
       listJobs: () => listJobs(args.cwd),
+      driver: args.driver,
+      modelFor: (id) => {
+        try {
+          return defaultRegistry().get(id).model?.('research');
+        } catch {
+          return undefined;
+        }
+      },
+      jobUsage: (job) => {
+        let parse: ((line: string) => Usage | null) | undefined;
+        try {
+          parse = defaultRegistry().get(job.driver).parseUsage;
+        } catch {
+          return [];
+        }
+        if (!parse) return [];
+        const out: Usage[] = [];
+        for (const line of tailJob(job, 2000)) {
+          const usage = parse(line);
+          if (usage) out.push(usage);
+        }
+        return out;
+      },
       tailJob: (job) => {
         let format: (line: string) => string | null;
         try {

@@ -15,6 +15,7 @@ import { lineDiff, type DiffLine } from '../render/diff.ts';
 import { wrap } from '../render/requirement.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
+import { useContentWidth } from './layout.ts';
 import { THEME } from './theme.ts';
 import { KeyBar, Spinner } from './widgets.tsx';
 
@@ -60,6 +61,7 @@ export function isNewline(key: { name: string; shift?: boolean; meta?: boolean }
 
 export function RevisePanel(props: RevisePanelProps) {
   const dims = useTerminalDimensions();
+  const contentWidth = useContentWidth();
   const copy = useCopy();
   const [phase, setPhase] = createSignal<RevisePhase>(props.unavailable ? 'unavailable' : 'prompt');
   const [draft, setDraft] = createSignal(props.seed ?? '');
@@ -76,7 +78,7 @@ export function RevisePanel(props: RevisePanelProps) {
   let ticker: ReturnType<typeof setInterval> | undefined;
   onCleanup(() => clearInterval(ticker));
 
-  const width = () => Math.max(dims().width - 10, 40);
+  const width = () => Math.max(contentWidth() - 10, 40);
 
   const diff = createMemo(() => {
     const next = latest();

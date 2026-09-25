@@ -26,6 +26,7 @@ import {
 import { MalformedOutputError, retryInstruction } from './json.ts';
 import { debugLog } from './log.ts';
 import { renderDelta, renderPrompt, type ContextSection, type PromptParts } from './prompt.ts';
+import type { Usage } from '../core/usage.ts';
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
@@ -147,17 +148,26 @@ export class StructuredPool {
   private closed = false;
   private readonly oneShot: OneShot;
   private readonly maxTurns: number;
+  private readonly onUsage: ((usage: Usage) => void) | undefined;
 
   constructor(
     private readonly driver: AgentDriver,
     private readonly cwd: string,
-    options: { oneShot?: OneShot; maxTurns?: number } = {},
+    options: { oneShot?: OneShot; maxTurns?: number; onUsage?: (usage: Usage) => void } = {},
   ) {
     this.oneShot = options.oneShot ??
       ((prompt, schema, mode, timeoutMs) => runStructured(driver, cwd, prompt, schema, { mode, timeoutMs }));
     // A conversation grows with every turn, and so does what each turn costs.
     // Past this, a fresh session re-reading the context is the cheaper one.
     this.maxTurns = options.maxTurns ?? 20;
+    this.onUsage = options.onUsage;
+  }
+
+  /** Reports what the turn just cost, when the session and caller care. */
+  private report(session: StructuredSession): void {
+    if (!this.onUsage) return;
+    const usage = session.lastUsage?.();
+    if (usage) this.onUsage(usage);
   }
 
   private key(mode: StructuredMode, schema: object): string {
@@ -224,7 +234,9 @@ export class StructuredPool {
     const text = renderPrompt(parts);
     const started = Date.now();
     try {
-      await this.open(entry, mode, schema).send(text, { timeoutMs });
+      const session = this.open(entry, mode, schema);
+      await session.send(text, { timeoutMs });
+      this.report(session);
       entry.seen = parts.context;
       entry.turns++;
       debugLog(`advisor ${tag} primed, ${text.length} chars: ${Date.now() - started}ms`);
@@ -266,6 +278,7 @@ export class StructuredPool {
       const started = Date.now();
       try {
         const value = await session.send(text, { timeoutMs });
+        this.report(session);
         entry.seen = parts?.context ?? null;
         entry.turns++;
         debugLog(`advisor ${tag} turn ${entry.turns}${delta ? ' delta' : ' full'} ${text.length} chars: ${Date.now() - started}ms`);

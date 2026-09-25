@@ -68,7 +68,7 @@ const HELP_LINES = [
   '  w              let an agent draft the next artifact, in the background',
   '  e              write the next artifact yourself, in $EDITOR',
   '  f              the ground rules: domain, stack, architecture, conventions',
-  '  ctrl+j         background jobs',
+  '  ctrl+j         background jobs · ctrl+b AI usage: model, cost, current step',
   '  h              back to the start screen',
   '  q              quit',
   '',

@@ -250,6 +250,15 @@ dispatches Claude Code or opencode and returns immediately, so you keep
 reviewing while it works. `ctrl+j` pulls up the job pane mid-review without
 losing your place.
 
+The AI itself stays in view. A sidebar shows which driver and model is
+answering, what it has cost, and what it is doing right now — the running step
+while an agent drafts. `ctrl+b` (or the button in the sidebar) expands it into
+the per-model and per-job breakdown. It appears once the terminal is wide
+enough (130 columns), so it never squeezes the review surface; on a narrower
+terminal `ctrl+b` still opens the details full width. Cost and tokens come
+from the agents themselves — Claude reports actual USD, opencode its own cost
+— so there is no price table to keep current.
+
 Premature specificity gets questioned. A requirement naming an endpoint, a
 column or a class it has not earned is flagged during review, and `m` marks a
 value as `{{example: ...}}` — an illustration rather than a contract. Advisory

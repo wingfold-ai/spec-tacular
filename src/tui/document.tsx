@@ -11,6 +11,7 @@ import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
+import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { Button, KeyBar, Panel } from './widgets.tsx';
@@ -80,6 +81,7 @@ function render(content: string, width: number): Line[] {
 
 export function DocumentView(props: DocumentViewProps) {
   const dims = useTerminalDimensions();
+  const contentWidth = useContentWidth();
   const [top, setTop] = createSignal(0);
   const [focus, setFocus] = createSignal(0);
   const [feedback, setFeedback] = createSignal<string | null>(null);
@@ -87,7 +89,7 @@ export function DocumentView(props: DocumentViewProps) {
 
   usePasteInto(() => (feedback() !== null ? (text: string) => setFeedback((f) => (f ?? '') + text) : null));
 
-  const lines = createMemo(() => render(props.content, Math.max(dims().width - 8, 30)));
+  const lines = createMemo(() => render(props.content, Math.max(contentWidth() - 8, 30)));
   /** Rows available for the text, after the header, buttons and key bar. */
   const height = () => Math.max(dims().height - (feedback() !== null ? 16 : 13), 5);
   const maxTop = () => Math.max(lines().length - height(), 0);

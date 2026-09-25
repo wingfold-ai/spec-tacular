@@ -10,8 +10,8 @@
  */
 
 import { createCliRenderer } from '@opentui/core';
-import { render, useKeyboard, useRenderer } from '@opentui/solid';
-import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
+import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { staleArtifacts } from '../core/gate.ts';
 import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
 import {
@@ -57,6 +57,9 @@ import type { Requirement } from '../core/requirements.ts';
 import type { RefinePort } from './review.tsx';
 import { osc52, SystemClipboard, type ClipboardPort } from './clipboard.ts';
 import { ClipboardProvider, usePasteInto, useSelectionCopy, type ClipboardContextValue } from './copy-paste.ts';
+import { ContentWidthProvider } from './layout.ts';
+import { UsageColumn, UsagePane, USAGE_WIDTH, type ActiveAI, type JobUsage } from './usage.tsx';
+import { addUsage, driverLabel, emptyUsage, shortModel, type Usage, type UsageTotals } from '../core/usage.ts';
 
 export interface TuiInput {
   pipelines: ChangePipeline[];
@@ -117,6 +120,14 @@ export interface TuiInput {
   };
   /** The system clipboard; tests pass their own so they never touch the real one. */
   clipboard?: ClipboardPort;
+  /** The agent driver chosen with --driver, named in the usage sidebar. */
+  driver?: string;
+  /** The model a driver uses, when one is configured; undefined is its default. */
+  modelFor?: (driver: string) => string | undefined;
+  /** Subscribes to what the AI sessions cost, as each turn reports it. */
+  onUsage?: (listener: (usage: Usage) => void) => () => void;
+  /** Usage parsed from a job's log, for the jobs that report it. */
+  jobUsage?: (job: Job) => Usage[];
 }
 
 /** What the TUI needs from core/vision.ts. */
@@ -238,6 +249,7 @@ function changeWarnings(p: ChangePipeline): string[] {
 
 function App(props: { input: TuiInput; onQuit: () => void }) {
   const renderer = useRenderer();
+  const dims = useTerminalDimensions();
   const advisor = props.input.advisor ?? null;
   const [pipelines, setPipelines] = createSignal(props.input.pipelines);
   const [index, setIndex] = createSignal(0);
@@ -246,6 +258,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const [jobs, setJobs] = createSignal<Job[]>(props.input.listJobs());
   const [jobIndex, setJobIndex] = createSignal(0);
   const [jobsOpen, setJobsOpen] = createSignal(false);
+  /** What the AI has cost, and what it is doing, for the persistent sidebar. */
+  const [usageTotals, setUsageTotals] = createSignal<UsageTotals>(emptyUsage());
+  const [lastUsage, setLastUsage] = createSignal<Usage | null>(null);
+  const [usageOpen, setUsageOpen] = createSignal(false);
   const [stage, setStage] = createSignal<ProjectStage>(props.input.stage());
   const [screen, setScreen] = createSignal<Screen>('home');
   const [questions, setQuestions] = createSignal<GuidedQuestion[]>(props.input.questions());
@@ -325,6 +341,41 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const job = selectedJob();
     return job ? props.input.tailJob(job) : [];
   });
+
+  // --- AI usage -----------------------------------------------------------
+
+  onMount(() => {
+    const unsubscribe = props.input.onUsage?.((usage) => {
+      setUsageTotals((t) => addUsage(t, usage));
+      setLastUsage(usage);
+    });
+    onCleanup(() => unsubscribe?.());
+  });
+
+  /** What each job in the list cost, parsed from its log. */
+  const jobUsage = createMemo<JobUsage[]>(() => {
+    const read = props.input.jobUsage;
+    if (!read) return [];
+    return jobs().map((job) => ({ job, usages: read(job) }));
+  });
+
+  /** Everything the AI has cost this run: the sessions plus the jobs. */
+  const combinedUsage = createMemo(() =>
+    jobUsage().reduce((totals, entry) => entry.usages.reduce(addUsage, totals), usageTotals()),
+  );
+
+  // The sidebar only appears where it has room to spare: on the review and
+  // reading surfaces, and never so narrow that it wraps the buttons or key
+  // hints underneath it. On a setup flow it would only fight the questions.
+  const sidebarVisible = createMemo(
+    () =>
+      !usageOpen() &&
+      dims().width >= 130 &&
+      (screen() === 'overview' || screen() === 'document'),
+  );
+  const contentWidth = createMemo(() =>
+    Math.max(dims().width - (sidebarVisible() ? USAGE_WIDTH : 0), 40),
+  );
 
   const refreshFoundation = () => {
     setQuestions(props.input.questions());
@@ -514,6 +565,34 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const secs = Math.max(Math.round((Date.now() - Date.parse(job.startedAt)) / 1000), 0);
     return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}s`;
   });
+
+  /** What the AI is doing right now, whichever surface is asking it. */
+  const activeAI = createMemo<ActiveAI | null>(() => {
+    const driver = props.input.driver ?? 'claude';
+    const job = running();
+    if (job) {
+      return {
+        driver: job.driver,
+        label: `${driverLabel(job.driver)} is drafting the ${job.artifact}`,
+        step: runningLines().at(-1),
+        steps: runningLines(),
+      };
+    }
+    const think = thinking();
+    if (think.length > 0) {
+      return { driver, label: `AI is thinking about “${think.at(-1)}”`, steps: think };
+    }
+    if (visionBusy()) return { driver, label: visionBusy()!, steps: [] };
+    if (naming()) return { driver, label: 'Proposing a name…', steps: [] };
+    return null;
+  });
+
+  const driverInUse = createMemo(
+    () => activeAI()?.driver ?? lastUsage()?.driver ?? props.input.driver ?? 'claude',
+  );
+  const modelInUse = createMemo(
+    () => shortModel(lastUsage()?.model) ?? props.input.modelFor?.(driverInUse()),
+  );
 
   /** Prose artifacts written for the selected change: what can be read. */
   const readable = createMemo(() => {
@@ -926,6 +1005,13 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // --- keyboard -----------------------------------------------------------
 
   useKeyboard((key) => {
+    // The usage sidebar is a glance from anywhere: ctrl+b toggles its detail,
+    // and while that is up it owns the keyboard like the job overlay does.
+    if (key.ctrl && key.name === 'b') return setUsageOpen((open) => !open);
+    if (usageOpen()) {
+      if (key.name === 'q' || isCancel(key)) setUsageOpen(false);
+      return;
+    }
     // The job overlay owns the keyboard while it is up, including during a
     // review — that is what makes it a glance rather than a context switch.
     if (jobsOpen()) return;
@@ -1001,6 +1087,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
 
   return (
     <ClipboardProvider value={clipboard}>
+    <ContentWidthProvider value={contentWidth}>
     <box
       style={{ flexDirection: 'column', width: '100%', height: '100%', backgroundColor: THEME.bg }}
     >
@@ -1024,6 +1111,23 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         </Show>
       </Show>
 
+      {/* The screen body and the persistent AI sidebar, side by side */}
+      <box style={{ flexDirection: 'row', flexGrow: 1 }}>
+        <box style={{ flexDirection: 'column', flexGrow: 1 }}>
+          <Show
+            when={!usageOpen()}
+            fallback={
+              <Panel title="AI usage" grow focused>
+                <UsagePane
+                  totals={combinedUsage()}
+                  driver={driverInUse()}
+                  model={modelInUse()}
+                  active={activeAI()}
+                  jobs={jobUsage()}
+                />
+              </Panel>
+            }
+          >
       <Show when={screen() === 'home'}>
         <HomeScreen
           root={props.input.root}
@@ -1350,6 +1454,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         </Panel>
       </Show>
       </Show>
+          </Show>
+        </box>
+        <Show when={sidebarVisible()}>
+          <UsageColumn
+            totals={combinedUsage()}
+            driver={driverInUse()}
+            model={modelInUse()}
+            active={activeAI()}
+            onExpand={() => setUsageOpen(true)}
+          />
+        </Show>
+      </box>
 
       {/* Copied, or why not: over the bottom-right corner, on every screen */}
       <Show when={toast()}>
@@ -1358,6 +1474,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         </box>
       </Show>
     </box>
+    </ContentWidthProvider>
     </ClipboardProvider>
   );
 }
