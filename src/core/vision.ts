@@ -196,7 +196,11 @@ export function buildInterviewParts(projectRoot: string, session: VisionSession)
       'designed and built on its own.',
     ].join('\n'),
     context: [
-      { heading: 'Their vision, in their words', lines: [session.vision] },
+      {
+        heading: 'Their vision, in their words',
+        lines: session.vision ? [session.vision] : [],
+        empty: '(not described yet)',
+      },
       { heading: 'Ground rules already settled (never ask about these)', lines: groundRules(projectRoot) },
       {
         heading: 'The interview so far',
@@ -206,6 +210,22 @@ export function buildInterviewParts(projectRoot: string, session: VisionSession)
       },
     ],
     task: INTERVIEW_TASK,
+  };
+}
+
+/**
+ * A first message that only sets the scene (like the advisor's): sent before
+ * the vision is described, so describing it costs one turn, not a start-up.
+ */
+export function buildInterviewPrimeParts(projectRoot: string): PromptParts {
+  const empty: VisionSession = { vision: '', turns: [], understood: '', pending: null, finished: false, slices: [] };
+  return {
+    ...buildInterviewParts(projectRoot, empty),
+    task: [
+      'Nothing to ask yet: the developer is still describing their vision, and it',
+      'follows in the next message. For now return understood as an empty string,',
+      'enough as false, and a question with an empty ask, an empty why and no options.',
+    ].join('\n'),
   };
 }
 
@@ -397,6 +417,15 @@ export class VisionInterviewer {
 
   session(): VisionSession | null {
     return loadSession(this.projectRoot);
+  }
+
+  /** Primes the interview's session before the vision is described. */
+  prime(): void {
+    if (this.session()?.vision) return; // past describing: nothing to get ahead of
+    const parts = buildInterviewPrimeParts(this.projectRoot);
+    void Promise.resolve()
+      .then(() => this.ask(renderPrompt(parts), INTERVIEW_SCHEMA, { mode: 'think', parts, prime: true }))
+      .catch(() => {});
   }
 
   /** Not a new project: never offer the vision interview here again. */

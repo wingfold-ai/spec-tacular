@@ -29,7 +29,8 @@ bun install
 # Open the TUI in any folder — an empty one is fine. It opens on a start
 # screen with a Start button, then walks you through:
 #   1. Set up        runs `openspec init` and installs the spec-tacular schema
-#   2. Ground rules  stack, domain, architecture, conventions — one question at a time
+#   2. Ground rules  domain first, then stack, architecture, conventions — one
+#                    question at a time, most of them proposed from the domain
 #   3. Vision        (new projects) describe what you are building; an AI
 #                    interviews you, then splits it into a roadmap of slices
 #   4. First change  the first slice — or, on an existing project, describe a change
@@ -37,8 +38,37 @@ bun install
 bun run src/cli.ts --cwd /path/to/project
 ```
 
-The ground rules are answered with an AI advisor alongside:
+The ground rules start with the domain — what you are building, and for
+whom — because that is the one thing only you know, and most of the rest
+follows from it. On a new project only what can be answered on day one is
+asked; the rest is left for later:
 
+| | Questions |
+| --- | --- |
+| Asked | What the system is for, and who uses it |
+| Proposed from the domain (⇐, enter confirms) | the core terms · language and runtime · framework · datastore · package manager and tools · architecture style · layers and which may depend on which · where business rules live · naming · what a test must cover |
+| Left for later | domain invariants · out of scope · what is ruled out · error handling · configuration and secrets · code review · comment style · what newcomers get wrong |
+
+Questions left for later stay in `spec-tacular/foundation/`, saying *Decide
+later*: they are not asked, do not block the first change (the gate lists
+them as warnings), and every agent reads that they are not settled. An
+existing project is asked all nineteen, domain first.
+
+With an AI advisor alongside:
+
+- **The rest is proposed from the domain.** Once you have said what it is
+  for, the advisor proposes an answer for each question marked for it — a
+  sensible, current choice for a project like yours — shown ⇐ and
+  pre-selected, so most of the setup is reading and pressing enter. A
+  confirmed proposal moves straight on.
+- **An architecture style decides its own rules.** Choose Clean Architecture
+  and the layers question is already answered, instantly and without a model:
+  *entities ← use cases ← interface adapters ← frameworks & drivers,
+  dependencies point inward only, an inner layer never imports an outer one*,
+  with folder names, and where business rules and I/O live (dependency
+  inversion at every boundary). Hexagonal / ports & adapters, layered, MVC,
+  modular monolith and vertical slices have their rules too
+  (`src/core/derivations.ts`); the advisor then fits them to your project.
 - **It digs in before moving on.** After each answer it looks at what the
   answer leaves open and asks that next — answer "Python" and the next
   question is which version, with the latest stable release (looked up, not
@@ -59,13 +89,21 @@ The ground rules are answered with an AI advisor alongside:
   an empty answer: you get a plain-words explanation, examples for your
   project, and simpler questions to answer first — whose answers often derive
   the hard one.
-- **Not decided yet?** Press tab or type "skip". `ctrl+d` drops a question the
-  advisor added that is not relevant.
+- **Not decided yet?** Every question lists *Skip* as its first choice (tab
+  or typing "skip" do the same). It is never the pre-selected one: a ⇐
+  derived answer is, else the ★ recommendation, else writing your own. A
+  pass ends once every question is answered or skipped — skipped questions
+  are never asked again in the same pass — and `ctrl+f` (or typing "done")
+  ends it early. Whatever is still open is then left for later, so setup
+  always moves on to the vision or the first change. `ctrl+d` drops a
+  question the advisor added that is not relevant.
 
 A new project starts from its vision rather than a change — there is nothing
-to change yet. Describe it freely (paste is fine); the AI restates what it
-understood and asks one question at a time, with options, until it has enough
-or you say "done" (tab or "skip" passes on a question). It then proposes 3–8
+to change yet. The description starts from what you told the Domain question,
+so nothing is described twice: add to it or press enter. The AI restates what
+it understood and asks one question at a time, with options, until it has
+enough or you say "done" (Skip, the first choice, tab or "skip" pass on a
+question). It then proposes 3–8
 slices in build order, the first the smallest thing a user can do end to end.
 Drop the ones you do not want, and the rest become `spec-tacular/roadmap.yaml`;
 the vision and interview go to `spec-tacular/vision.md`, which every agent
@@ -89,8 +127,15 @@ while you answer:
   --output-format stream-json`, one process per kind of request (model, tools
   and JSON schema are fixed when it starts). The first message carries the
   instructions and the project so far; every later one only what changed and
-  the new request. Sessions start when the ground-rules, vision or naming
-  screen opens, so the first question does not wait for an agent to boot. If
+  the new request. The advisor's sessions start as soon as a project that
+  still needs setting up opens — on the start screen, before anything is
+  answered — and are *primed*: sent their instructions and the project so far
+  with a request for nothing, so the first real question is a small delta
+  and one short model turn. Measured with haiku, the first request on screen
+  went from 2.2 s to 1.3–1.5 s. Priming is invisible, never waits, is
+  skipped with `SPECTACULAR_NO_ADVISOR`, and is never retried as a one-shot
+  process. The vision interview is primed the same way, and naming warmed
+  when you start describing a change. If
   a session dies or errors it is restarted with the full context; if that
   fails too, a one-shot `claude -p` answers. All of them are stopped when
   spec-tacular exits, ctrl+c and SIGTERM included.
@@ -98,7 +143,8 @@ while you answer:
   with a conversation per kind of request, using its read-only `plan` agent
   and a JSON schema per message. A reply that ignores the schema still has
   its JSON found in the text, checked, and asked for again once with what
-  was wrong. Its conversations are deleted again on exit.
+  was wrong. Its conversations are primed the same way, and deleted again on
+  exit.
 
 Web search is used only when a request touches the stack or tooling
 (versions, frameworks, package managers, datastores); everything else is
@@ -114,7 +160,7 @@ of the time taken for no better options.
 | `SPECTACULAR_ADVISOR_THINKING=1` | Let Claude use extended thinking again (slower) |
 | `SPECTACULAR_OPENCODE_MODEL` | opencode model, `provider/model`, e.g. `openrouter/anthropic/claude-sonnet-4` (default: opencode's own) |
 | `SPECTACULAR_OPENCODE_QUICK_MODEL` | opencode model for naming (default: `SPECTACULAR_OPENCODE_MODEL`) |
-| `SPECTACULAR_DEBUG_LOG=/path` | Append each advisor request's session, delta/full and time to a file |
+| `SPECTACULAR_DEBUG_LOG=/path` | Append each advisor request's session, delta/full and time — and each priming turn — to a file |
 
 Opencode's free tier (`opencode/*-free` models) rejects any request whose tool
 set was narrowed, which is why tools are not restricted per request there;
@@ -191,10 +237,11 @@ only: it never blocks a stage.
    3. names a class or symbol: ExportController
 ```
 
-Ground rules come first. `spectacular init` scaffolds a Foundation — stack,
-architecture, conventions — with every question left as `TBD` on purpose, and
-refuses to start a change until they are answered. Once answered they enter
-every agent's context.
+Ground rules come first. `spectacular init` scaffolds a Foundation — domain,
+stack, architecture, conventions — with every question left as `TBD` on
+purpose (on a new project, those nobody can answer yet say *Decide later*
+instead), and refuses to start a change until the `TBD`s are answered. Once
+answered they enter every agent's context.
 
 Architectural decisions outlive their change. Mark one `**Scope: global**` in a
 design and `p` promotes it to a numbered ADR under `spec-tacular/decisions/`,

@@ -12,7 +12,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isOpenSpecProject } from '../adapter/openspec.ts';
-import { foundationExists, isUnanswered, loadFoundation } from './foundation.ts';
+import { foundationExists, isDeferred, isUnanswered, loadFoundation } from './foundation.ts';
 import { gateFor } from './gate.ts';
 import type { ChangePipeline, Stage } from './pipeline.ts';
 import { loadRoadmap } from './roadmap.ts';
@@ -77,7 +77,8 @@ export function projectStage(projectRoot: string, changeCount: number): ProjectS
     return changeCount === 0 ? { kind: 'no-foundation' } : { kind: 'working' };
   }
 
-  const items = loadFoundation(projectRoot);
+  // Questions left for later are neither asked nor counted.
+  const items = loadFoundation(projectRoot).filter((i) => !isDeferred(i));
   const answered = items.filter((i) => !isUnanswered(i)).length;
   if (answered < items.length) return { kind: 'foundation', answered, total: items.length };
 

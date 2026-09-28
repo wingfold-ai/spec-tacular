@@ -68,6 +68,8 @@ export async function mountApp(
   const dispatched: string[] = [];
   const jobs: Job[] = [];
   const docs = new Map<string, string>();
+  /** What the app asked to have warmed, in order. */
+  const warmed: string[] = [];
   const interviewer = new VisionInterviewer(root, options.visionAsk ?? (() => Promise.reject(new Error('no model'))));
 
   const input: TuiInput = {
@@ -86,7 +88,8 @@ export async function mountApp(
     stage: () => projectStage(root, changes.length),
     setup: async () => {
       mkdirSync(join(root, 'openspec', 'changes'), { recursive: true });
-      scaffoldFoundation(root);
+      // As the real set-up does: a new project leaves some questions for later.
+      scaffoldFoundation(root, { defer: isGreenfield(root) });
       return { ok: true };
     },
     questions: () => guidedQuestions(root),
@@ -114,6 +117,7 @@ export async function mountApp(
     advisor: options.ask ? new FoundationAdvisor(root, options.ask) : null,
     advisorNote: options.ask ? null : 'none in this test',
     nameChange: options.nameChange,
+    warm: (target) => warmed.push(target),
     greenfield: () => isGreenfield(root),
     roadmap: () => loadRoadmap(root),
     vision: {
@@ -147,6 +151,7 @@ export async function mountApp(
     dispatched,
     jobs,
     docs,
+    warmed,
     settle,
     /** Pretends an agent finished writing `artifact` of `change`. */
     finishJob: (change: string, artifact: string, content: string) => {

@@ -34,6 +34,8 @@ afterEach(() => {
 });
 
 const stack = (r: string) => readFileSync(join(foundationDir(r), 'stack.md'), 'utf8');
+/** The Stack questions, in order: most of these tests are about them. */
+const stackOf = (r: string) => guidedQuestions(r).filter((q) => q.title === 'Stack');
 
 describe('parsing what the model sent', () => {
   test('keeps exactly one recommendation, whatever arrived', () => {
@@ -67,13 +69,14 @@ describe('parsing what the model sent', () => {
 describe('the prompt', () => {
   test('carries what is decided, what is open, and asks for current versions', () => {
     const r = root();
-    const [first] = guidedQuestions(r);
+    const [first] = stackOf(r);
     answerFoundation(first!.item, 'Python');
     const qs = guidedQuestions(r);
+    const [lang, framework] = stackOf(r);
     const prompt = buildAdvicePrompt({
       questions: qs,
-      answered: { question: qs[0]!, answer: 'Python', depth: 0 },
-      upcoming: qs[1],
+      answered: { question: lang!, answer: 'Python', depth: 0 },
+      upcoming: framework,
     });
     expect(prompt).toContain('- [Stack] Language and runtime, with versions.\n  Python');
     expect(prompt).toContain('Still open (never ask these again):');
@@ -97,10 +100,10 @@ describe('the prompt', () => {
 describe('follow-ups in the files', () => {
   test('are inserted straight after their parent, left TBD', () => {
     const r = root();
-    const [lang] = guidedQuestions(r);
+    const [lang] = stackOf(r);
     answerFoundation(lang!.item, 'Python');
     const added = insertFollowUps(
-      guidedQuestions(r)[0]!,
+      stackOf(r)[0]!,
       [{ ask: 'Which Python version?', why: '', options: [] }],
       guidedQuestions(r),
     );
@@ -108,13 +111,13 @@ describe('follow-ups in the files', () => {
     expect(stack(r)).toContain(
       '## Language and runtime, with versions.\n\nPython\n\n## Which Python version?\n\nTBD\n\n## Framework',
     );
-    expect(guidedQuestions(r)[1]!.item.name).toBe('Which Python version?');
+    expect(stackOf(r)[1]!.item.name).toBe('Which Python version?');
   });
 
   test('never duplicate a question that already exists', () => {
     const r = root();
     const qs = guidedQuestions(r);
-    const added = insertFollowUps(qs[0]!, [
+    const added = insertFollowUps(stackOf(r)[0]!, [
       { ask: 'Package manager, test runner, linter, formatter.', why: '', options: [] },
       { ask: 'Which version?', why: '', options: [] },
       { ask: 'Which version?', why: '', options: [] },
@@ -125,7 +128,7 @@ describe('follow-ups in the files', () => {
   test('can be removed again, leaving the rest intact', () => {
     const r = root();
     const qs = guidedQuestions(r);
-    insertFollowUps(qs[0]!, [{ ask: 'Which version?', why: '', options: [] }], qs);
+    insertFollowUps(stackOf(r)[0]!, [{ ask: 'Which version?', why: '', options: [] }], qs);
     const follow = guidedQuestions(r).find((q) => q.item.name === 'Which version?')!;
     expect(removeQuestion(follow)).toBe(true);
     expect(stack(r)).not.toContain('Which version?');
@@ -152,7 +155,7 @@ describe('the advisor', () => {
       upcoming: [{ label: 'FastAPI', detail: '', recommended: true }],
     }]);
     const advisor = new FoundationAdvisor(r, ask);
-    const [lang] = guidedQuestions(r);
+    const [lang] = stackOf(r);
     answerFoundation(lang!.item, 'Python');
 
     const { added } = await advisor.afterAnswer(lang!, 'Python');
@@ -177,7 +180,7 @@ describe('the advisor', () => {
     const advisor = new FoundationAdvisor(r, ask);
     const find = (name: string) => guidedQuestions(r).find((q) => q.item.name === name)!;
 
-    await advisor.afterAnswer(guidedQuestions(r)[0]!, 'Python');
+    await advisor.afterAnswer(stackOf(r)[0]!, 'Python');
     await advisor.afterAnswer(find('L1?'), 'x');
     expect((await advisor.afterAnswer(find('L2?'), 'y')).added).toEqual([]);
     expect(stack(r)).not.toContain('L3?');

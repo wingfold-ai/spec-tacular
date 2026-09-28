@@ -140,6 +140,37 @@ describe('a new project starts from its vision', () => {
     expect(asked).toBe(2);
   });
 
+  test('Skip is the first choice on every question, never the default', async () => {
+    const prompts: string[] = [];
+    const ui = await atVision(async (prompt) => {
+      prompts.push(prompt);
+      return {
+        understood: 'x',
+        enough: false,
+        question: {
+          ask: `Question ${prompts.length}?`,
+          why: '',
+          options: [{ label: 'Receptionists', detail: 'front desk', recommended: true }],
+        },
+      };
+    });
+    await ui.type('A booking tool for clinics so rooms are never double-booked');
+    await ui.press('return');
+    await ui.settle(50);
+    const lines = ui.frame().split('\n');
+    const at = (text: string) => lines.findIndex((l) => l.includes(text));
+    expect(at('↷ Skip this question')).toBeGreaterThan(-1);
+    expect(at('↷ Skip this question')).toBeLessThan(at('Receptionists'));
+    expect(ui.frame()).toContain('▸ Receptionists');
+
+    await ui.press('up');
+    expect(ui.frame()).toContain('▸ ↷ Skip this question');
+    await ui.press('return');
+    await ui.settle(50);
+    expect(ui.frame()).toContain('Question 2?');
+    expect(prompts[1]).toContain('Q: Question 1?\nA: (skipped');
+  });
+
   test('not a new project: straight to describing a single change', async () => {
     const ui = await atVision(interviewer().ask);
     await ui.press('n', { ctrl: true });

@@ -20,6 +20,7 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scaffoldFoundation } from './foundation.ts';
+import { isGreenfield } from './vision.ts';
 
 export const SCHEMA_NAME = 'spec-tacular';
 
@@ -106,7 +107,9 @@ export function initProject(
     );
   }
 
-  const foundation = scaffoldFoundation(projectRoot);
+  // A new project has no code to answer some questions from yet: those are
+  // left for later rather than asked (core/foundation.ts).
+  const foundation = scaffoldFoundation(projectRoot, { defer: isGreenfield(projectRoot) });
   if (foundation.created.length > 0) {
     notes.push(
       'Answer the Foundation questions before proposing a change. Every one is' +

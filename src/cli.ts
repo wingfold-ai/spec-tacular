@@ -34,18 +34,16 @@ import {
   startJob,
   tailJob,
 } from './core/jobs.ts';
-import { defaultRegistry, DEFAULT_DRIVER, type AgentDriver } from './agent/index.ts';
-import { advisorUnavailable, StructuredPool } from './agent/structured.ts';
-import { ADVICE_SCHEMA, FoundationAdvisor } from './core/advisor.ts';
-import { finalizeVision, INTERVIEW_SCHEMA, isGreenfield, VisionInterviewer } from './core/vision.ts';
-import type { VisionPort } from './tui/app.tsx';
-import { buildNamePrompt, NAME_SCHEMA, parseNames } from './core/naming.ts';
+import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
+import { createAssistants, type Assistants } from './assistants.ts';
+import { isGreenfield } from './core/vision.ts';
 import { loadLintConfig } from './core/concreteness.ts';
 import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
 import {
   answerFoundation,
   foundationDir,
   guidedQuestions,
+  isDeferred,
   isUnanswered,
   loadFoundation,
   scaffoldFoundation,
@@ -472,17 +470,19 @@ function runFoundation(args: Args): number {
   }
 
   const unanswered = items.filter(isUnanswered);
+  const deferred = items.filter(isDeferred);
   let group = '';
   for (const item of items) {
     if (item.capability !== group) {
       group = item.capability;
       process.stdout.write(`\n${group}\n`);
     }
-    process.stdout.write(`  ${isUnanswered(item) ? '○' : '●'} ${item.name}\n`);
+    process.stdout.write(`  ${isUnanswered(item) ? '○' : isDeferred(item) ? '◌' : '●'} ${item.name}\n`);
   }
 
   process.stdout.write(
-    `\n${items.length - unanswered.length}/${items.length} answered\n`,
+    `\n${items.length - unanswered.length - deferred.length}/${items.length - deferred.length} answered` +
+      `${deferred.length > 0 ? `, ${deferred.length} left for later (◌)` : ''}\n`,
   );
   if (unanswered.length > 0) {
     // Not an error: a half-answered Foundation is a normal state to be in
@@ -686,7 +686,7 @@ async function setUpProject(
   try {
     if (!isOpenSpecProject(root)) await adapter.init();
     if (!schemaInstalled(root)) initProject(root);
-    else scaffoldFoundation(root);
+    else scaffoldFoundation(root, { defer: isGreenfield(root) });
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: describeError(err) };
@@ -765,121 +765,6 @@ async function artifactFile(
     }
   }
   return { ok: true, file };
-}
-
-/**
- * The vision interview. Without a model it still records the vision in the
- * developer's own words; there is just no interview and no slicing.
- */
-function visionFor(args: Args): VisionPort {
-  let driver: AgentDriver | undefined;
-  let unavailable: string | null = process.env['SPECTACULAR_NO_ADVISOR']
-    ? 'turned off by SPECTACULAR_NO_ADVISOR'
-    : null;
-  try {
-    driver = defaultRegistry().get(args.driver);
-    unavailable ??= advisorUnavailable(driver);
-  } catch (err) {
-    unavailable = (err as Error).message;
-  }
-  const interviewer = new VisionInterviewer(args.cwd, (prompt, schema, options) =>
-    unavailable || !driver
-      ? Promise.reject(new Error(unavailable ?? 'no agent'))
-      // The interview reasons about the vision; it has nothing to look up.
-      : poolFor(driver, args.cwd).ask(prompt, schema, { mode: options?.mode ?? 'think', parts: options?.parts }),
-  );
-  return {
-    unavailable,
-    session: () => interviewer.session(),
-    start: async (text) => {
-      if (!unavailable) return interviewer.start(text);
-      // No interview possible: keep the vision, and go on to a change.
-      const session = await interviewer.start(text).catch(() => interviewer.session()!);
-      finalizeVision(args.cwd, session, text, []);
-      interviewer.skip();
-      return session;
-    },
-    answer: (text) => interviewer.answer(text),
-    finish: () => interviewer.finish(),
-    resume: () => interviewer.resume(),
-    extract: (taken) => interviewer.extract(taken),
-    skip: () => interviewer.skip(),
-    confirm: (text, kept) => finalizeVision(args.cwd, interviewer.session()!, text, kept),
-  };
-}
-
-/**
- * The setup advisor, when the chosen driver can answer structured requests
- * and is installed. Without one, setup still works — just without proposals.
- */
-function advisorFor(args: Args): {
-  advisor: FoundationAdvisor | null;
-  advisorNote: string | null;
-  nameChange?: (description: string, taken: string[]) => Promise<string[]>;
-} {
-  if (process.env['SPECTACULAR_NO_ADVISOR']) {
-    return { advisor: null, advisorNote: 'turned off by SPECTACULAR_NO_ADVISOR' };
-  }
-  let driver;
-  try {
-    driver = defaultRegistry().get(args.driver);
-  } catch (err) {
-    return { advisor: null, advisorNote: (err as Error).message };
-  }
-  const missing = advisorUnavailable(driver);
-  if (missing) return { advisor: null, advisorNote: missing };
-  const sessions = poolFor(driver, args.cwd);
-  return {
-    advisor: new FoundationAdvisor(args.cwd, (prompt, schema, options) =>
-      sessions.ask(prompt, schema, { mode: options?.mode ?? 'research', parts: options?.parts }),
-    ),
-    advisorNote: null,
-    nameChange: async (description, taken) =>
-      parseNames(
-        await sessions.ask(buildNamePrompt(description, taken), NAME_SCHEMA, {
-          mode: 'quick',
-          timeoutMs: 60_000,
-        }),
-        taken,
-      ),
-  };
-}
-
-/**
- * The agent sessions structured requests share: one pool per run, so the
- * setup, the interview and naming never start the same agent twice.
- */
-let pool: StructuredPool | null = null;
-function poolFor(driver: AgentDriver, cwd: string): StructuredPool {
-  pool ??= new StructuredPool(driver, cwd);
-  return pool;
-}
-
-/**
- * Starts the sessions a screen is about to need, while the developer reads
- * it: a first question then costs one model turn, not an agent starting up.
- */
-function warmFor(args: Args): (screen: 'foundation' | 'vision' | 'naming') => void {
-  return (screen) => {
-    if (process.env['SPECTACULAR_NO_ADVISOR']) return;
-    let driver: AgentDriver;
-    try {
-      driver = defaultRegistry().get(args.driver);
-    } catch {
-      return;
-    }
-    if (advisorUnavailable(driver)) return;
-    const sessions = poolFor(driver, args.cwd);
-    if (screen === 'foundation') {
-      // Ground rules start with the stack, which is looked up; the rest is not.
-      sessions.warm(ADVICE_SCHEMA, 'research');
-      sessions.warm(ADVICE_SCHEMA, 'think');
-    } else if (screen === 'vision') {
-      sessions.warm(INTERVIEW_SCHEMA, 'think');
-    } else {
-      sessions.warm(NAME_SCHEMA, 'quick');
-    }
-  };
 }
 
 async function main(): Promise<number> {
@@ -1025,9 +910,7 @@ async function main(): Promise<number> {
       },
       greenfield: () => isGreenfield(args.cwd),
       roadmap: () => loadRoadmap(args.cwd),
-      vision: visionFor(args),
-      ...advisorFor(args),
-      warm: warmFor(args),
+      ...(assistants = createAssistants({ cwd: args.cwd, driver: args.driver })),
       artifactFile: (change, artifact) => artifactFile(adapter, statuses, change, artifact),
     });
     return 0;
@@ -1041,9 +924,12 @@ async function main(): Promise<number> {
   }
 }
 
+/** The TUI's AI, once it runs: its sessions end before spec-tacular does. */
+let assistants: Assistants | null = null;
+
 /** Ends the agent sessions — and whatever server they shared — before exiting. */
 async function shutdown(): Promise<void> {
-  await pool?.close().catch(() => {});
+  await assistants?.close();
 }
 
 main().then(
