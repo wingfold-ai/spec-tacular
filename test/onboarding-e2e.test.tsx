@@ -20,15 +20,16 @@ afterEach(() => {
 });
 
 /** An existing project by default: the vision step is for new ones. */
-async function mount(ask?: Ask) {
-  const ui = await mountApp({ ask, baseline: true });
+async function mount(ask?: Ask, extra: Parameters<typeof mountApp>[0] = {}) {
+  const ui = await mountApp({ ask, baseline: true, ...extra });
   mounted.push(ui);
   return ui;
 }
 
 /**
- * A model that knows exactly one thing: Elixir needs a version. (Elixir, because
- * the preset table has nothing for it: this is the advisor on its own.)
+ * A model that knows exactly one thing: Elixir needs a version before the first
+ * change, and its OTP release can wait. (Elixir, because the preset table has
+ * nothing for it: this is the advisor on its own.)
  */
 const elixirAdvisor = (): { ask: Ask; prompts: string[] } => {
   const prompts: string[] = [];
@@ -39,10 +40,16 @@ const elixirAdvisor = (): { ask: Ask; prompts: string[] } => {
         followUps: [{
           ask: 'Which Elixir version?',
           why: 'Pins the syntax code and CI can rely on.',
+          now: true,
           options: [
             { label: '1.19', detail: 'Latest stable', recommended: true },
             { label: '1.18', detail: 'Previous stable', recommended: false },
           ],
+        }, {
+          ask: 'Which OTP release does it target?',
+          why: 'Only matters once it is deployed.',
+          now: false,
+          options: [],
         }],
         upcoming: [
           { label: 'Phoenix', detail: 'Full-stack web', recommended: true },
@@ -74,16 +81,28 @@ describe('the start screen', () => {
     expect(ui.frame()).toContain('Quit');
 
     await ui.press('return');
-    expect(ui.frame()).toContain('Before the first change, settle the ground rules.');
+    // A new project describes its vision first; the ground rules come after.
+    expect(ui.frame()).toContain('What are you building?');
     expect(ui.frame()).toContain('✓ Set up');
-    // A new project: only what can be answered on day one.
+    expect(ui.frame()).toContain('2. Vision');
+    await ui.press('n', { ctrl: true }); // not a new project after all
+    expect(ui.frame()).toContain('Before the first change, settle the ground rules.');
+    // Only what can be answered on day one.
     expect(ui.frame()).toContain('▶ Begin — 11 questions');
   });
 
-  test('a folder that still needs setting up warms the advisor before anything is answered', async () => {
+  test('a new folder warms the vision AI before anything is described', async () => {
     const ui = await mountApp({});
     mounted.push(ui);
-    // On the start screen already, before Start is pressed.
+    // On the start screen already, before Start is pressed: the vision is next.
+    expect(ui.warmed).toEqual(['vision']);
+    await ui.press('return');
+    expect(ui.warmed.every((w) => w === 'vision')).toBe(true);
+  });
+
+  test('a folder with a baseline warms the ground-rules advisor instead', async () => {
+    const ui = await mountApp({ baseline: true });
+    mounted.push(ui);
     expect(ui.warmed).toEqual(['foundation']);
     await ui.press('return');
     await ui.press('return');
@@ -191,8 +210,13 @@ describe('the ground rules', () => {
     expect(advised).toContain('Just answered — [Stack] Language and runtime, with versions.');
     expect(advised).toContain('most recent stable release');
 
-    // What the answer left open is asked straight away, not after the rest.
+    // What the answer left open is asked straight away, not after the rest —
+    // the one question the first change needs; the other is recorded for later.
     expect(ui.frame()).toContain('Which Elixir version?');
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
+      '## Which OTP release does it target?\n\nDecide later',
+    );
+    expect(guidedQuestions(ui.root).some((q) => q.item.name.startsWith('Which OTP'))).toBe(false);
     expect(ui.frame()).toContain('✦ follow-up to “Language and runtime, with versions.”');
     expect(ui.frame()).toContain('▸ 1.19');
     expect(ui.frame()).toContain('★ recommended');
@@ -211,6 +235,127 @@ describe('the ground rules', () => {
     expect(ui.frame()).toContain('✎ Write my own answer');
     await ui.press('return');
     expect(stack()).toContain('## Framework, if any, and why it over the alternatives.\n\nPhoenix');
+  });
+
+  test('an option shows its whole answer, and picking it writes all of it', async () => {
+    const ask: Ask = async (prompt) =>
+      prompt.includes('Answer: Elixir')
+        ? {
+            followUps: [],
+            upcoming: [
+              {
+                label: 'Phoenix',
+                detail: 'Full-stack web',
+                answer: 'Phoenix 1.8 with LiveView for the UI.\nEcto for the database.\nNo separate SPA.',
+                recommended: true,
+              },
+              { label: 'Plug', detail: 'Minimal', answer: 'Plug', recommended: false },
+            ],
+            derived: [],
+          }
+        : { followUps: [], upcoming: [], derived: [] };
+    const ui = await mount(ask);
+    await ui.press('return');
+    await ui.press('return');
+    await toStack(ui);
+    await ui.type('Elixir');
+    await ui.press('return');
+    await ui.settle(100);
+
+    expect(ui.frame()).toContain('▸ Phoenix');
+    expect(ui.frame()).toContain('picking writes this');
+    expect(ui.frame()).toContain('Ecto for the database.');
+    await ui.press('return');
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
+      '## Framework, if any, and why it over the alternatives.\n\nPhoenix 1.8 with LiveView for the UI.\nEcto for the database.\nNo separate SPA.',
+    );
+  });
+
+  test('ctrl+r revises the highlighted option with AI before it is saved', async () => {
+    const ask: Ask = async (prompt) =>
+      prompt.includes('Answer: Elixir')
+        ? {
+            followUps: [],
+            upcoming: [{ label: 'Phoenix', detail: 'Full-stack web', answer: 'Phoenix with LiveView.\nEcto for the database.', recommended: true }],
+            derived: [],
+          }
+        : { followUps: [], upcoming: [], derived: [] };
+    const calls: { question: string; current: string; instruction: string }[] = [];
+    const ui = await mount(ask, {
+      reviseAnswer: {
+        unavailable: null,
+        propose: async (question, current, _turns, instruction) => {
+          calls.push({ question: question.item.name, current, instruction });
+          return { block: 'Phoenix, JSON API only.\nEcto for the database.', summary: 'Dropped LiveView', warnings: [] };
+        },
+      },
+    });
+    await ui.press('return');
+    await ui.press('return');
+    await toStack(ui);
+    await ui.type('Elixir');
+    await ui.press('return');
+    await ui.settle(100);
+
+    expect(ui.frame()).toContain('ctrl+r');
+    await ui.press('r', { ctrl: true });
+    expect(ui.frame()).toContain('How should this answer change?');
+    // The whole text being revised is on screen, above the input.
+    expect(ui.frame()).toContain('The answer as it is now');
+    expect(ui.frame()).toContain('Phoenix with LiveView.');
+    expect(ui.frame()).toContain('Ecto for the database.');
+    await ui.type('drop LiveView, it is an API');
+    await ui.press('return');
+    await ui.settle(100);
+    expect(calls).toEqual([{
+      question: 'Framework, if any, and why it over the alternatives.',
+      current: 'Phoenix with LiveView.\nEcto for the database.',
+      instruction: 'drop LiveView, it is an API',
+    }]);
+    expect(ui.frame()).toContain('Dropped LiveView');
+
+    // Nothing is written until it is accepted; then it is saved as the answer.
+    const stack = () => readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8');
+    expect(stack()).not.toContain('JSON API only');
+    await ui.press('a');
+    await ui.settle(100);
+    expect(stack()).toContain('## Framework, if any, and why it over the alternatives.\n\nPhoenix, JSON API only.\nEcto for the database.');
+  });
+
+  test('in the revise panel, enter with nothing typed takes the option as it is', async () => {
+    const ask: Ask = async (prompt) =>
+      prompt.includes('Answer: Elixir')
+        ? {
+            followUps: [],
+            upcoming: [{ label: 'Phoenix', detail: 'Full-stack web', answer: 'Phoenix with LiveView.\nEcto for the database.', recommended: true }],
+            derived: [],
+          }
+        : { followUps: [], upcoming: [], derived: [] };
+    let asked = 0;
+    const ui = await mount(ask, {
+      reviseAnswer: {
+        unavailable: null,
+        propose: async () => {
+          asked++;
+          return { block: 'x', summary: '', warnings: [] };
+        },
+      },
+    });
+    await ui.press('return');
+    await ui.press('return');
+    await toStack(ui);
+    await ui.type('Elixir');
+    await ui.press('return');
+    await ui.settle(100);
+
+    await ui.press('r', { ctrl: true });
+    expect(ui.frame()).toContain('take it as it is');
+    await ui.press('return');
+    await ui.settle(100);
+    expect(asked).toBe(0);
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
+      '## Framework, if any, and why it over the alternatives.\n\nPhoenix with LiveView.\nEcto for the database.',
+    );
   });
 
   test('Skip is the first choice on every question, but never the default', async () => {
@@ -256,7 +401,7 @@ describe('the ground rules', () => {
     release({ followUps: [], upcoming: [], derived: [] });
   });
 
-  test('a common answer gets its preset follow-up at once; the advisor fills in behind', async () => {
+  test('a common answer records its preset follow-up for later; the next question has instant options', async () => {
     const { ask, answerTo } = heldAdvisor();
     const ui = await mount(ask);
     await ui.press('return');
@@ -265,26 +410,30 @@ describe('the ground rules', () => {
     await ui.type('Python');
     await ui.press('return');
 
-    // No waiting: the version question is there, marked as a preset, while
-    // the advisor — asked about it, with web search — is still thinking.
-    expect(ui.frame()).not.toContain('Looking at your answer');
-    expect(ui.frame()).toContain('Which Python version?');
-    expect(ui.frame()).toContain('◇ follow-up to “Language and runtime, with versions.”');
-    expect(ui.frame()).toContain('looking for options…');
+    // The table's version question is not asked: it is in the file for later.
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
+      '## Which Python version?\n\nDecide later',
+    );
+    // The advisor — with web search — looks at the answer, and at the table's
+    // options for the next question, to improve on them.
+    expect(ui.frame()).toContain('Looking at your answer');
     const advised = answerTo('Answer: Python');
-    expect(advised.prompt).toContain('upcoming: options for the next question — [Stack] Which Python version?');
+    expect(advised.prompt).toContain('upcoming: options for the next question — [Stack] Framework');
+    expect(advised.prompt).toContain('Generic options are shown for it already: FastAPI');
     expect(advised.prompt).toContain('web search rather than relying on memory');
 
     advised.release({
       followUps: [],
       upcoming: [
-        { label: '3.14', detail: 'Latest stable', recommended: true },
-        { label: '3.13', detail: 'Previous', recommended: false },
+        { label: 'FastAPI', detail: 'typed async APIs', recommended: true },
+        { label: 'Litestar', detail: 'lighter', recommended: false },
       ],
       derived: [],
     });
     await ui.settle(100);
-    expect(ui.frame()).toContain('▸ 3.14');
+    expect(ui.frame()).toContain('Framework, if any');
+    expect(ui.frame()).not.toContain('Which Python version?');
+    expect(ui.frame()).toContain('▸ FastAPI');
   });
 
   test('advice that arrives late never moves what the developer selected', async () => {
@@ -293,31 +442,33 @@ describe('the ground rules', () => {
     await ui.press('return');
     await ui.press('return');
     await toStack(ui);
-    await ui.type('TypeScript');
+    await ui.type('Python');
+    await ui.press('return');
+    // On without waiting for the advisor.
     await ui.press('return');
 
-    // The runtime question, with the table's options, at once.
-    expect(ui.frame()).toContain('Which runtime runs it: Node.js, Bun or Deno?');
-    expect(ui.frame()).toContain('▸ Node.js (LTS)');
+    // The framework question, with the table's options, at once.
+    expect(ui.frame()).toContain('Framework, if any');
+    expect(ui.frame()).toContain('▸ FastAPI');
     expect(ui.frame()).toContain('◇ instant suggestions, AI refining…');
     await ui.press('down');
-    expect(ui.frame()).toContain('▸ Bun');
+    expect(ui.frame()).toContain('▸ Django');
 
-    // Better options arrive, without Bun among them: Bun stays, still selected.
-    answerTo('Answer: TypeScript').release({
+    // Better options arrive, without Django among them: Django stays, still selected.
+    answerTo('Answer: Python').release({
       followUps: [],
       upcoming: [
-        { label: 'Node.js 24 LTS', detail: 'current LTS', recommended: true },
-        { label: 'Deno 2', detail: 'built-in tooling', recommended: false },
+        { label: 'Litestar', detail: 'typed, fast', recommended: true },
+        { label: 'Starlette', detail: 'minimal ASGI', recommended: false },
       ],
       derived: [],
     });
     await ui.settle(100);
-    expect(ui.frame()).toContain('Node.js 24 LTS');
-    expect(ui.frame()).toContain('▸ Bun');
+    expect(ui.frame()).toContain('Litestar');
+    expect(ui.frame()).toContain('▸ Django');
     await ui.press('return');
     expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
-      '## Which runtime runs it: Node.js, Bun or Deno?\n\nBun',
+      '## Framework, if any, and why it over the alternatives.\n\nDjango',
     );
   });
 
@@ -542,12 +693,18 @@ describe('a new project', () => {
     return { ask, prompts };
   };
 
-  test('is asked its domain first, and the rest is proposed from it', async () => {
+  /** Past the vision without describing one: nothing to propose from but the domain. */
+  const withoutVision = async (ui: Awaited<ReturnType<typeof mountApp>>) => {
+    await ui.press('return'); // Start → the vision
+    await ui.press('n', { ctrl: true }); // skip it → the ground rules
+    await ui.press('return'); // Begin
+  };
+
+  test('with no vision to go on, is asked its domain first, and the rest is proposed from it', async () => {
     const { ask, prompts } = domainAdvisor();
     const ui = await mountApp({ ask });
     mounted.push(ui);
-    await ui.press('return');
-    await ui.press('return');
+    await withoutVision(ui);
     expect(ui.frame()).toContain('What the system is for, and who uses it.');
     expect(ui.frame()).toContain('0/11');
 
@@ -571,8 +728,7 @@ describe('a new project', () => {
     const { ask } = domainAdvisor();
     const ui = await mountApp({ ask });
     mounted.push(ui);
-    await ui.press('return');
-    await ui.press('return');
+    await withoutVision(ui);
     await ui.type('Lets clinic staff book rooms');
     await ui.press('return');
     await ui.settle(100);
@@ -593,11 +749,14 @@ describe('a new project', () => {
     expect(ui.frame()).toContain('▸ ⇐ In domain/ (entities) and application/ (use cases). No I/O there');
   });
 
-  test('its vision starts from what the domain already says', async () => {
+  test('ground rules answered before the vision: the vision starts from what the domain says', async () => {
     const ui = await mountApp({});
     mounted.push(ui);
+    await ui.press('return'); // Start → the vision
+    await ui.press('c', { ctrl: true }); // back home, and the ground rules from there
+    await ui.press('right');
     await ui.press('return');
-    await ui.press('return');
+    await ui.press('return'); // Begin
     await ui.type('Lets clinic staff book rooms');
     await ui.press('return');
     await ui.press('f', { ctrl: true });

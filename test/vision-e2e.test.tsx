@@ -53,12 +53,11 @@ const interviewer = (): { ask: Ask; prompts: string[] } => {
   };
 };
 
-async function atVision(ask: Ask) {
-  const ui = await mountApp({ visionAsk: ask });
+/** A new project goes from Start straight to its vision: before the ground rules. */
+async function atVision(ask: Ask, advisorAsk?: Ask, extra: Parameters<typeof mountApp>[0] = {}) {
+  const ui = await mountApp({ visionAsk: ask, ask: advisorAsk, ...extra });
   mounted.push(ui);
   await ui.press('return'); // Start: sets the folder up
-  ui.settleGroundRules();
-  await ui.press('c', { ctrl: true }); // leave the ground rules: all answered
   return ui;
 }
 
@@ -68,7 +67,8 @@ describe('a new project starts from its vision', () => {
     const ui = await atVision(ask);
 
     expect(ui.frame()).toContain('What are you building?');
-    expect(ui.frame()).toContain('3. Vision');
+    expect(ui.frame()).toContain('2. Vision');
+    expect(ui.frame()).toContain('3. Ground rules');
     expect(ui.frame()).toContain('Not a new project');
 
     await ui.type('A booking tool for clinics so rooms are never double-booked');
@@ -112,11 +112,111 @@ describe('a new project starts from its vision', () => {
     expect(vision).toContain('A booking tool for small clinics, used by receptionists.');
     expect(vision).toContain('**Who books the rooms?**\n\nReceptionists');
 
+    // Then the ground rules — the vision came first so they build on it.
+    expect(ui.frame()).toContain('Roadmap saved: 2 slices, first up: Book a room. Now the ground rules');
+    expect(ui.frame()).toContain('Ground rules');
+    ui.settleGroundRules();
+    await ui.press('c', { ctrl: true });
+
     // On the overview: the change, its next step, and the roadmap.
-    expect(ui.frame()).toContain('Roadmap saved: 2 slices. First up: Book a room.');
     expect(ui.frame()).toContain('◉ book-a-room');
     expect(ui.frame()).toContain('○ see-the-week');
     expect(ui.frame()).toContain('Write the proposal');
+  });
+
+  test('an option shows its whole answer, and ctrl+r revises it with AI before it is given', async () => {
+    const prompts: string[] = [];
+    const ask: Ask = async (prompt) => {
+      prompts.push(prompt);
+      if (prompt.startsWith('Split a new project into slices')) return SLICES;
+      const answered = prompt.includes('A: ');
+      return answered
+        ? { understood: 'Receptionists book rooms.', enough: true, question: { ask: '', why: '', options: [] } }
+        : {
+            understood: 'A clinic booking tool.',
+            enough: false,
+            question: {
+              ask: 'Who books the rooms?',
+              why: 'Decides whose screens the first slice needs.',
+              options: [{
+                label: 'Receptionists',
+                detail: 'staff on the front desk',
+                answer: 'Receptionists book rooms for patients at the front desk.\nPatients never log in.',
+                recommended: true,
+              }],
+            },
+          };
+    };
+    const calls: { current: string; instruction: string; ask: string }[] = [];
+    const ui = await atVision(ask, undefined, {
+      reviseVisionAnswer: {
+        unavailable: null,
+        propose: async (session, current, _turns, instruction) => {
+          calls.push({ current, instruction, ask: session.pending!.ask });
+          return { block: 'Receptionists and nurses book rooms.\nPatients never log in.', summary: 'Added nurses', warnings: [] };
+        },
+      },
+    });
+    await ui.type('A booking tool for clinics so rooms are never double-booked');
+    await ui.press('return');
+    await ui.settle(100);
+
+    // The highlighted option in full, under the list.
+    expect(ui.frame()).toContain('▸ Receptionists');
+    expect(ui.frame()).toContain('picking answers this');
+    expect(ui.frame()).toContain('Patients never log in.');
+
+    await ui.press('r', { ctrl: true });
+    expect(ui.frame()).toContain('Revise with AI: Who books the rooms?');
+    expect(ui.frame()).toContain('The answer as it is now');
+    expect(ui.frame()).toContain('Receptionists book rooms for patients at the front desk.');
+    await ui.type('nurses book too');
+    await ui.press('return');
+    await ui.settle(100);
+    expect(calls).toEqual([{
+      current: 'Receptionists book rooms for patients at the front desk.\nPatients never log in.',
+      instruction: 'nurses book too',
+      ask: 'Who books the rooms?',
+    }]);
+    expect(ui.frame()).toContain('Added nurses');
+
+    // Accepted is answered: the interview goes on with the revised answer.
+    await ui.press('a');
+    await ui.settle(150);
+    expect(prompts.some((p) => p.includes('Q: Who books the rooms?\nA: Receptionists and nurses book rooms.\nPatients never log in.'))).toBe(true);
+    expect(ui.frame()).toContain('Your roadmap — review the slices');
+  });
+
+  test('many slices on a small terminal scroll instead of being drawn over each other', async () => {
+    const many = {
+      vision: 'A booking tool for small clinics.',
+      slices: Array.from({ length: 8 }, (_, i) => ({
+        id: `slice-number-${i + 1}`,
+        title: `Slice ${i + 1} title`,
+        summary: `Summary ${i + 1}: a receptionist can do something end to end.`,
+        why: `Why ${i + 1}: it builds on the one before.`,
+        dependsOn: i === 0 ? [] : [`slice-number-${i}`],
+      })),
+    };
+    const ask: Ask = async (p) =>
+      p.startsWith('Split a new project') ? many : { understood: 'x', enough: true, question: { ask: '', why: '', options: [] } };
+    const ui = await mountApp({ visionAsk: ask, width: 100, height: 30 });
+    mounted.push(ui);
+    await ui.press('return');
+    await ui.type('A booking tool for clinics so rooms are never double-booked');
+    await ui.press('return');
+    await ui.settle(200);
+
+    // Each line whole: squeezed rows used to share a line, their characters mixed.
+    const lines = ui.frame().split('\n');
+    expect(lines.some((l) => l.includes('✓ Set up  ──  2. Vision'))).toBe(true);
+    expect(lines.some((l) => l.includes('[✓] 1. Slice 1 title   slice-number-1'))).toBe(true);
+    expect(lines.some((l) => l.includes('Summary 1: a receptionist can do something end to end.'))).toBe(true);
+    expect(ui.frame()).toContain('▶ Create the roadmap');
+
+    // The selection is followed into the part that was scrolled away.
+    for (let i = 0; i < 7; i++) await ui.press('down');
+    expect(ui.frame()).toContain('8. Slice 8 title');
   });
 
   test('questions can be skipped, and "done" ends the interview', async () => {
@@ -171,12 +271,59 @@ describe('a new project starts from its vision', () => {
     expect(prompts[1]).toContain('Q: Question 1?\nA: (skipped');
   });
 
-  test('not a new project: straight to describing a single change', async () => {
+  test('not a new project: the ground rules, then straight to describing a single change', async () => {
     const ui = await atVision(interviewer().ask);
     await ui.press('n', { ctrl: true });
-    expect(ui.frame()).toContain('What do you want to change, and why?');
-    // And it is not offered again.
+    // No vision to propose from: the ground rules are asked, domain first.
+    expect(ui.frame()).toContain('Before the first change, settle the ground rules.');
+    // And the vision is not offered again.
     expect(existsSync(join(ui.root, '.spec-tacular', 'vision-session.json'))).toBe(true);
+    ui.settleGroundRules();
+    await ui.press('c', { ctrl: true });
+    await ui.press('n');
+    expect(ui.frame()).toContain('What do you want to change, and why?');
+  });
+
+  test('the ground rules are proposed from the vision, the domain as much as the stack', async () => {
+    const advisorPrompts: string[] = [];
+    const ui = await atVision(interviewer().ask, async (prompt) => {
+      advisorPrompts.push(prompt);
+      if (!prompt.includes('The developer described the project in the vision above')) {
+        return { followUps: [], upcoming: [], derived: [] };
+      }
+      return {
+        followUps: [],
+        upcoming: [],
+        derived: [
+          { question: 'What the system is for, and who uses it.', answer: 'Room booking for small clinics, used by receptionists.', reason: 'the vision' },
+          { question: 'Language and runtime, with versions.', answer: 'TypeScript on Node.js LTS.', reason: 'a web tool' },
+        ],
+      };
+    });
+    await ui.type('A booking tool for clinics so rooms are never double-booked');
+    await ui.press('return');
+    await ui.settle(100);
+    await ui.press('return'); // answer the interview's question
+    await ui.settle(150);
+
+    // Proposed as soon as the interview ended: while the roadmap is still
+    // being reviewed, before the ground rules open.
+    expect(ui.frame()).toContain('Your roadmap — review the slices');
+    const fromVision = advisorPrompts.find((p) => p.includes('The developer described the project in the vision above'))!;
+    expect(fromVision).toContain("The project's vision");
+    expect(fromVision).toContain('Receptionists book rooms; patients never touch it.');
+    expect(fromVision).toContain('**Who books the rooms?**\n\nReceptionists');
+
+    await ui.press('return'); // create the roadmap
+    await ui.settle(150);
+    // Not asked twice: the ground rules open on what is already proposed.
+    expect(advisorPrompts.filter((p) => p.includes('The developer described the project in the vision above'))).toHaveLength(1);
+    expect(ui.frame()).toContain('2 ground rules proposed from your vision');
+
+    // The first question — the domain — already has its answer proposed.
+    await ui.press('return'); // Begin
+    expect(ui.frame()).toContain('What the system is for, and who uses it.');
+    expect(ui.frame()).toContain('⇐ Room booking for small clinics, used by receptionists.');
   });
 });
 

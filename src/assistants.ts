@@ -14,6 +14,7 @@ import { FoundationAdvisor, type Ask } from './core/advisor.ts';
 import { buildNamePrompt, NAME_SCHEMA, parseNames } from './core/naming.ts';
 import { finalizeVision, VisionInterviewer } from './core/vision.ts';
 import { REFINE_SCHEMA, RequirementRefiner } from './core/refine.ts';
+import { AnswerRefiner } from './core/refine-answer.ts';
 import type { StructuredMode } from './agent/driver.ts';
 import type { Usage } from './core/usage.ts';
 import type { VisionPort } from './tui/app.tsx';
@@ -31,6 +32,11 @@ export interface Assistants {
    * without a model; `advisorNote` says why.
    */
   refiner: RequirementRefiner | null;
+  /**
+   * Revises one ground-rule answer in conversation (ground-rules screen,
+   * ctrl+r). Null without a model; `advisorNote` says why.
+   */
+  answerRefiner: AnswerRefiner | null;
   /**
    * Starts — and primes — the sessions a screen is about to need, while the
    * developer reads it. Never waits, never shows, and does nothing at all
@@ -118,6 +124,8 @@ export function createAssistants(options: {
     // carries its own requirement and history, so a session that revised
     // the last one is only sent what differs.
     refiner: unavailable ? null : new RequirementRefiner(askIn('think')),
+    // The same conversation as revising a requirement: wording, nothing to look up.
+    answerRefiner: unavailable ? null : new AnswerRefiner(askIn('think')),
     warm: (target) => {
       if (unavailable) return;
       if (target === 'foundation') advisor?.prime();

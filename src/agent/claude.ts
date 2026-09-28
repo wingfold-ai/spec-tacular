@@ -7,6 +7,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { adopt } from './children.ts';
 import type { Usage } from '../core/usage.ts';
 import {
@@ -79,23 +80,57 @@ function structuredEnv(): Record<string, string> | undefined {
   return process.env['SPECTACULAR_ADVISOR_THINKING'] ? undefined : { MAX_THINKING_TOKENS: '0' };
 }
 
+/**
+ * The model a structured request asks for, or undefined to run on Claude
+ * Code's own default — the one the developer chose there. Only an explicit
+ * SPECTACULAR_*_MODEL overrides it.
+ */
+function chosenModel(mode: StructuredMode = 'research'): string | undefined {
+  const env = process.env[mode === 'quick' ? 'SPECTACULAR_QUICK_MODEL' : 'SPECTACULAR_ADVISOR_MODEL'];
+  return env || undefined;
+}
+
+/** Whether the developer's MCP servers are loaded; SPECTACULAR_NO_MCP opts out. */
+function mcpEnabled(): boolean {
+  return !process.env['SPECTACULAR_NO_MCP'];
+}
+
+const ALLOW_MCP_HOOK = fileURLToPath(new URL('./allow-mcp.mjs', import.meta.url));
+
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The developer's MCP servers, loaded as Claude Code loads them, and usable:
+ * headless, nobody can approve a call, so a hook approves every MCP tool
+ * except the servers SPECTACULAR_MCP_DENY names. Only MCP tools: the built-in
+ * ones keep the limits each request sets. SPECTACULAR_NO_MCP starts none,
+ * which also starts each session faster.
+ */
+export function mcpFlags(): string[] {
+  if (!mcpEnabled()) return ['--strict-mcp-config'];
+  const hook = `${shellQuote(process.execPath)} ${shellQuote(ALLOW_MCP_HOOK)}`;
+  return [
+    '--settings',
+    JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'mcp__.*', hooks: [{ type: 'command', command: hook }] }] } }),
+  ];
+}
+
 /** Model, tools and schema for a structured request, one-shot or session. */
 function structuredFlags(schema: object, mode: StructuredMode = 'research'): string[] {
+  const model = chosenModel(mode);
+  // MCP tools are deferred: the agent finds and loads them with ToolSearch.
+  const builtIn = [...(mode === 'research' ? ['WebSearch'] : []), ...(mcpEnabled() ? ['ToolSearch'] : [])];
   return [
     '--json-schema',
     JSON.stringify(schema),
-    '--model',
-    mode === 'quick'
-      ? (process.env['SPECTACULAR_QUICK_MODEL'] ?? 'haiku')
-      : (process.env['SPECTACULAR_ADVISOR_MODEL'] ?? 'sonnet'),
-    // Web search at most: the advisor looks up current versions, and has
-    // no business reading or editing the project. Other modes need none.
-    ...(mode === 'research'
-      ? ['--tools', 'WebSearch', '--allowedTools', 'WebSearch']
-      : ['--tools', '']),
+    ...(model ? ['--model', model] : []),
+    // Of the built-in tools, web search at most: the advisor looks up current
+    // versions, and has no business reading or editing the project.
+    '--tools',
+    builtIn.join(','),
+    ...(builtIn.length > 0 ? ['--allowedTools', ...builtIn] : []),
     '--no-session-persistence',
-    // The user's MCP servers are irrelevant here and slow to start.
-    '--strict-mcp-config',
+    ...mcpFlags(),
   ];
 }
 
@@ -117,6 +152,8 @@ export class StreamJsonSession implements StructuredSession {
   } | null = null;
   private dead = false;
   private usage: Usage | null = null;
+  /** The session's running total so far: each `result` reports the sum, not the turn. */
+  private costSoFar = 0;
 
   constructor(
     private readonly command: AgentCommand,
@@ -198,6 +235,13 @@ export class StreamJsonSession implements StructuredSession {
     this.pending = null;
     clearTimeout(timer);
     this.usage = usageFromResult(event);
+    // total_cost_usd in a long-running session is everything since it
+    // started; the token counts are this turn's. Keep the cost per turn too.
+    if (this.usage?.costUsd !== undefined) {
+      const total = this.usage.costUsd;
+      this.usage.costUsd = Math.max(total - this.costSoFar, 0);
+      this.costSoFar = total;
+    }
     if (event.is_error || (event.subtype && event.subtype !== 'success')) {
       reject(new Error(event.result ?? event.errors?.join('; ') ?? `${this.label} reported an error`));
     } else if (event.structured_output === undefined) {
@@ -253,6 +297,7 @@ export const claudeDriver: AgentDriver = {
         'Bash(ls:*)',
         // Anything more — running tests during apply, say — is the project's
         // call: SPECTACULAR_CLAUDE_ARGS='--allowedTools Bash(bun test:*)'.
+        ...mcpFlags(),
         ...extraArgs(),
       ],
     };
@@ -346,9 +391,8 @@ export const claudeDriver: AgentDriver = {
   },
 
   model(mode?: StructuredMode): string | undefined {
-    if (mode === 'quick') return process.env['SPECTACULAR_QUICK_MODEL'] ?? 'haiku';
-    if (mode) return process.env['SPECTACULAR_ADVISOR_MODEL'] ?? 'sonnet';
-    // An artifact job runs on Claude Code's own default, which only it knows.
-    return undefined;
+    // Without an override every request runs on Claude Code's own default,
+    // which only it knows; the sidebar shows the model a reply reports.
+    return mode ? chosenModel(mode) : undefined;
   },
 };

@@ -936,6 +936,22 @@ async function main(): Promise<number> {
       greenfield: () => isGreenfield(args.cwd),
       roadmap: () => loadRoadmap(args.cwd),
       ...(assistants = createAssistants({ cwd: args.cwd, driver: args.driver })),
+      reviseAnswer: {
+        unavailable: assistants.answerRefiner ? null : assistants.advisorNote,
+        propose: async (question, current, turns, instruction) => {
+          if (!assistants?.answerRefiner) throw new Error(assistants?.advisorNote ?? 'no agent to revise with');
+          return assistants.answerRefiner.propose({ question, questions: guidedQuestions(args.cwd) }, current, turns, instruction);
+        },
+      },
+      reviseVisionAnswer: {
+        unavailable: assistants.answerRefiner ? null : assistants.advisorNote,
+        propose: async (session, current, turns, instruction) => {
+          const pending = session.pending;
+          if (!assistants?.answerRefiner) throw new Error(assistants?.advisorNote ?? 'no agent to revise with');
+          if (!pending) throw new Error('There is no interview question to answer');
+          return assistants.answerRefiner.propose({ ask: pending.ask, why: pending.why, interview: session }, current, turns, instruction);
+        },
+      },
       refine: {
         unavailable: assistants.refiner ? null : assistants.advisorNote,
         propose: async (change, item, turns, instruction) => {

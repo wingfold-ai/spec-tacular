@@ -7,11 +7,12 @@
  * detail appears. Enter always takes the highlighted — next — step.
  */
 
-import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
+import { useKeyboard } from '@opentui/solid';
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { GRADIENT, THEME } from './theme.ts';
 import { isCancel, isEnter } from './input.ts';
 import { Button, shortPath, Spinner } from './widgets.tsx';
+import { useContentWidth } from './layout.ts';
 
 export interface HomeAction {
   label: string;
@@ -34,7 +35,7 @@ const LOGO = 'spec-tacular';
 const TAGLINE = 'spec-driven development — every requirement reviewed before it is built';
 
 export function HomeScreen(props: HomeProps) {
-  const dims = useTerminalDimensions();
+  const contentWidth = useContentWidth();
   const [focus, setFocus] = createSignal(0);
   const [tick, setTick] = createSignal(0);
 
@@ -48,7 +49,7 @@ export function HomeScreen(props: HomeProps) {
     return [...LOGO].map((_, i) => GRADIENT[(i + shift) % GRADIENT.length]!);
   });
   // `block` needs about 100 columns; narrower terminals get the compact font.
-  const font = createMemo(() => (dims().width >= 104 ? 'block' : 'tiny'));
+  const font = createMemo(() => (contentWidth() >= 104 ? 'block' : 'tiny'));
 
   const total = () => props.actions.length + 1; // + Quit
   const press = (i: number) => {
