@@ -12,9 +12,10 @@
  */
 
 import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
-import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, Show, untrack } from 'solid-js';
 import type { AdviceOption, QuestionMeta } from '../core/advisor.ts';
 import type { GuidedQuestion } from '../core/foundation.ts';
+import { mergeOptions } from '../core/presets.ts';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
@@ -24,9 +25,10 @@ type Result = { ok: true } | { ok: false; reason: string };
 
 /**
  * What saving an answer returns: whether it was written, and — with an
- * advisor — a promise of the follow-ups it raised, by question name.
+ * advisor — a promise of the follow-ups it raised, by question name, and the
+ * follow-ups the preset table added at once.
  */
-export type AnswerResult = Result & { advice?: Promise<{ added: string[] }> };
+export type AnswerResult = Result & { advice?: Promise<{ added: string[] }>; presets?: string[] };
 
 /** Typed instead of an answer, these ask for help or skip the question. */
 const HELP_WORDS = new Set(['?', 'help', 'help me', 'idk', "i don't know", 'i dont know', 'dont know', "don't know", 'not sure', "i'm not sure", 'no idea']);
@@ -37,6 +39,15 @@ type Row =
   | { kind: 'option'; option: AdviceOption; derived?: string }
   | { kind: 'help' }
   | { kind: 'own' };
+
+/**
+ * What the developer has chosen on this question — by what it is, not by
+ * position, since positions move when the advisor's options arrive.
+ */
+type Pick = { kind: 'option'; label: string } | { kind: 'help' } | { kind: 'own' };
+
+const pickOf = (row: Row | undefined): Pick | null =>
+  !row ? null : row.kind === 'option' ? { kind: 'option', label: row.option.label } : { kind: row.kind };
 
 export interface FoundationScreenProps {
   questions: GuidedQuestion[];
@@ -99,6 +110,8 @@ export function FoundationScreen(props: FoundationScreenProps) {
   const [waiting, setWaiting] = createSignal<{ token: number; answer: string } | null>(null);
   /** Help was asked for the current question and is on its way. */
   const [helping, setHelping] = createSignal(false);
+  /** Set once the developer moves the selection or types; null until then. */
+  const [picked, setPicked] = createSignal<Pick | null>(null);
   let token = 0;
 
   // By id rather than index, so re-reading the files after a save, a follow-up
@@ -112,7 +125,18 @@ export function FoundationScreen(props: FoundationScreenProps) {
     const q = current();
     return q ? meta()[q.item.id] ?? {} : {};
   });
-  const options = createMemo<AdviceOption[]>(() => currentMeta().options ?? []);
+  /**
+   * The options on screen. When new ones arrive for the question being
+   * looked at, the one the developer has selected stays, whatever came.
+   */
+  const shownOptions = createMemo<{ id: string | undefined; list: AdviceOption[] }>((prev) => {
+    const id = current()?.item.id;
+    const incoming = currentMeta().options ?? [];
+    if (!prev || prev.id !== id) return { id, list: incoming };
+    const p = untrack(picked);
+    return { id, list: mergeOptions(prev.list, incoming, p?.kind === 'option' ? p.label : null) };
+  });
+  const options = () => shownOptions().list;
 
   /**
    * The choice list: an answer derived from earlier ones first, then the
@@ -162,25 +186,31 @@ export function FoundationScreen(props: FoundationScreenProps) {
   }));
 
   // Start on a derived answer, else the recommendation — when the question
-  // changes, or when advice arrives for it — unless typing already started.
-  createEffect(on(
-    () => [current()?.item.id, rows().length] as const,
-    () => {
-      if (draft() !== '') return;
-      const r = rows();
-      const derived = r.findIndex((x) => x.kind === 'option' && x.derived);
-      const rec = r.findIndex((x) => x.kind === 'option' && x.option.recommended);
-      setSel(derived >= 0 ? derived : rec >= 0 ? rec : r.length - 1);
-    },
-  ));
+  // changes, or when advice arrives for it. Once the developer has chosen or
+  // started typing, their choice is followed to wherever it moved instead.
+  createEffect(on(rows, (r) => {
+    const p = untrack(picked);
+    if (untrack(draft) !== '' || p?.kind === 'own') return setSel(r.length - 1);
+    if (p) {
+      const i = r.findIndex((x) =>
+        x.kind === p.kind && (p.kind !== 'option' || (x.kind === 'option' && x.option.label === p.label)));
+      if (i >= 0) return setSel(i);
+    }
+    const derived = r.findIndex((x) => x.kind === 'option' && x.derived);
+    const rec = r.findIndex((x) => x.kind === 'option' && x.option.recommended);
+    setSel(derived >= 0 ? derived : rec >= 0 ? rec : r.length - 1);
+  }));
 
   const go = (i: number) => {
     const n = props.questions.length;
     if (n === 0) return;
-    setCursorId(props.questions[Math.min(Math.max(i, 0), n - 1)]!.item.id);
+    // Choices belong to the question they were made on: cleared first, so
+    // the next question starts from its own recommendation.
+    setPicked(null);
     setDraft('');
     setError(null);
     setWaiting(null);
+    setCursorId(props.questions[Math.min(Math.max(i, 0), n - 1)]!.item.id);
   };
 
   const goTo = (name: string): boolean => {
@@ -221,6 +251,9 @@ export function FoundationScreen(props: FoundationScreenProps) {
     setDraft('');
     setError(null);
     if (!result.advice) return advance();
+    // The preset table already knows what this answer leaves open: go there
+    // now. The advisor's own follow-ups still arrive, and come up in order.
+    if (result.presets?.[0] && goTo(result.presets[0])) return;
 
     const mine = ++token;
     setWaiting({ token: mine, answer: text });
@@ -316,6 +349,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
     if (key.name === 'up' || key.name === 'down') {
       const n = rows().length;
       setSel((s) => (s + (key.name === 'up' ? -1 : 1) + n) % n);
+      setPicked(pickOf(rows()[sel()]));
       return;
     }
     if (key.ctrl && key.name === 'e') {
@@ -335,6 +369,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
       setError(null);
       // Typing is choosing to write your own.
       setSel(ownRow());
+      setPicked({ kind: 'own' });
     }
   });
 
@@ -450,7 +485,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
           </text>
           <Show when={currentMeta().parent}>
             <text style={{ fg: THEME.accent2 }}>
-              {`✦ follow-up to “${currentMeta().parent}”${currentMeta().why ? ` — ${currentMeta().why}` : ''}`}
+              {`${currentMeta().preset ? '◇' : '✦'} follow-up to “${currentMeta().parent}”${currentMeta().why ? ` — ${currentMeta().why}` : ''}`}
             </text>
           </Show>
           <Show when={currentMeta().helps}>
@@ -505,7 +540,10 @@ export function FoundationScreen(props: FoundationScreenProps) {
                 onMouseDown={() => {
                   if (row.kind === 'option') save(row.option.label);
                   else if (row.kind === 'help') help();
-                  else setSel(i());
+                  else {
+                    setSel(i());
+                    setPicked({ kind: 'own' });
+                  }
                 }}
                 style={{
                   flexDirection: 'row',
@@ -555,9 +593,15 @@ export function FoundationScreen(props: FoundationScreenProps) {
           </Show>
           <Show when={hasChoices()}>
             <text style={{ fg: THEME.dim }}>
-              {rows().some((r) => r.kind === 'option' && r.derived)
-                ? '   ⇐ derived from earlier answers · ★ recommended · ↑↓ or click to choose'
-                : '   ★ recommended · ↑↓ or click to choose'}
+              {`   ${[
+                ...(rows().some((r) => r.kind === 'option' && r.derived) ? ['⇐ derived from earlier answers'] : []),
+                '★ recommended',
+                // Instant, from the preset table: the advisor may still refine them.
+                ...(currentMeta().preset && options().length > 0
+                  ? [thinkingHere() ? '◇ instant suggestions, AI refining…' : '◇ instant suggestions']
+                  : []),
+                '↑↓ or click to choose',
+              ].join(' · ')}`}
             </text>
           </Show>
           <text>{' '}</text>

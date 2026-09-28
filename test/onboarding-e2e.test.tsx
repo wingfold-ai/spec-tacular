@@ -25,30 +25,41 @@ async function mount(ask?: Ask) {
   return ui;
 }
 
-/** A model that knows exactly one thing: Python needs a version. */
-const pythonAdvisor = (): { ask: Ask; prompts: string[] } => {
+/**
+ * A model that knows exactly one thing: Elixir needs a version. (Elixir, because
+ * the preset table has nothing for it: this is the advisor on its own.)
+ */
+const elixirAdvisor = (): { ask: Ask; prompts: string[] } => {
   const prompts: string[] = [];
   const ask: Ask = async (prompt) => {
     prompts.push(prompt);
-    if (prompt.includes('Answer: Python')) {
+    if (prompt.includes('Answer: Elixir')) {
       return {
         followUps: [{
-          ask: 'Which Python version?',
+          ask: 'Which Elixir version?',
           why: 'Pins the syntax code and CI can rely on.',
           options: [
-            { label: '3.14', detail: 'Latest stable', recommended: true },
-            { label: '3.13', detail: 'Previous stable', recommended: false },
+            { label: '1.19', detail: 'Latest stable', recommended: true },
+            { label: '1.18', detail: 'Previous stable', recommended: false },
           ],
         }],
         upcoming: [
-          { label: 'FastAPI', detail: 'Async, typed', recommended: true },
-          { label: 'Django', detail: 'Batteries included', recommended: false },
+          { label: 'Phoenix', detail: 'Full-stack web', recommended: true },
+          { label: 'Plug', detail: 'Minimal', recommended: false },
         ],
       };
     }
     return { followUps: [], upcoming: [] };
   };
   return { ask, prompts };
+};
+
+/** A model that answers only when told to, request by request. */
+const heldAdvisor = () => {
+  const held: { prompt: string; release: (v: unknown) => void }[] = [];
+  const ask: Ask = (prompt) => new Promise((release) => held.push({ prompt, release }));
+  const answerTo = (text: string) => held.find((h) => h.prompt.includes(text))!;
+  return { ask, answerTo };
 };
 
 describe('the start screen', () => {
@@ -133,41 +144,41 @@ describe('the ground rules', () => {
   });
 
   test('the advisor digs into an answer before moving on, and proposes options', async () => {
-    const { ask, prompts } = pythonAdvisor();
+    const { ask, prompts } = elixirAdvisor();
     const ui = await mount(ask);
     await ui.press('return');
     expect(ui.frame()).toContain('Not sure? Press ?');
     await ui.press('return');
 
-    await ui.type('Python');
+    await ui.type('Elixir');
     await ui.press('return');
     await ui.settle(100);
 
     // The answer was sent with everything decided so far.
-    const advised = prompts.find((p) => p.includes('Answer: Python'))!;
+    const advised = prompts.find((p) => p.includes('Answer: Elixir'))!;
     expect(advised).toContain('Just answered — [Stack] Language and runtime, with versions.');
     expect(advised).toContain('most recent stable release');
 
     // What the answer left open is asked straight away, not after the rest.
-    expect(ui.frame()).toContain('Which Python version?');
+    expect(ui.frame()).toContain('Which Elixir version?');
     expect(ui.frame()).toContain('✦ follow-up to “Language and runtime, with versions.”');
-    expect(ui.frame()).toContain('▸ 3.14');
+    expect(ui.frame()).toContain('▸ 1.19');
     expect(ui.frame()).toContain('★ recommended');
 
     // ↓ moves off the recommendation; enter takes what is selected.
     await ui.press('down');
-    expect(ui.frame()).toContain('▸ 3.13');
+    expect(ui.frame()).toContain('▸ 1.18');
     await ui.press('return');
     await ui.settle(100);
     const stack = () => readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8');
-    expect(stack()).toContain('## Which Python version?\n\n3.13');
+    expect(stack()).toContain('## Which Elixir version?\n\n1.18');
 
     // Then on: the next question's options came with the first request.
     expect(ui.frame()).toContain('Framework, if any');
-    expect(ui.frame()).toContain('▸ FastAPI');
+    expect(ui.frame()).toContain('▸ Phoenix');
     expect(ui.frame()).toContain('✎ Write my own answer');
     await ui.press('return');
-    expect(stack()).toContain('## Framework, if any, and why it over the alternatives.\n\nFastAPI');
+    expect(stack()).toContain('## Framework, if any, and why it over the alternatives.\n\nPhoenix');
   });
 
   test('while it looks at an answer, enter moves on without waiting', async () => {
@@ -175,14 +186,77 @@ describe('the ground rules', () => {
     const ui = await mount(() => new Promise((r) => { release = r; }));
     await ui.press('return');
     await ui.press('return');
-    await ui.type('Python');
+    await ui.type('Elixir');
     await ui.press('return');
-    expect(ui.frame()).toContain('✓ Saved: Python');
+    expect(ui.frame()).toContain('✓ Saved: Elixir');
     expect(ui.frame()).toContain('Looking at your answer');
     expect(ui.frame()).toContain('continue without waiting');
     await ui.press('return');
     expect(ui.frame()).toContain('Framework, if any');
     release({ followUps: [], upcoming: [], derived: [] });
+  });
+
+  test('a common answer gets its preset follow-up at once; the advisor fills in behind', async () => {
+    const { ask, answerTo } = heldAdvisor();
+    const ui = await mount(ask);
+    await ui.press('return');
+    await ui.press('return');
+    await ui.type('Python');
+    await ui.press('return');
+
+    // No waiting: the version question is there, marked as a preset, while
+    // the advisor — asked about it, with web search — is still thinking.
+    expect(ui.frame()).not.toContain('Looking at your answer');
+    expect(ui.frame()).toContain('Which Python version?');
+    expect(ui.frame()).toContain('◇ follow-up to “Language and runtime, with versions.”');
+    expect(ui.frame()).toContain('looking for options…');
+    const advised = answerTo('Answer: Python');
+    expect(advised.prompt).toContain('upcoming: options for the next question — [Stack] Which Python version?');
+    expect(advised.prompt).toContain('web search rather than relying on memory');
+
+    advised.release({
+      followUps: [],
+      upcoming: [
+        { label: '3.14', detail: 'Latest stable', recommended: true },
+        { label: '3.13', detail: 'Previous', recommended: false },
+      ],
+      derived: [],
+    });
+    await ui.settle(100);
+    expect(ui.frame()).toContain('▸ 3.14');
+  });
+
+  test('advice that arrives late never moves what the developer selected', async () => {
+    const { ask, answerTo } = heldAdvisor();
+    const ui = await mount(ask);
+    await ui.press('return');
+    await ui.press('return');
+    await ui.type('TypeScript');
+    await ui.press('return');
+
+    // The runtime question, with the table's options, at once.
+    expect(ui.frame()).toContain('Which runtime runs it: Node.js, Bun or Deno?');
+    expect(ui.frame()).toContain('▸ Node.js (LTS)');
+    expect(ui.frame()).toContain('◇ instant suggestions, AI refining…');
+    await ui.press('down');
+    expect(ui.frame()).toContain('▸ Bun');
+
+    // Better options arrive, without Bun among them: Bun stays, still selected.
+    answerTo('Answer: TypeScript').release({
+      followUps: [],
+      upcoming: [
+        { label: 'Node.js 24 LTS', detail: 'current LTS', recommended: true },
+        { label: 'Deno 2', detail: 'built-in tooling', recommended: false },
+      ],
+      derived: [],
+    });
+    await ui.settle(100);
+    expect(ui.frame()).toContain('Node.js 24 LTS');
+    expect(ui.frame()).toContain('▸ Bun');
+    await ui.press('return');
+    expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).toContain(
+      '## Which runtime runs it: Node.js, Bun or Deno?\n\nBun',
+    );
   });
 
   test('not sure: an explanation, examples, and a simpler question first', async () => {
@@ -266,28 +340,28 @@ describe('the ground rules', () => {
   });
 
   test('a follow-up can be dismissed as not relevant', async () => {
-    const { ask } = pythonAdvisor();
+    const { ask } = elixirAdvisor();
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
-    await ui.type('Python');
+    await ui.type('Elixir');
     await ui.press('return');
     await ui.settle(100);
-    expect(ui.frame()).toContain('Which Python version?');
+    expect(ui.frame()).toContain('Which Elixir version?');
     expect(ui.frame()).toContain('ctrl+d');
     await ui.press('d', { ctrl: true });
-    expect(ui.frame()).toContain('Removed “Which Python version?”');
+    expect(ui.frame()).toContain('Removed “Which Elixir version?”');
     expect(readFileSync(join(foundationDir(ui.root), 'stack.md'), 'utf8')).not.toContain(
-      'Which Python version?',
+      'Which Elixir version?',
     );
   });
 
   test('typing replaces a proposed option with your own answer', async () => {
-    const { ask } = pythonAdvisor();
+    const { ask } = elixirAdvisor();
     const ui = await mount(ask);
     await ui.press('return');
     await ui.press('return');
-    await ui.type('Python');
+    await ui.type('Elixir');
     await ui.press('return');
     await ui.settle(100);
     await ui.type('3.12.4, pinned by our platform team');

@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join } from 'node:path';
 import type { AdviceOption, Ask } from './advisor.ts';
 import { guidedQuestions } from './foundation.ts';
+import { renderPrompt, type PromptParts } from '../agent/prompt.ts';
 import { validateChangeName } from './guide.ts';
 import { unique } from './naming.ts';
 import { promoteSlice, saveRoadmap, type Roadmap, type Slice } from './roadmap.ts';
@@ -173,45 +174,62 @@ function groundRules(projectRoot: string): string[] {
     : ['(none yet)'];
 }
 
+const SKIPPED = '(skipped — the developer does not know yet)';
+
 function transcript(session: VisionSession): string[] {
   return session.turns.length > 0
-    ? session.turns.flatMap((t) => [`Q: ${t.ask}`, `A: ${t.answer ?? '(skipped — the developer does not know yet)'}`])
+    ? session.turns.flatMap((t) => [`Q: ${t.ask}`, `A: ${t.answer ?? SKIPPED}`])
     : ['(no questions asked yet)'];
 }
 
-export function buildInterviewPrompt(projectRoot: string, session: VisionSession): string {
-  return [
-    'A developer is starting a new software project from nothing. Interview them',
-    'about their vision until you understand it well enough to split it into a',
-    'sequence of small slices, each one a change that is proposed, specified,',
-    'designed and built on its own.',
-    '',
-    'Their vision, in their words:',
-    session.vision,
-    '',
-    'Ground rules already settled (never ask about these):',
-    ...groundRules(projectRoot),
-    '',
-    'The interview so far:',
-    ...transcript(session),
-    '',
-    'understood: restate the vision as you now understand it, in 2 to 4 plain',
-    'sentences, so the developer can see whether you got it right.',
-    '',
-    'enough: true once you could split the vision into slices with confidence —',
-    'who uses it, the core things they do, what the first usable version must',
-    'do, and what is out of scope are clear. Prefer ending early to asking',
-    'about details a later change can settle.',
-    '',
-    'question: when not enough, the single most important unknown, as one',
-    'concrete question a developer can answer from what they want — about',
-    'users, what they do, what comes first, what is out of scope, constraints',
-    'such as data, integrations or platforms. Never technology already settled.',
-    'Offer 2 to 5 options where natural (short label, one-line detail, exactly',
-    'one recommended); none for questions only they can answer. "why" says in',
-    'one line what the answer decides. When enough, return an empty ask.',
-  ].join('\n');
+/**
+ * The interview prompt in parts: the vision, the ground rules and the turns so
+ * far are context, so a session that asked the last question is sent only
+ * the answer to it.
+ */
+export function buildInterviewParts(projectRoot: string, session: VisionSession): PromptParts {
+  return {
+    preamble: [
+      'A developer is starting a new software project from nothing. Interview them',
+      'about their vision until you understand it well enough to split it into a',
+      'sequence of small slices, each one a change that is proposed, specified,',
+      'designed and built on its own.',
+    ].join('\n'),
+    context: [
+      { heading: 'Their vision, in their words', lines: [session.vision] },
+      { heading: 'Ground rules already settled (never ask about these)', lines: groundRules(projectRoot) },
+      {
+        heading: 'The interview so far',
+        // One entry per turn, so a session is sent each new turn whole.
+        lines: session.turns.map((t) => `Q: ${t.ask}\nA: ${t.answer ?? SKIPPED}`),
+        empty: '(no questions asked yet)',
+      },
+    ],
+    task: INTERVIEW_TASK,
+  };
 }
+
+export function buildInterviewPrompt(projectRoot: string, session: VisionSession): string {
+  return renderPrompt(buildInterviewParts(projectRoot, session));
+}
+
+const INTERVIEW_TASK = [
+  'understood: restate the vision as you now understand it, in 2 to 4 plain',
+  'sentences, so the developer can see whether you got it right.',
+  '',
+  'enough: true once you could split the vision into slices with confidence —',
+  'who uses it, the core things they do, what the first usable version must',
+  'do, and what is out of scope are clear. Prefer ending early to asking',
+  'about details a later change can settle.',
+  '',
+  'question: when not enough, the single most important unknown, as one',
+  'concrete question a developer can answer from what they want — about',
+  'users, what they do, what comes first, what is out of scope, constraints',
+  'such as data, integrations or platforms. Never technology already settled.',
+  'Offer 2 to 5 options where natural (short label, one-line detail, exactly',
+  'one recommended); none for questions only they can answer. "why" says in',
+  'one line what the answer decides. When enough, return an empty ask.',
+].join('\n');
 
 export function buildSlicesPrompt(projectRoot: string, session: VisionSession): string {
   return [
@@ -427,8 +445,10 @@ export class VisionInterviewer {
 
   private async next(session: VisionSession): Promise<VisionSession> {
     if (session.turns.length >= MAX_TURNS) return this.finish();
+    // The interview reasons about the vision; it has nothing to look up.
+    const parts = buildInterviewParts(this.projectRoot, session);
     const step = parseInterview(
-      await this.ask(buildInterviewPrompt(this.projectRoot, session), INTERVIEW_SCHEMA),
+      await this.ask(renderPrompt(parts), INTERVIEW_SCHEMA, { mode: 'think', parts }),
     );
     session.understood = step.understood || session.understood;
     session.pending = step.question;
@@ -442,7 +462,7 @@ export class VisionInterviewer {
     const session = this.session();
     if (!session) throw new Error('No vision yet');
     const result = parseSlices(
-      await this.ask(buildSlicesPrompt(this.projectRoot, session), SLICES_SCHEMA),
+      await this.ask(buildSlicesPrompt(this.projectRoot, session), SLICES_SCHEMA, { mode: 'think' }),
       taken,
     );
     session.slices = result.slices;

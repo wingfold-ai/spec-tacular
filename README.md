@@ -43,6 +43,14 @@ The ground rules are answered with an AI advisor alongside:
   answer leaves open and asks that next — answer "Python" and the next
   question is which version, with the latest stable release (looked up, not
   remembered) marked ★ recommended. Enter moves on without waiting.
+- **Common answers need no waiting.** A small table of presets
+  (`src/core/presets.ts`) knows what "Python", "TypeScript", "Rust", "Go",
+  "Postgres", "hexagonal" and friends leave open, so their follow-ups and
+  options (uv / poetry / pip, pytest, FastAPI, Node / Bun / Deno, …) appear
+  the instant you answer, marked ◇. The advisor refines them in the
+  background — adding questions, replacing options — but never moves the
+  option you have selected or touches a question you already answered.
+  Presets never carry version numbers: those are always looked up.
 - **It proposes.** Questions come with options for your project so far
   (uv, pytest, FastAPI, …), and answers that already follow from earlier ones
   are derived and pre-selected, marked ⇐. Nothing is written until you pick
@@ -73,10 +81,44 @@ or two, and a name is proposed from it (instantly, then a better one from the
 AI) for you to adjust. The description is what the agent drafting the
 proposal starts from.
 
-The advisor runs through Claude Code (`claude -p`, web search only) with
-`sonnet`; names use `haiku` with no tools. Override with
-`SPECTACULAR_ADVISOR_MODEL` / `SPECTACULAR_QUICK_MODEL`, or turn it off with
-`SPECTACULAR_NO_ADVISOR=1`. A request takes 10–30 seconds and a few cents.
+The advisor, the vision interview and change naming talk to the agent you
+chose with `--driver` (default `claude`), through sessions that stay open
+while you answer:
+
+- **Claude Code** runs as `claude -p --input-format stream-json
+  --output-format stream-json`, one process per kind of request (model, tools
+  and JSON schema are fixed when it starts). The first message carries the
+  instructions and the project so far; every later one only what changed and
+  the new request. Sessions start when the ground-rules, vision or naming
+  screen opens, so the first question does not wait for an agent to boot. If
+  a session dies or errors it is restarted with the full context; if that
+  fails too, a one-shot `claude -p` answers. All of them are stopped when
+  spec-tacular exits, ctrl+c and SIGTERM included.
+- **opencode** runs one headless `opencode serve` (local port, own password)
+  with a conversation per kind of request, using its read-only `plan` agent
+  and a JSON schema per message. A reply that ignores the schema still has
+  its JSON found in the text, checked, and asked for again once with what
+  was wrong. Its conversations are deleted again on exit.
+
+Web search is used only when a request touches the stack or tooling
+(versions, frameworks, package managers, datastores); everything else is
+answered without tools, and told not to quote versions from memory. Extended
+thinking is off for these requests — measured on one follow-up, it was most
+of the time taken for no better options.
+
+| Variable | Effect |
+| --- | --- |
+| `SPECTACULAR_NO_ADVISOR=1` | No AI during setup, the interview or naming |
+| `SPECTACULAR_ADVISOR_MODEL` | Claude model for the advisor and interview (default `sonnet`) |
+| `SPECTACULAR_QUICK_MODEL` | Claude model for naming changes (default `haiku`) |
+| `SPECTACULAR_ADVISOR_THINKING=1` | Let Claude use extended thinking again (slower) |
+| `SPECTACULAR_OPENCODE_MODEL` | opencode model, `provider/model`, e.g. `openrouter/anthropic/claude-sonnet-4` (default: opencode's own) |
+| `SPECTACULAR_OPENCODE_QUICK_MODEL` | opencode model for naming (default: `SPECTACULAR_OPENCODE_MODEL`) |
+| `SPECTACULAR_DEBUG_LOG=/path` | Append each advisor request's session, delta/full and time to a file |
+
+Opencode's free tier (`opencode/*-free` models) rejects any request whose tool
+set was narrowed, which is why tools are not restricted per request there;
+the `plan` agent keeps it from editing anything.
 
 Agents drafting artifacts run as `claude -p` with `--permission-mode
 acceptEdits` and read-only `openspec` commands allowed — headless, nobody is

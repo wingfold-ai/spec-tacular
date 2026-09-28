@@ -11,7 +11,7 @@
 
 import { createCliRenderer } from '@opentui/core';
 import { render, useKeyboard, useRenderer } from '@opentui/solid';
-import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { staleArtifacts } from '../core/gate.ts';
 import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
 import {
@@ -99,6 +99,11 @@ export interface TuiInput {
   advisorNote?: string | null;
   /** Proposes names for a change from its description, best first. */
   nameChange?: (description: string, taken: string[]) => Promise<string[]>;
+  /**
+   * Starts the AI sessions a screen is about to need, so its first question
+   * does not wait for an agent to start. Optional, and free until asked.
+   */
+  warm?: (screen: 'foundation' | 'vision' | 'naming') => void;
 }
 
 /** What the TUI needs from core/vision.ts. */
@@ -121,6 +126,8 @@ export interface Advisor {
   meta: () => Record<string, QuestionMeta>;
   afterAnswer: (question: GuidedQuestion, answer: string) => Promise<{ added: FollowUp[]; derived: string[] }>;
   suggest: (question: GuidedQuestion) => Promise<void>;
+  /** Instant follow-ups from the preset table, by name; no model involved. */
+  presets?: (question: GuidedQuestion, answer: string) => string[];
   coach: (question: GuidedQuestion) => Promise<{ explain: string; probes: FollowUp[] }>;
   dismiss: (question: GuidedQuestion) => boolean;
 }
@@ -349,6 +356,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     refreshFoundation();
     if (!result.ok || !advisor) return result;
     setAdviceNotice(null);
+    // What the table knows is on screen now; the advisor refines it after.
+    const presets = advisor.presets?.(q, text) ?? [];
+    if (presets.length > 0) refreshFoundation();
     const advice = track(q.item.name, async () => {
       const { added, derived } = await advisor.afterAnswer(q, text);
       const parts: string[] = [];
@@ -360,8 +370,16 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       refreshFoundation();
       return { added: added.map((f) => f.ask) };
     });
-    return { ...result, advice };
+    return { ...result, advice, presets };
   };
+
+  // Sessions start while the developer reads the screen, not on the first question.
+  createEffect(on(screen, (s) => {
+    if (s === 'foundation' || s === 'vision') props.input.warm?.(s);
+  }));
+  createEffect(on(asking, (a) => {
+    if (a === 'describe' && props.input.nameChange) props.input.warm?.('naming');
+  }));
 
   const onHelp = (q: GuidedQuestion) =>
     track(q.item.name, async () => {
