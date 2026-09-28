@@ -15,12 +15,38 @@ import { currentItem, position } from '../core/session.ts';
 import { renderCounts, renderProgressBar, wrap } from '../render/requirement.ts';
 import type { Finding } from '../core/concreteness.ts';
 import { exampleValues, renderExamples } from '../core/examples.ts';
-import { isRequirement } from '../core/requirements.ts';
+import { isRequirement, type Requirement, type ReviewItem } from '../core/requirements.ts';
+import type { RefineTurn, Refinement } from '../core/refine.ts';
 import { THEME } from './theme.ts';
+import { useContentWidth } from './layout.ts';
 import { isCancel, isPrintable } from './input.ts';
+import { useCopy, usePasteInto } from './copy-paste.ts';
+import { RevisePanel } from './revise.tsx';
 
 /** A decision that needs a typed reason before it is recorded. */
 export type PromptKind = 'reject' | 'defer';
+
+/** Revising a requirement with the agent: what the screen needs for it. */
+export interface RefinePort {
+  /** Why there is no agent to revise with, or null when there is one. */
+  unavailable: string | null;
+  /** The requirement's Markdown as it is in its file. */
+  current: (item: Requirement) => { ok: true; block: string } | { ok: false; reason: string };
+  propose: (item: Requirement, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  /** Writes an accepted revision; the session then shows it pending again. */
+  accept: (item: Requirement, block: string) => { ok: true } | { ok: false; reason: string };
+}
+
+/** An item as Markdown, for copying when its file cannot be read. */
+function asMarkdown(item: ReviewItem): string {
+  if (!isRequirement(item)) return `### ${item.name}\n\n${item.text}`;
+  return [
+    `### Requirement: ${item.name}`,
+    '',
+    item.text,
+    ...item.scenarios.flatMap((s) => ['', `#### Scenario: ${s.name}`, ...s.body]),
+  ].join('\n');
+}
 
 export interface ReviewScreenProps {
   session: ReviewSession;
@@ -36,7 +62,10 @@ export interface ReviewScreenProps {
   onReject: (note: string) => void;
   onDefer: (reason: string) => void;
   onSkip: () => void;
+  /** Opens the item in `$EDITOR` — `E`, now that `e` revises it with the agent. */
   onEdit: () => void;
+  /** Revising with the agent; without it, `e` opens the editor as `E` does. */
+  refine?: RefinePort;
   onMove: (delta: number) => void;
   onBack: () => void;
 }
@@ -49,10 +78,16 @@ const STATE_COLOR: Record<string, string> = {
 };
 
 export function ReviewScreen(props: ReviewScreenProps) {
+  const contentWidth = useContentWidth();
   const [prompt, setPrompt] = createSignal<PromptKind | null>(null);
   const [draft, setDraft] = createSignal('');
   const [help, setHelp] = createSignal(false);
   const [marking, setMarking] = createSignal(false);
+  /** The requirement being revised with the agent, and its text when opened. */
+  const [revising, setRevising] = createSignal<{ item: Requirement; current: string } | null>(null);
+  /** One line about what just happened, until the next key. */
+  const [flash, setFlash] = createSignal<string | null>(null);
+  const copy = useCopy();
 
   const item = createMemo(() => currentItem(props.session));
   const pos = createMemo(() => position(props.session));
@@ -104,7 +139,36 @@ export function ReviewScreen(props: ReviewScreenProps) {
     else props.onDefer(text);
   };
 
+  const openRevise = () => {
+    const current = item();
+    if (!current) return;
+    if (!props.refine) return props.onEdit();
+    if (!isRequirement(current.item)) {
+      setFlash('Only requirements are revised with the AI — E opens this in your editor');
+      return;
+    }
+    const text = props.refine.current(current.item);
+    if (!text.ok) {
+      setFlash(text.reason);
+      return;
+    }
+    setRevising({ item: current.item, current: text.block });
+  };
+
+  const copyCurrent = () => {
+    const current = item();
+    if (!current) return;
+    const fromFile = isRequirement(current.item) ? props.refine?.current(current.item) : undefined;
+    copy(fromFile?.ok ? fromFile.block : asMarkdown(current.item), `the ${noun()}`);
+  };
+
+  usePasteInto(() => (prompt() ? (text: string) => setDraft((d) => d + text) : null));
+
   useKeyboard((key) => {
+    // The revise panel has the keyboard while it is open.
+    if (revising()) return;
+    setFlash(null);
+
     if (marking()) {
       // Numbered rather than cycling: with several findings on one
       // requirement, picking the wrong one rewrites the spec.
@@ -133,12 +197,17 @@ export function ReviewScreen(props: ReviewScreenProps) {
 
     if (isCancel(key)) return props.onBack();
 
+    // `E` and ctrl+e are the editor, as ctrl+e is everywhere else.
+    if (key.name === 'e' && (key.shift || key.ctrl)) return props.onEdit();
+    if (key.ctrl) return;
+
     switch (key.name) {
       case 'a': return props.onAccept();
       case 'r': return setPrompt('reject');
       case 'd': return setPrompt('defer');
       case 's': return props.onSkip();
-      case 'e': return props.onEdit();
+      case 'e': return openRevise();
+      case 'y': return copyCurrent();
       case 'm':
         if (findings().length > 0) setMarking(true);
         return;
@@ -167,6 +236,27 @@ export function ReviewScreen(props: ReviewScreenProps) {
           </box>
         }
       >
+        <Show when={revising()}>
+          <box style={{ flexDirection: 'column', flexGrow: 1, padding: 1 }}>
+            <RevisePanel
+              name={revising()!.item.name}
+              current={revising()!.current}
+              seed={item()?.state === 'rejected' && !item()?.drifted ? item()?.review.note : undefined}
+              unavailable={props.refine?.unavailable ?? null}
+              propose={(turns, instruction) => props.refine!.propose(revising()!.item, turns, instruction)}
+              onAccept={(block) => {
+                const result = props.refine!.accept(revising()!.item, block);
+                if (result.ok) setFlash('Revised and written — it is pending again: a accepts the new text');
+                return result;
+              }}
+              onClose={(message) => {
+                setRevising(null);
+                if (message) setFlash(message);
+              }}
+            />
+          </box>
+        </Show>
+        <Show when={!revising()}>
         <box style={{ flexDirection: 'column', flexGrow: 1, padding: 1 }}>
           {/* Where am I */}
           <text style={{ fg: THEME.dim }}>
@@ -179,7 +269,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
             {`${label()}: ${item()!.item.name}`}
           </text>
           <text>{' '}</text>
-          <For each={wrap(renderExamples(item()!.item.text), 76)}>
+          <For each={wrap(renderExamples(item()!.item.text), Math.max(Math.min(76, contentWidth() - 6), 30))}>
             {(line) => <text style={{ fg: THEME.text }}>{line || ' '}</text>}
           </For>
           <text>{' '}</text>
@@ -235,17 +325,21 @@ export function ReviewScreen(props: ReviewScreenProps) {
             </text>
           </Show>
         </box>
+        </Show>
       </Show>
 
       {/* Constant region: progress never leaves the frame */}
       <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 }}>
+        <Show when={flash() && !revising()}>
+          <text style={{ fg: THEME.warn }}>{flash()}</text>
+        </Show>
         <text style={{ fg: THEME.dim }}>
           {`${renderProgressBar(props.session.summary)}  ${renderCounts(props.session.summary)}`}
         </text>
       </box>
 
       {/* Prompt, help, or the key hints — one at a time */}
-      <Show when={prompt()}>
+      <Show when={prompt() && !revising()}>
         <box style={{ paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.warn }}>
             {prompt() === 'reject' ? 'Why reject? ' : 'What would verify it? '}
@@ -259,7 +353,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
         </box>
       </Show>
 
-      <Show when={!prompt() && marking()}>
+      <Show when={!revising() && !prompt() && marking()}>
         <box style={{ paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.warn }}>
             {`Mark which as an example? 1-${findings().length} · any other key cancels`}
@@ -267,21 +361,23 @@ export function ReviewScreen(props: ReviewScreenProps) {
         </box>
       </Show>
 
-      <Show when={!prompt() && !marking() && help()}>
+      <Show when={!revising() && !prompt() && !marking() && help()}>
         <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.text }}>a accept · r reject (asks why) · d defer (asks what would verify it)</text>
-          <text style={{ fg: THEME.text }}>e edit in $EDITOR · s skip · n/p move · q back · any key closes</text>
+          <text style={{ fg: THEME.text }}>e revise with AI: say what should change, see the diff, accept or ask again</text>
+          <text style={{ fg: THEME.text }}>E or ctrl+e edit in $EDITOR · y copy it · s skip · n/p move · q back</text>
+          <text style={{ fg: THEME.text }}>drag to select text, ctrl+c copies it · ctrl+v pastes into a prompt · any key closes</text>
         </box>
       </Show>
 
-      <Show when={!prompt() && !marking() && !help()}>
+      <Show when={!revising() && !prompt() && !marking() && !help()}>
         <box style={{ paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.dim }}>
             {props.promotable
-              ? 'a accept · r reject · e edit · p promote to ADR · s skip · ? help · q back'
+              ? 'a accept · r reject · e revise with AI · E editor · p promote to ADR · s skip · ? help · q back'
               : findings().length > 0
-                ? 'a accept · r reject · e edit · d defer · m mark example · s skip · ? help · q back'
-                : 'a accept · r reject · e edit · d defer · s skip · n/p move · ? help · q back'}
+                ? 'a accept · r reject · e revise with AI · E editor · d defer · m mark example · s skip · ? help · q back'
+                : 'a accept · r reject · e revise with AI · E editor · d defer · s skip · n/p move · ? help · q back'}
           </text>
         </box>
       </Show>

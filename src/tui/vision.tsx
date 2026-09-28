@@ -8,13 +8,15 @@
  * split into slices they review before anything is written.
  */
 
-import { usePaste, useKeyboard, useTerminalDimensions } from '@opentui/solid';
+import { useKeyboard } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
 import type { AdviceOption } from '../core/advisor.ts';
 import type { ProposedSlice, VisionSession } from '../core/vision.ts';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
+import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
+import { usePasteInto } from './copy-paste.ts';
 import { Button, clip, KeyBar, Panel, Spinner } from './widgets.tsx';
 
 export interface VisionScreenProps {
@@ -49,7 +51,7 @@ const SKIP_WORDS = new Set(['skip', 'pass', 'later', "don't know", 'dont know', 
 type Row = { kind: 'skip' } | { kind: 'option'; option: AdviceOption } | { kind: 'own' };
 
 export function VisionScreen(props: VisionScreenProps) {
-  const dims = useTerminalDimensions();
+  const contentWidth = useContentWidth();
   const [draft, setDraft] = createSignal(props.session?.vision ? '' : (props.seed ?? '').trim());
   const [sel, setSel] = createSignal(0);
   /** Slices the developer dropped from the proposal, by id. */
@@ -85,11 +87,10 @@ export function VisionScreen(props: VisionScreenProps) {
   const kept = createMemo(() => (props.session?.slices ?? []).filter((s) => !dropped().has(s.id)));
 
   // Pasting a long description is the natural way to hand over a vision.
-  usePaste((event) => {
-    if (phase() === 'describe' || phase() === 'interview') {
-      setDraft((d) => d + new TextDecoder().decode(event.bytes).replace(/\r\n?/g, '\n'));
-    }
-  });
+  usePasteInto(
+    () => (!props.busy && (phase() === 'describe' || phase() === 'interview') ? (text: string) => setDraft((d) => d + text) : null),
+    { multiline: true },
+  );
 
   const submitDescribe = () => {
     const text = draft().trim();
@@ -162,7 +163,7 @@ export function VisionScreen(props: VisionScreenProps) {
     }
   });
 
-  const width = () => Math.max(dims().width - 8, 40);
+  const width = () => Math.max(contentWidth() - 8, 40);
 
   const keys = createMemo((): [string, string][] => {
     if (props.busy) return [['ctrl+c', 'back']];

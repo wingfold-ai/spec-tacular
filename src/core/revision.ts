@@ -10,6 +10,20 @@
 
 import type { ReviewedItem } from './review.ts';
 
+/**
+ * What any rewrite of a requirement must respect — a batch revision of the
+ * rejected ones, or one requirement revised in conversation (refine.ts).
+ */
+export const REVISION_RULES = [
+  '- Keep each requirement a behaviour contract: what is observable, not how',
+  '  it is built.',
+  '- Mark any concrete value that is illustrative rather than decided as',
+  '  `{{example: ...}}`. Unmarked concrete values read as binding contracts.',
+  '- Every requirement keeps at least one `#### Scenario:` with WHEN/THEN.',
+  '- Do not rename a requirement unless the reason asks for it. A rename',
+  '  discards its review history.',
+];
+
 export interface RevisionBundle {
   change: string;
   rejected: ReviewedItem[];
@@ -62,18 +76,7 @@ function renderInstruction(change: string, rejected: ReviewedItem[]): string {
     }
   }
 
-  lines.push(
-    '## Rules',
-    '',
-    '- Keep each requirement a behaviour contract: what is observable, not how',
-    '  it is built.',
-    '- Mark any concrete value that is illustrative rather than decided as',
-    '  `{{example: ...}}`. Unmarked concrete values read as binding contracts.',
-    '- Every requirement keeps at least one `#### Scenario:` with WHEN/THEN.',
-    '- Do not rename a requirement unless the reason asks for it. A rename',
-    '  discards its review history.',
-    '',
-  );
+  lines.push('## Rules', '', ...REVISION_RULES, '');
 
   return lines.join('\n');
 }

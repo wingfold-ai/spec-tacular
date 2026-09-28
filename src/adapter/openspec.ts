@@ -202,12 +202,20 @@ export class OpenSpecAdapter {
       child.on('error', (err: NodeJS.ErrnoException) => {
         finish(() =>
           reject(
-            err.code === 'ENOENT'
+            // A missing working directory is reported by spawn as ENOENT too,
+            // so check it before blaming the binary — otherwise a typo in
+            // --cwd reads as "openspec is not installed".
+            err.code === 'ENOENT' && !existsSync(this.cwd)
               ? new OpenSpecError(
-                  `The \`${this.bin}\` command was not found.`,
-                  'Install it with `npm install -g @fission-ai/openspec`.',
+                  `The folder \`${this.cwd}\` does not exist.`,
+                  'Create it first, or point --cwd at a folder that does.',
                 )
-              : new OpenSpecError(`Could not run \`${this.bin}\`: ${err.message}`),
+              : err.code === 'ENOENT'
+                ? new OpenSpecError(
+                    `The \`${this.bin}\` command was not found.`,
+                    'Install it with `npm install -g @fission-ai/openspec`.',
+                  )
+                : new OpenSpecError(`Could not run \`${this.bin}\`: ${err.message}`),
           ),
         );
       });

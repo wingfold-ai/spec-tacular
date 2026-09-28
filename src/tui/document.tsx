@@ -11,7 +11,9 @@ import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
+import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
+import { useCopy, usePasteInto } from './copy-paste.ts';
 import { Button, KeyBar, Panel } from './widgets.tsx';
 
 export interface DocumentAction {
@@ -79,11 +81,15 @@ function render(content: string, width: number): Line[] {
 
 export function DocumentView(props: DocumentViewProps) {
   const dims = useTerminalDimensions();
+  const contentWidth = useContentWidth();
   const [top, setTop] = createSignal(0);
   const [focus, setFocus] = createSignal(0);
   const [feedback, setFeedback] = createSignal<string | null>(null);
+  const copy = useCopy();
 
-  const lines = createMemo(() => render(props.content, Math.max(dims().width - 8, 30)));
+  usePasteInto(() => (feedback() !== null ? (text: string) => setFeedback((f) => (f ?? '') + text) : null));
+
+  const lines = createMemo(() => render(props.content, Math.max(contentWidth() - 8, 30)));
   /** Rows available for the text, after the header, buttons and key bar. */
   const height = () => Math.max(dims().height - (feedback() !== null ? 16 : 13), 5);
   const maxTop = () => Math.max(lines().length - height(), 0);
@@ -119,6 +125,7 @@ export function DocumentView(props: DocumentViewProps) {
     if (key.name === 'pagedown' || key.name === 'space') return scroll(height() - 2);
     if (key.name === 'pageup') return scroll(-(height() - 2));
     if (key.name === 'g') return setTop(key.shift ? maxTop() : 0);
+    if (key.name === 'y' && !key.ctrl) return copy(props.content, `the ${props.title.split(' › ').pop() ?? 'document'}`);
     if (key.name === 'right' || key.name === 'tab') return setFocus((f) => (f + 1) % buttons().length);
     if (key.name === 'left') return setFocus((f) => (f - 1 + buttons().length) % buttons().length);
     if (isEnter(key)) return buttons()[focus()]?.run();
@@ -168,8 +175,8 @@ export function DocumentView(props: DocumentViewProps) {
       <KeyBar
         keys={
           feedback() !== null
-            ? [['enter', 'redraft'], ['ctrl+c', 'cancel']]
-            : [['↑↓', 'scroll'], ['space', 'page'], ['←→', 'action'], ['enter', 'go'], ['q', 'back']]
+            ? [['enter', 'redraft'], ['ctrl+v', 'paste'], ['ctrl+c', 'cancel']]
+            : [['↑↓', 'scroll'], ['space', 'page'], ['←→', 'action'], ['enter', 'go'], ['y', 'copy'], ['q', 'back']]
         }
       />
     </box>

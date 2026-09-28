@@ -36,6 +36,7 @@ import {
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
 import { createAssistants, type Assistants } from './assistants.ts';
+import type { Usage } from './core/usage.ts';
 import { isGreenfield } from './core/vision.ts';
 import { loadLintConfig } from './core/concreteness.ts';
 import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
@@ -52,6 +53,7 @@ import { projectStage, schemaInstalled } from './core/guide.ts';
 import { ArchiveBlockedError, planArchive, prepareArchive } from './core/archive.ts';
 import { loadRegister, registerPath } from './core/pending.ts';
 import { verifyRequirement } from './core/verify.ts';
+import { refineContext } from './core/refine.ts';
 import {
   completeSlice,
   loadRoadmap,
@@ -860,6 +862,29 @@ async function main(): Promise<number> {
         return fresh.pipelines;
       },
       listJobs: () => listJobs(args.cwd),
+      driver: args.driver,
+      modelFor: (id) => {
+        try {
+          return defaultRegistry().get(id).model?.('research');
+        } catch {
+          return undefined;
+        }
+      },
+      jobUsage: (job) => {
+        let parse: ((line: string) => Usage | null) | undefined;
+        try {
+          parse = defaultRegistry().get(job.driver).parseUsage;
+        } catch {
+          return [];
+        }
+        if (!parse) return [];
+        const out: Usage[] = [];
+        for (const line of tailJob(job, 2000)) {
+          const usage = parse(line);
+          if (usage) out.push(usage);
+        }
+        return out;
+      },
       tailJob: (job) => {
         let format: (line: string) => string | null;
         try {
@@ -911,6 +936,14 @@ async function main(): Promise<number> {
       greenfield: () => isGreenfield(args.cwd),
       roadmap: () => loadRoadmap(args.cwd),
       ...(assistants = createAssistants({ cwd: args.cwd, driver: args.driver })),
+      refine: {
+        unavailable: assistants.refiner ? null : assistants.advisorNote,
+        propose: async (change, item, turns, instruction) => {
+          const root = statuses.get(change)?.changeRoot;
+          if (!assistants?.refiner || !root) throw new Error(assistants?.advisorNote ?? `${change} is gone`);
+          return assistants.refiner.propose(refineContext(root, item), turns, instruction);
+        },
+      },
       artifactFile: (change, artifact) => artifactFile(adapter, statuses, change, artifact),
     });
     return 0;

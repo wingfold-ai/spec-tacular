@@ -56,6 +56,19 @@ export async function mountApp(
     baseline?: boolean;
     width?: number;
     height?: number;
+    /** Changes there already are, once the project is set up. */
+    changes?: ChangePipeline[];
+    openReview?: TuiInput['openReview'];
+    saveSession?: TuiInput['saveSession'];
+    reparse?: TuiInput['reparse'];
+    refine?: TuiInput['refine'];
+    /** Never the real clipboard: a test that pastes brings its own. */
+    clipboard?: TuiInput['clipboard'];
+    /** The AI usage sidebar's wiring, for tests that exercise it. */
+    driver?: TuiInput['driver'];
+    modelFor?: TuiInput['modelFor'];
+    onUsage?: TuiInput['onUsage'];
+    jobUsage?: TuiInput['jobUsage'];
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'spectacular-app-'));
@@ -63,7 +76,7 @@ export async function mountApp(
     mkdirSync(join(root, 'openspec', 'specs', 'existing'), { recursive: true });
     writeFileSync(join(root, 'openspec', 'specs', 'existing', 'spec.md'), '# Existing\n');
   }
-  const changes: ChangePipeline[] = [];
+  const changes: ChangePipeline[] = [...(options.changes ?? [])];
   const created: { name: string; description: string }[] = [];
   const dispatched: string[] = [];
   const jobs: Job[] = [];
@@ -73,12 +86,17 @@ export async function mountApp(
   const interviewer = new VisionInterviewer(root, options.visionAsk ?? (() => Promise.reject(new Error('no model'))));
 
   const input: TuiInput = {
-    pipelines: [],
+    pipelines: [...changes],
     failed: [],
     root,
-    openReview: () => null,
-    saveSession: () => {},
-    reparse: () => [],
+    openReview: options.openReview ?? (() => null),
+    saveSession: options.saveSession ?? (() => {}),
+    reparse: options.reparse ?? (() => []),
+    refine: options.refine,
+    clipboard: options.clipboard ?? {
+      read: async () => ({ ok: false, reason: 'no clipboard in this test' }),
+      write: async () => ({ ok: false, reason: 'no clipboard in this test' }),
+    },
     lintConfig: { allow: [] } as unknown as TuiInput['lintConfig'],
     reloadPipelines: async () => [...changes],
     listJobs: () => jobs.map((j) => ({ ...j })),
@@ -117,6 +135,10 @@ export async function mountApp(
     advisor: options.ask ? new FoundationAdvisor(root, options.ask) : null,
     advisorNote: options.ask ? null : 'none in this test',
     nameChange: options.nameChange,
+    driver: options.driver ?? 'claude',
+    modelFor: options.modelFor,
+    onUsage: options.onUsage,
+    jobUsage: options.jobUsage,
     warm: (target) => warmed.push(target),
     greenfield: () => isGreenfield(root),
     roadmap: () => loadRoadmap(root),
@@ -173,6 +195,11 @@ export async function mountApp(
     },
     type: async (text: string) => {
       await setup.mockInput.typeText(text);
+      await settle();
+    },
+    /** The terminal's own paste: one bracketed-paste event. */
+    paste: async (text: string) => {
+      await setup.mockInput.pasteBracketedText(text);
       await settle();
     },
     destroy: () => {
