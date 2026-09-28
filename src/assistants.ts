@@ -1,9 +1,9 @@
 /**
  * The AI behind the guided setup — the ground-rules advisor, the vision
- * interview and change names — wired to the chosen agent, and started ahead
- * of time.
+ * interview and change names — and behind revising a requirement from the
+ * review screen, wired to the chosen agent, and started ahead of time.
  *
- * All three share one pool of agent sessions (agent/structured.ts), so a run
+ * All of them share one pool of agent sessions (agent/structured.ts), so a run
  * never starts the same agent twice. Each still works without a model: the
  * setup without proposals, the vision as the developer's own words.
  */
@@ -13,10 +13,12 @@ import { advisorUnavailable, StructuredPool } from './agent/structured.ts';
 import { FoundationAdvisor, type Ask } from './core/advisor.ts';
 import { buildNamePrompt, NAME_SCHEMA, parseNames } from './core/naming.ts';
 import { finalizeVision, VisionInterviewer } from './core/vision.ts';
+import { REFINE_SCHEMA, RequirementRefiner } from './core/refine.ts';
 import type { StructuredMode } from './agent/driver.ts';
+import type { Usage } from './core/usage.ts';
 import type { VisionPort } from './tui/app.tsx';
 
-export type WarmTarget = 'foundation' | 'vision' | 'naming';
+export type WarmTarget = 'foundation' | 'vision' | 'naming' | 'review';
 
 export interface Assistants {
   advisor: FoundationAdvisor | null;
@@ -25,11 +27,18 @@ export interface Assistants {
   nameChange?: (description: string, taken: string[]) => Promise<string[]>;
   vision: VisionPort;
   /**
+   * Revises one requirement in conversation (review screen, `e`). Null
+   * without a model; `advisorNote` says why.
+   */
+  refiner: RequirementRefiner | null;
+  /**
    * Starts — and primes — the sessions a screen is about to need, while the
    * developer reads it. Never waits, never shows, and does nothing at all
    * with SPECTACULAR_NO_ADVISOR or without a model.
    */
   warm: (target: WarmTarget) => void;
+  /** Subscribes to what the sessions cost, as each turn reports it. */
+  onUsage: (listener: (usage: Usage) => void) => () => void;
   /** Ends every session, and whatever server they shared. */
   close: () => Promise<void>;
 }
@@ -54,7 +63,11 @@ export function createAssistants(options: {
 
   // Opened on first use: a run that never needs the AI starts nothing.
   let pool: StructuredPool | null = null;
-  const sessions = () => (pool ??= new StructuredPool(driver!, cwd));
+  const usageListeners = new Set<(usage: Usage) => void>();
+  const reportUsage = (usage: Usage) => {
+    for (const listener of usageListeners) listener(usage);
+  };
+  const sessions = () => (pool ??= new StructuredPool(driver!, cwd, { onUsage: reportUsage }));
 
   /** An `Ask` on the pool; a prime goes to its session, or nowhere. */
   const askIn = (fallback: StructuredMode): Ask => (prompt, schema, o) => {
@@ -101,11 +114,22 @@ export function createAssistants(options: {
             taken,
           ),
     vision,
+    // One conversation for every requirement revised in a run: each request
+    // carries its own requirement and history, so a session that revised
+    // the last one is only sent what differs.
+    refiner: unavailable ? null : new RequirementRefiner(askIn('think')),
     warm: (target) => {
       if (unavailable) return;
       if (target === 'foundation') advisor?.prime();
       else if (target === 'vision') interviewer.prime();
+      else if (target === 'review') sessions().warm(REFINE_SCHEMA, 'think');
       else sessions().warm(NAME_SCHEMA, 'quick');
+    },
+    onUsage: (listener) => {
+      usageListeners.add(listener);
+      return () => {
+        usageListeners.delete(listener);
+      };
     },
     close: async () => {
       await pool?.close().catch(() => {});

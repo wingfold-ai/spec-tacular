@@ -45,6 +45,37 @@ describe('claude driver', () => {
     ).toBe('failed: boom');
   });
 
+  test('reports what a result cost, and which model ran it', () => {
+    const line = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.0174849,
+      duration_ms: 1444,
+      num_turns: 1,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 42,
+        cache_read_input_tokens: 13689,
+        cache_creation_input_tokens: 7948,
+      },
+      modelUsage: { 'claude-haiku-4-5-20251001': { costUSD: 0.0174849 } },
+    });
+    expect(claudeDriver.parseUsage!(line)).toEqual({
+      driver: 'claude',
+      model: 'claude-haiku-4-5-20251001',
+      inputTokens: 10,
+      outputTokens: 42,
+      cacheReadTokens: 13689,
+      cacheWriteTokens: 7948,
+      costUsd: 0.0174849,
+      durationMs: 1444,
+      turns: 1,
+    });
+    expect(claudeDriver.formatLine(line)).toBe('done · $0.0175');
+    expect(claudeDriver.parseUsage!('not json')).toBeNull();
+  });
+
   test('drops protocol noise', () => {
     expect(claudeDriver.formatLine(JSON.stringify({ type: 'system', subtype: 'init' }))).toBeNull();
     expect(claudeDriver.formatLine('')).toBeNull();
@@ -63,14 +94,46 @@ describe('claude driver', () => {
 });
 
 describe('opencode driver', () => {
-  test('uses its non-interactive run subcommand', () => {
+  test('uses its non-interactive run subcommand, in JSON so cost can be read', () => {
     const built = opencodeDriver.build({ prompt: 'go', cwd: '/p' });
-    expect(built).toEqual({ command: 'opencode', args: ['run', 'go'] });
+    expect(built).toEqual({ command: 'opencode', args: ['run', '--format', 'json', 'go'] });
   });
 
-  test('passes output through unchanged', () => {
+  test('renders JSON events, and passes anything else through unchanged', () => {
     expect(opencodeDriver.formatLine('hello')).toBe('hello');
     expect(opencodeDriver.formatLine('  ')).toBeNull();
+    expect(
+      opencodeDriver.formatLine(
+        JSON.stringify({ type: 'text', part: { type: 'text', text: 'Writing design.md' } }),
+      ),
+    ).toBe('Writing design.md');
+    expect(
+      opencodeDriver.formatLine(JSON.stringify({ type: 'tool', part: { tool: 'write' } })),
+    ).toBe('· write');
+    expect(
+      opencodeDriver.formatLine(
+        JSON.stringify({ type: 'step_finish', part: { cost: 0.0028, tokens: { input: 10 } } }),
+      ),
+    ).toBe('done · $0.0028');
+    expect(opencodeDriver.formatLine(JSON.stringify({ type: 'step_start', part: {} }))).toBeNull();
+  });
+
+  test('reads what a step cost', () => {
+    const usage = opencodeDriver.parseUsage!(
+      JSON.stringify({
+        type: 'step_finish',
+        part: { cost: 0.0028, tokens: { input: 9359, output: 3, cache: { read: 1792, write: 0 } } },
+      }),
+    );
+    expect(usage).toEqual({
+      driver: 'opencode',
+      costUsd: 0.0028,
+      inputTokens: 9359,
+      outputTokens: 3,
+      cacheReadTokens: 1792,
+      cacheWriteTokens: 0,
+    });
+    expect(opencodeDriver.parseUsage!('not json')).toBeNull();
   });
 });
 

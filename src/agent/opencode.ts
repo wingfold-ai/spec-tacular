@@ -18,8 +18,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { adopt } from './children.ts';
+import type { Usage } from '../core/usage.ts';
 import {
-  passthrough,
   SessionError,
   SessionTimeoutError,
   type AgentCommand,
@@ -55,12 +55,51 @@ interface Part {
   text?: string;
 }
 
+interface Tokens {
+  input?: number;
+  output?: number;
+  reasoning?: number;
+  cache?: { read?: number; write?: number };
+}
+
 interface Reply {
   info?: {
     structured?: unknown;
     error?: { name?: string; data?: { message?: string } };
+    cost?: number;
+    tokens?: Tokens;
+    modelID?: string;
+    providerID?: string;
   };
   parts?: Part[];
+}
+
+/** What one opencode message cost, from its reply info, or null if it says nothing. */
+export function usageFromReply(info: Reply['info']): Usage | null {
+  if (!info) return null;
+  const tokens = info.tokens;
+  const model = info.modelID
+    ? info.providerID
+      ? `${info.providerID}/${info.modelID}`
+      : info.modelID
+    : undefined;
+  if (info.cost === undefined && !tokens && !model) return null;
+  return {
+    driver: 'opencode',
+    ...(model ? { model } : {}),
+    ...(tokens?.input !== undefined ? { inputTokens: tokens.input } : {}),
+    ...(tokens?.output !== undefined ? { outputTokens: tokens.output } : {}),
+    ...(tokens?.cache?.read !== undefined ? { cacheReadTokens: tokens.cache.read } : {}),
+    ...(tokens?.cache?.write !== undefined ? { cacheWriteTokens: tokens.cache.write } : {}),
+    ...(info.cost !== undefined ? { costUsd: info.cost } : {}),
+  };
+}
+
+/** One event from `opencode run --format json`. */
+interface RunEvent {
+  type?: string;
+  part?: { type?: string; text?: string; tool?: string; name?: string; cost?: number; tokens?: Tokens };
+  error?: { name?: string; data?: { message?: string }; message?: string };
 }
 
 /** An agent's error, or the JSON it answered — validated against `schema`. */
@@ -209,6 +248,7 @@ export class OpencodeSession implements StructuredSession {
   private id: Promise<string> | null = null;
   private dead = false;
   private inFlight: AbortController | null = null;
+  private usage: Usage | null = null;
 
   constructor(
     private readonly server: OpencodeServer,
@@ -218,6 +258,10 @@ export class OpencodeSession implements StructuredSession {
 
   get alive(): boolean {
     return !this.dead;
+  }
+
+  lastUsage(): Usage | null {
+    return this.usage;
   }
 
   private session(): Promise<string> {
@@ -250,12 +294,12 @@ export class OpencodeSession implements StructuredSession {
     try {
       id = await this.session();
       try {
-        return readReply(await this.post(id, text, abort.signal), this.schema);
+        return this.answer(await this.post(id, text, abort.signal));
       } catch (err) {
         if (!(err instanceof MalformedOutputError)) throw err;
         // Once, with what was wrong and the shape spelled out in words.
         const retry = `${retryInstruction(err.message)}\n\n${jsonInstruction(this.schema)}`;
-        return readReply(await this.post(id, retry, abort.signal), this.schema);
+        return this.answer(await this.post(id, retry, abort.signal));
       }
     } catch (err) {
       if (abort.signal.aborted) {
@@ -269,6 +313,13 @@ export class OpencodeSession implements StructuredSession {
       clearTimeout(timer);
       this.inFlight = null;
     }
+  }
+
+  /** The value in a reply, with its usage remembered for the sidebar. */
+  private answer(reply: Reply): unknown {
+    const usage = usageFromReply(reply.info);
+    if (usage) this.usage = usage;
+    return readReply(reply, this.schema);
   }
 
   close(): void {
@@ -286,9 +337,66 @@ export const opencodeDriver: AgentDriver = {
   id: 'opencode',
   label: 'opencode',
   build(request: AgentRequest): AgentCommand {
-    return { command: 'opencode', args: ['run', request.prompt] };
+    // JSON events rather than prose: they carry what each step cost, and can
+    // be rendered back into readable lines by `formatLine`.
+    return { command: 'opencode', args: ['run', '--format', 'json', request.prompt] };
   },
-  formatLine: passthrough,
+
+  /**
+   * `opencode run --format json` emits one event per line; a line that is not
+   * an event is the CLI's own diagnostics, worth showing verbatim.
+   */
+  formatLine(line: string): string | null {
+    const trimmed = line.trim();
+    if (trimmed === '') return null;
+    let event: RunEvent;
+    try {
+      event = JSON.parse(trimmed) as RunEvent;
+    } catch {
+      return trimmed;
+    }
+    switch (event.type) {
+      case 'text': {
+        const text = event.part?.text?.trim();
+        return text ? text : null;
+      }
+      case 'tool':
+      case 'tool_use':
+      case 'tool_call': {
+        const name = event.part?.tool ?? event.part?.name;
+        return name ? `· ${name}` : null;
+      }
+      case 'step_finish': {
+        const cost = event.part?.cost;
+        return cost !== undefined ? `done · $${cost.toFixed(4)}` : null;
+      }
+      case 'error':
+        return `failed: ${event.error?.data?.message ?? event.error?.message ?? event.error?.name ?? 'unknown error'}`;
+      default:
+        return null;
+    }
+  },
+
+  parseUsage(line: string): Usage | null {
+    let event: RunEvent;
+    try {
+      event = JSON.parse(line.trim()) as RunEvent;
+    } catch {
+      return null;
+    }
+    if (event.type !== 'step_finish') return null;
+    const tokens = event.part?.tokens;
+    return {
+      driver: 'opencode',
+      ...(event.part?.cost !== undefined ? { costUsd: event.part.cost } : {}),
+      ...(tokens?.input !== undefined ? { inputTokens: tokens.input } : {}),
+      ...(tokens?.output !== undefined ? { outputTokens: tokens.output } : {}),
+      ...(tokens?.cache?.read !== undefined ? { cacheReadTokens: tokens.cache.read } : {}),
+      ...(tokens?.cache?.write !== undefined ? { cacheWriteTokens: tokens.cache.write } : {}),
+    };
+  },
+
+  model: opencodeModel,
 
   structured: {
     build(request): AgentCommand {
