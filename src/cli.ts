@@ -35,9 +35,9 @@ import {
   tailJob,
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER, type AgentDriver } from './agent/index.ts';
-import { advisorUnavailable, runStructured } from './agent/structured.ts';
-import { FoundationAdvisor } from './core/advisor.ts';
-import { finalizeVision, isGreenfield, VisionInterviewer } from './core/vision.ts';
+import { advisorUnavailable, StructuredPool } from './agent/structured.ts';
+import { ADVICE_SCHEMA, FoundationAdvisor } from './core/advisor.ts';
+import { finalizeVision, INTERVIEW_SCHEMA, isGreenfield, VisionInterviewer } from './core/vision.ts';
 import type { VisionPort } from './tui/app.tsx';
 import { buildNamePrompt, NAME_SCHEMA, parseNames } from './core/naming.ts';
 import { loadLintConfig } from './core/concreteness.ts';
@@ -782,11 +782,11 @@ function visionFor(args: Args): VisionPort {
   } catch (err) {
     unavailable = (err as Error).message;
   }
-  const interviewer = new VisionInterviewer(args.cwd, (prompt, schema) =>
+  const interviewer = new VisionInterviewer(args.cwd, (prompt, schema, options) =>
     unavailable || !driver
       ? Promise.reject(new Error(unavailable ?? 'no agent'))
       // The interview reasons about the vision; it has nothing to look up.
-      : runStructured(driver, args.cwd, prompt, schema, { mode: 'think' }),
+      : poolFor(driver, args.cwd).ask(prompt, schema, { mode: options?.mode ?? 'think', parts: options?.parts }),
   );
   return {
     unavailable,
@@ -828,19 +828,57 @@ function advisorFor(args: Args): {
   }
   const missing = advisorUnavailable(driver);
   if (missing) return { advisor: null, advisorNote: missing };
+  const sessions = poolFor(driver, args.cwd);
   return {
-    advisor: new FoundationAdvisor(args.cwd, (prompt, schema) =>
-      runStructured(driver, args.cwd, prompt, schema),
+    advisor: new FoundationAdvisor(args.cwd, (prompt, schema, options) =>
+      sessions.ask(prompt, schema, { mode: options?.mode ?? 'research', parts: options?.parts }),
     ),
     advisorNote: null,
     nameChange: async (description, taken) =>
       parseNames(
-        await runStructured(driver, args.cwd, buildNamePrompt(description, taken), NAME_SCHEMA, {
+        await sessions.ask(buildNamePrompt(description, taken), NAME_SCHEMA, {
           mode: 'quick',
           timeoutMs: 60_000,
         }),
         taken,
       ),
+  };
+}
+
+/**
+ * The agent sessions structured requests share: one pool per run, so the
+ * setup, the interview and naming never start the same agent twice.
+ */
+let pool: StructuredPool | null = null;
+function poolFor(driver: AgentDriver, cwd: string): StructuredPool {
+  pool ??= new StructuredPool(driver, cwd);
+  return pool;
+}
+
+/**
+ * Starts the sessions a screen is about to need, while the developer reads
+ * it: a first question then costs one model turn, not an agent starting up.
+ */
+function warmFor(args: Args): (screen: 'foundation' | 'vision' | 'naming') => void {
+  return (screen) => {
+    if (process.env['SPECTACULAR_NO_ADVISOR']) return;
+    let driver: AgentDriver;
+    try {
+      driver = defaultRegistry().get(args.driver);
+    } catch {
+      return;
+    }
+    if (advisorUnavailable(driver)) return;
+    const sessions = poolFor(driver, args.cwd);
+    if (screen === 'foundation') {
+      // Ground rules start with the stack, which is looked up; the rest is not.
+      sessions.warm(ADVICE_SCHEMA, 'research');
+      sessions.warm(ADVICE_SCHEMA, 'think');
+    } else if (screen === 'vision') {
+      sessions.warm(INTERVIEW_SCHEMA, 'think');
+    } else {
+      sessions.warm(NAME_SCHEMA, 'quick');
+    }
   };
 }
 
@@ -989,6 +1027,7 @@ async function main(): Promise<number> {
       roadmap: () => loadRoadmap(args.cwd),
       vision: visionFor(args),
       ...advisorFor(args),
+      warm: warmFor(args),
       artifactFile: (change, artifact) => artifactFile(adapter, statuses, change, artifact),
     });
     return 0;
@@ -1002,10 +1041,19 @@ async function main(): Promise<number> {
   }
 }
 
+/** Ends the agent sessions — and whatever server they shared — before exiting. */
+async function shutdown(): Promise<void> {
+  await pool?.close().catch(() => {});
+}
+
 main().then(
-  (code) => process.exit(code),
-  (err) => {
+  async (code) => {
+    await shutdown();
+    process.exit(code);
+  },
+  async (err) => {
     process.stderr.write(`${err instanceof Error ? err.stack : String(err)}\n`);
+    await shutdown();
     process.exit(1);
   },
 );
