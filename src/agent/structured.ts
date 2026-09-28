@@ -127,6 +127,8 @@ interface Entry {
   turns: number;
   /** The tail of the queue: requests to one session go one at a time. */
   queue: Promise<unknown>;
+  /** A priming turn was queued; one is enough for as long as the pool lives. */
+  primed: boolean;
 }
 
 /** A one-shot request, for when there is no session to be had. */
@@ -166,7 +168,7 @@ export class StructuredPool {
     const key = this.key(mode, schema);
     let entry = this.entries.get(key);
     if (!entry) {
-      entry = { session: null, seen: null, turns: 0, queue: Promise.resolve() };
+      entry = { session: null, seen: null, turns: 0, queue: Promise.resolve(), primed: false };
       this.entries.set(key, entry);
     }
     return entry;
@@ -189,6 +191,46 @@ export class StructuredPool {
       this.open(entry, mode, schema).warm();
     } catch {
       // Warming is an optimisation; the request will find out for real.
+    }
+  }
+
+  /**
+   * Starts the session and sends it `parts` — instructions and context, with
+   * a task that asks for nothing — before any request, so the first real one
+   * is sent as a delta and costs a single short turn. Never falls back to a
+   * one-shot request: a prime nobody waits for is not worth a process of its
+   * own. Requests queue behind it; resolves once it is done or has failed.
+   */
+  prime(schema: object, mode: StructuredMode, parts: PromptParts, timeoutMs = 60_000): Promise<void> {
+    if (this.closed || !this.driver.structured?.session) return Promise.resolve();
+    const entry = this.entry(mode, schema);
+    if (entry.primed) return Promise.resolve();
+    entry.primed = true;
+    const run = entry.queue.then(() => this.primeTurn(entry, schema, mode, parts, timeoutMs));
+    entry.queue = run;
+    return run;
+  }
+
+  private async primeTurn(
+    entry: Entry,
+    schema: object,
+    mode: StructuredMode,
+    parts: PromptParts,
+    timeoutMs: number,
+  ): Promise<void> {
+    // Already in a conversation: a request got there first.
+    if (this.closed || entry.seen !== null) return;
+    const tag = `${mode}/${(schema as { required?: string[] }).required?.join(',') ?? 'schema'}`;
+    const text = renderPrompt(parts);
+    const started = Date.now();
+    try {
+      await this.open(entry, mode, schema).send(text, { timeoutMs });
+      entry.seen = parts.context;
+      entry.turns++;
+      debugLog(`advisor ${tag} primed, ${text.length} chars: ${Date.now() - started}ms`);
+    } catch (err) {
+      entry.seen = null;
+      debugLog(`advisor ${tag} priming failed after ${Date.now() - started}ms: ${(err as Error).message}`);
     }
   }
 

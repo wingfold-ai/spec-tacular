@@ -12,7 +12,7 @@
  * acceptance condition, which a schema cannot express.
  */
 
-import { foundationExists, isUnanswered, loadFoundation } from './foundation.ts';
+import { foundationExists, isDeferred, isUnanswered, loadFoundation } from './foundation.ts';
 import type { ChangePipeline, Stage } from './pipeline.ts';
 
 export type GateDecision =
@@ -132,7 +132,9 @@ export function staleArtifacts(pipeline: ChangePipeline): StaleArtifact[] {
  * A project with no Foundation at all is not blocked: spec-tacular has to stay
  * usable on a repository that adopted OpenSpec before it existed. Only a
  * scaffolded-but-unanswered Foundation blocks, because there the questions
- * have been asked and left hanging.
+ * have been asked and left hanging. A question left for later on purpose
+ * does not block either — deciding it is not needed yet is a decision — but
+ * it is named in the warnings, so nobody forgets it is open.
  */
 export function foundationGate(projectRoot: string): GateDecision {
   if (!foundationExists(projectRoot)) {
@@ -142,13 +144,17 @@ export function foundationGate(projectRoot: string): GateDecision {
     };
   }
 
-  const unanswered = loadFoundation(projectRoot).filter(isUnanswered);
-  if (unanswered.length === 0) return { allowed: true, warnings: [] };
+  const items = loadFoundation(projectRoot);
+  const unanswered = items.filter(isUnanswered);
+  const warnings = items
+    .filter(isDeferred)
+    .map((item) => `left for later: ${item.capability}: ${item.name}`);
+  if (unanswered.length === 0) return { allowed: true, warnings };
 
   return {
     allowed: false,
     reason: 'the project\'s ground rules are not settled yet',
     blockers: unanswered.map((item) => `${item.capability}: ${item.name}`),
-    warnings: [],
+    warnings,
   };
 }

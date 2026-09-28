@@ -212,6 +212,20 @@ describe('the Foundation gate', () => {
     expect(gate.blockers[0]).toContain('foundation/');
   });
 
+  test('questions left for later do not block the first change, but are named', () => {
+    const { answerFoundation, guidedQuestions } = require('../src/core/foundation.ts');
+    const r = root();
+    // A new project: what nobody can answer on day one is left for later.
+    scaffoldFoundation(r, { defer: true });
+    expect(foundationGate(r).allowed).toBe(false);
+
+    for (const q of guidedQuestions(r)) answerFoundation(q.item, 'Decided.');
+    const gate = foundationGate(r);
+    expect(gate.allowed).toBe(true);
+    expect(gate.warnings).toContain('left for later: foundation/domain: Rules about the domain that must always hold.');
+    expect(gate.warnings).toHaveLength(8);
+  });
+
   test('an answered Foundation allows', () => {
     const r = root();
     mkdirSync(foundationDir(r), { recursive: true });

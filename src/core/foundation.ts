@@ -29,6 +29,14 @@ export interface FoundationQuestion {
    * *kinds* of answer so that nobody mistakes one for a recommended default.
    */
   hint: string;
+  /**
+   * How a new project settles it. Unset: asked outright. `derive`: asked, but
+   * proposed from what is decided before it — the domain above all — so the
+   * developer mostly confirms (core/advisor.ts, core/derivations.ts).
+   * `later`: nobody can answer it before code exists, so a new project's
+   * scaffold leaves it for later instead of asking (see `DEFERRED`).
+   */
+  when?: 'derive' | 'later';
 }
 
 export interface FoundationDoc {
@@ -42,37 +50,12 @@ export interface FoundationDoc {
 /**
  * The documents `spectacular init` scaffolds, and what each must answer.
  *
- * Ordered as the guided setup asks them: what it is built with, what it is
- * about, how it is shaped, and how the team works on it.
+ * Ordered as the guided setup asks them: what it is about first — the one
+ * thing only the developer knows — then what it is built with, how it is
+ * shaped and how the team works on it, which mostly follow from the domain
+ * and are proposed from it rather than asked cold.
  */
 export const FOUNDATION_DOCS: FoundationDoc[] = [
-  {
-    name: 'stack.md',
-    title: 'Stack',
-    purpose: 'What the project is built with.',
-    questions: [
-      {
-        ask: 'Language and runtime, with versions.',
-        hint: 'e.g. "TypeScript 5.6 on Bun 1.4" or "Python 3.12, CPython"',
-      },
-      {
-        ask: 'Framework, if any, and why it over the alternatives.',
-        hint: 'e.g. "Hono — small, runs on Bun; Express ruled out for its middleware model", or "none"',
-      },
-      {
-        ask: 'Datastore and how schema changes are managed.',
-        hint: 'e.g. "Postgres 16, migrations via drizzle-kit, never edited by hand", or "no persistence"',
-      },
-      {
-        ask: 'Package manager, test runner, linter, formatter.',
-        hint: 'e.g. "bun, bun test, eslint, prettier"',
-      },
-      {
-        ask: 'Anything explicitly ruled out, and why.',
-        hint: 'e.g. "no ORM — queries stay visible", "no client-side state library"',
-      },
-    ],
-  },
   {
     name: 'domain.md',
     title: 'Domain',
@@ -85,14 +68,49 @@ export const FOUNDATION_DOCS: FoundationDoc[] = [
       {
         ask: 'The core terms, each with a one-line meaning.',
         hint: 'The shared vocabulary. e.g. "Booking: a room held for a time slot. Slot: 15 minutes, never split."',
+        when: 'derive',
       },
       {
         ask: 'Rules about the domain that must always hold.',
         hint: 'Invariants. e.g. "A room is never double-booked. A cancelled booking is kept, not deleted."',
+        when: 'later',
       },
       {
         ask: 'What is explicitly out of scope.',
         hint: 'e.g. "Billing. Patient records. Anything a patient does themselves."',
+        when: 'later',
+      },
+    ],
+  },
+  {
+    name: 'stack.md',
+    title: 'Stack',
+    purpose: 'What the project is built with.',
+    questions: [
+      {
+        ask: 'Language and runtime, with versions.',
+        hint: 'e.g. "TypeScript 5.6 on Bun 1.4" or "Python 3.12, CPython"',
+        when: 'derive',
+      },
+      {
+        ask: 'Framework, if any, and why it over the alternatives.',
+        hint: 'e.g. "Hono — small, runs on Bun; Express ruled out for its middleware model", or "none"',
+        when: 'derive',
+      },
+      {
+        ask: 'Datastore and how schema changes are managed.',
+        hint: 'e.g. "Postgres 16, migrations via drizzle-kit, never edited by hand", or "no persistence"',
+        when: 'derive',
+      },
+      {
+        ask: 'Package manager, test runner, linter, formatter.',
+        hint: 'e.g. "bun, bun test, eslint, prettier"',
+        when: 'derive',
+      },
+      {
+        ask: 'Anything explicitly ruled out, and why.',
+        hint: 'e.g. "no ORM — queries stay visible", "no client-side state library"',
+        when: 'later',
       },
     ],
   },
@@ -104,22 +122,27 @@ export const FOUNDATION_DOCS: FoundationDoc[] = [
       {
         ask: 'Architecture style (layered, hexagonal, vertical slice, ...) and why.',
         hint: 'e.g. "Clean architecture: domain in the centre, use cases around it, adapters at the edge"',
+        when: 'derive',
       },
       {
         ask: 'The layers or modules, and which may depend on which.',
         hint: 'e.g. "domain ← application ← adapters ← main. Inner layers never import outer ones."',
+        when: 'derive',
       },
       {
         ask: 'Where business rules live, and what must never leak into them.',
         hint: 'e.g. "In domain/. No HTTP, SQL, framework types or clocks — those are passed in."',
+        when: 'derive',
       },
       {
         ask: 'How errors are represented and propagated.',
         hint: 'e.g. "Result types in the domain; exceptions only for bugs; mapped to HTTP at the edge"',
+        when: 'later',
       },
       {
         ask: 'How the system is configured and how secrets are handled.',
         hint: 'e.g. "Env vars validated once at startup; secrets never logged or committed"',
+        when: 'later',
       },
     ],
   },
@@ -131,26 +154,42 @@ export const FOUNDATION_DOCS: FoundationDoc[] = [
       {
         ask: 'Naming: files, types, functions, tests.',
         hint: 'e.g. "kebab-case files, PascalCase types, verbs for functions, tests named after behaviour"',
+        when: 'derive',
       },
       {
         ask: 'What a test must cover before a change is considered done.',
         hint: 'e.g. "Every requirement\'s scenarios as tests; no mocks of our own code"',
+        when: 'derive',
       },
       {
         ask: 'How code is reviewed and what blocks a merge.',
         hint: 'e.g. "One approval; failing typecheck or tests block; style never blocks"',
+        when: 'later',
       },
       {
         ask: 'Comment style: what is worth writing down and what is noise.',
         hint: 'e.g. "Explain why, never what; link the requirement a non-obvious rule comes from"',
+        when: 'later',
       },
       {
         ask: 'Anything a new contributor reliably gets wrong.',
         hint: 'e.g. "Timezones: store UTC, convert only for display"',
+        when: 'later',
       },
     ],
   },
 ];
+
+/**
+ * What a question left for later holds instead of `TBD`.
+ *
+ * A decision, of a kind: that it is not needed yet. It does not block the
+ * first change (core/gate.ts) and the guided setup does not ask it, but it
+ * stays in the file — and so in every agent's context — saying plainly that
+ * nothing is settled, so no agent mistakes silence for permission to invent.
+ */
+export const DEFERRED =
+  'Decide later — not settled yet. A change that depends on it raises it as an open question instead of assuming an answer.';
 
 /**
  * Writes the Foundation scaffold.
@@ -158,8 +197,14 @@ export const FOUNDATION_DOCS: FoundationDoc[] = [
  * Every question is left visibly unanswered rather than pre-filled with a
  * plausible default. A default nobody chose is indistinguishable from a
  * decision, which is precisely the failure this phase exists to prevent.
+ *
+ * With `defer` — a new project, where there is no code to answer from — the
+ * questions marked `later` say so instead of `TBD`, and are not asked.
  */
-export function scaffoldFoundation(projectRoot: string): { created: string[]; skipped: string[] } {
+export function scaffoldFoundation(
+  projectRoot: string,
+  options: { defer?: boolean } = {},
+): { created: string[]; skipped: string[] } {
   const dir = foundationDir(projectRoot);
   mkdirSync(dir, { recursive: true });
 
@@ -175,7 +220,12 @@ export function scaffoldFoundation(projectRoot: string): { created: string[]; sk
     const body = [
       `# ${doc.title}`,
       '',
-      ...doc.questions.flatMap((q) => [`## ${q.ask}`, '', 'TBD', '']),
+      ...doc.questions.flatMap((q) => [
+        `## ${q.ask}`,
+        '',
+        options.defer && q.when === 'later' ? DEFERRED : 'TBD',
+        '',
+      ]),
     ];
     writeFileSync(file, body.join('\n'), 'utf8');
     created.push(doc.name);
@@ -249,6 +299,11 @@ export function isUnanswered(item: ReviewItem): boolean {
   return item.text.trim() === '' || item.text.trim().toUpperCase() === 'TBD';
 }
 
+/** A section left for later on purpose: not open, not answered either. */
+export function isDeferred(item: ReviewItem): boolean {
+  return /^decide later\b/i.test(item.text.trim());
+}
+
 export function foundationExists(projectRoot: string): boolean {
   return existsSync(foundationDir(projectRoot));
 }
@@ -262,6 +317,8 @@ export interface GuidedQuestion {
   /** Empty for a section a human added that the scaffold never asked. */
   hint: string;
   answered: boolean;
+  /** Meant to be proposed from earlier answers, not asked cold. */
+  derive: boolean;
 }
 
 /**
@@ -269,7 +326,8 @@ export interface GuidedQuestion {
  *
  * The files are the source of truth, not `FOUNDATION_DOCS`: a question a human
  * deleted is not asked again, and one they added is asked too — after the
- * scaffold's own, since nothing says where it belongs.
+ * scaffold's own, since nothing says where it belongs. A question left for
+ * later is not asked; it is in the file for whoever is ready to answer it.
  */
 export function guidedQuestions(projectRoot: string): GuidedQuestion[] {
   const items = loadFoundation(projectRoot);
@@ -292,13 +350,17 @@ export function guidedQuestions(projectRoot: string): GuidedQuestion[] {
   ];
 
   return docs.flatMap((doc) =>
-    byDoc(doc.name).map((item) => ({
-      item,
-      title: doc.title,
-      purpose: doc.purpose,
-      hint: doc.questions.find((q) => q.ask === item.name)?.hint ?? '',
-      answered: !isUnanswered(item),
-    })),
+    byDoc(doc.name).filter((item) => !isDeferred(item)).map((item) => {
+      const scaffolded = doc.questions.find((q) => q.ask === item.name);
+      return {
+        item,
+        title: doc.title,
+        purpose: doc.purpose,
+        hint: scaffolded?.hint ?? '',
+        answered: !isUnanswered(item),
+        derive: scaffolded?.when === 'derive',
+      };
+    }),
   );
 }
 
