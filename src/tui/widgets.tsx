@@ -5,7 +5,8 @@
  */
 
 import { homedir } from 'node:os';
-import { createSignal, For, onCleanup, Show, type JSX } from 'solid-js';
+import { createEffect, createSignal, For, onCleanup, Show, type JSX } from 'solid-js';
+import type { ScrollBoxRenderable } from '@opentui/core';
 import { THEME } from './theme.ts';
 
 /** A bordered panel with its title set into the top edge. */
@@ -13,6 +14,8 @@ export function Panel(props: {
   title?: string;
   children: JSX.Element;
   grow?: boolean;
+  /** Keeps its content's height, but gives way when the screen runs out of room. */
+  shrink?: boolean;
   width?: number | `${number}%`;
   focused?: boolean;
 }) {
@@ -27,12 +30,55 @@ export function Panel(props: {
         flexDirection: 'column',
         paddingLeft: 1,
         paddingRight: 1,
+        // A panel that does not grow keeps its height when the screen runs out
+        // of room; the one that grows gives way (and scrolls, with a ScrollArea).
+        // Never cut below its content either way: it is clipped, not overlapped.
+        overflow: 'hidden',
+        flexShrink: props.grow || props.shrink ? 1 : 0,
         ...(props.grow ? { flexGrow: 1 } : {}),
         ...(props.width !== undefined ? { width: props.width } : {}),
       }}
     >
       {props.children}
     </box>
+  );
+}
+
+/**
+ * Content that may be taller than the space it gets: it scrolls instead.
+ *
+ * Without it the layout squeezes rows below their height when a view runs out
+ * of room, and squeezed rows are drawn over each other — characters of two
+ * lines jumbled into one. Inside, rows keep their natural height; `follow`
+ * (the `id` of a row) keeps that row in view as it changes, for a selection.
+ */
+export function ScrollArea(props: {
+  children: JSX.Element;
+  follow?: string;
+  /**
+   * true (default): fills the room left over. false: as tall as its content,
+   * and the first thing to give way when there is not room for it all.
+   */
+  grow?: boolean;
+}) {
+  let ref: ScrollBoxRenderable | undefined;
+  createEffect(() => {
+    const id = props.follow;
+    if (id && ref) ref.scrollChildIntoView(id);
+  });
+  return (
+    <scrollbox
+      ref={(r: ScrollBoxRenderable) => (ref = r)}
+      // Rows around it keep their height: it takes only the room left over,
+      // or, sized to its content, gives up room before anything else does.
+      style={
+        props.grow === false
+          ? { flexGrow: 0, flexShrink: 1000, minHeight: 3, rootOptions: { backgroundColor: THEME.panel } }
+          : { flexGrow: 1, flexBasis: 0, flexShrink: 1, minHeight: 3, rootOptions: { backgroundColor: THEME.panel } }
+      }
+    >
+      {props.children}
+    </scrollbox>
   );
 }
 
@@ -90,7 +136,7 @@ export function Spinner(props: { label: string; color?: string }) {
  */
 export function KeyBar(props: { keys: [key: string, action: string][]; right?: string }) {
   return (
-    <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 }}>
+    <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1, flexShrink: 0 }}>
       <Show when={props.right}>
         <text style={{ fg: THEME.warn }}>{props.right}</text>
       </Show>

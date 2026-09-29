@@ -44,13 +44,13 @@ import type { FollowUp, QuestionMeta } from '../core/advisor.ts';
 import { FoundationScreen, type AnswerResult } from './foundation.tsx';
 import { nameFromDescription } from '../core/naming.ts';
 import type { Roadmap, Slice } from '../core/roadmap.ts';
-import { sliceDescription, type ProposedSlice, type VisionSession } from '../core/vision.ts';
+import { renderVision, sliceDescription, type ProposedSlice, type VisionSession } from '../core/vision.ts';
 import { DocumentView, type DocumentAction } from './document.tsx';
 import { VisionScreen } from './vision.tsx';
 import { FirstChangeGuide, HelpOverlay, Stepper } from './guide.tsx';
 import { HomeScreen, type HomeAction } from './home.tsx';
 import { editLine, isCancel, isEnter } from './input.ts';
-import { Button, clip, KeyBar, Panel, shortPath, Spinner } from './widgets.tsx';
+import { Button, clip, KeyBar, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
 import { wrap } from '../render/requirement.ts';
 import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn } from '../core/refine.ts';
 import type { Requirement } from '../core/requirements.ts';
@@ -113,6 +113,17 @@ export interface TuiInput {
    */
   warm?: (screen: 'foundation' | 'vision' | 'naming' | 'review') => void;
   /** Revising one requirement with the agent, from the review screen. */
+  /** Revising an answer to the vision interview's current question with the agent. */
+  reviseVisionAnswer?: {
+    unavailable: string | null;
+    propose: (session: VisionSession, current: string, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  };
+  /** Revising a ground-rule answer with the agent, from the ground-rules screen. */
+  reviseAnswer?: {
+    /** Why there is no agent to revise with, or null when there is one. */
+    unavailable: string | null;
+    propose: (question: GuidedQuestion, current: string, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  };
   refine?: {
     /** Why there is no agent to revise with, or null when there is one. */
     unavailable: string | null;
@@ -148,11 +159,13 @@ export interface VisionPort {
 /** What the TUI needs from core/advisor.ts's FoundationAdvisor. */
 export interface Advisor {
   meta: () => Record<string, QuestionMeta>;
-  afterAnswer: (question: GuidedQuestion, answer: string) => Promise<{ added: FollowUp[]; derived: string[] }>;
+  afterAnswer: (question: GuidedQuestion, answer: string) => Promise<{ added: FollowUp[]; recorded?: FollowUp[]; derived: string[] }>;
   suggest: (question: GuidedQuestion) => Promise<void>;
   /** Instant follow-ups from the preset table, by name; no model involved. */
   presets?: (question: GuidedQuestion, answer: string) => string[];
   coach: (question: GuidedQuestion) => Promise<{ explain: string; probes: FollowUp[] }>;
+  /** On a new project: every open ground rule proposed from its vision, by name. */
+  proposeFromVision?: (vision?: string) => Promise<string[]>;
   dismiss: (question: GuidedQuestion) => boolean;
 }
 
@@ -209,28 +222,33 @@ function PipelineBar(props: { pipeline: ChangePipeline | undefined }) {
   );
 }
 
-function ChangeRow(props: { pipeline: ChangePipeline; selected: boolean; onPick: () => void }) {
+function ChangeRow(props: { id?: string; pipeline: ChangePipeline; selected: boolean; onPick: () => void }) {
   const specs = () => props.pipeline.stages.find((s) => s.review)?.review;
   const warn = () =>
     (specs()?.drifted ?? 0) > 0 ||
     staleArtifacts(props.pipeline).length > 0 ||
     props.pipeline.gaps.length > 0;
+  const counter = () =>
+    specs() ? `${specs()!.accepted}/${specs()!.total}` : `${props.pipeline.written}/${props.pipeline.total}`;
   return (
     <box
+      id={props.id}
       onMouseDown={props.onPick}
       style={{
         flexDirection: 'row',
+        flexShrink: 0,
         backgroundColor: props.selected ? THEME.highlight : THEME.panel,
       }}
     >
+      {/* One line: a long name is clipped before the counter, never wrapped under it */}
       <text style={{ fg: props.selected ? THEME.accent : THEME.text, flexGrow: 1 }}>
-        {`${props.selected ? '▸' : ' '} ${props.pipeline.name}`}
+        {clip(`${props.selected ? '▸' : ' '} ${props.pipeline.name}`, 30 - counter().length - (warn() ? 2 : 0) - 1)}
       </text>
       <Show when={warn()}>
         <text style={{ fg: THEME.warn }}>{'! '}</text>
       </Show>
       <text style={{ fg: specs()?.complete ? THEME.ok : THEME.dim }}>
-        {specs() ? `${specs()!.accepted}/${specs()!.total}` : `${props.pipeline.written}/${props.pipeline.total}`}
+        {counter()}
       </text>
     </box>
   );
@@ -330,7 +348,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     return props.input.greenfield?.() ?? false;
   });
   const step = createMemo(() => setupStep(stage(), greenfield()));
-  const foundationSettled = createMemo(() => stage().kind !== 'foundation');
+  // Not the stage alone: a new project's vision comes before its ground
+  // rules, so on the vision they are still open.
+  const foundationSettled = createMemo(() => stage().kind !== 'foundation' && questions().every((q) => q.answered));
   const next = createMemo<NextStep | null>(() => {
     const p = selected();
     return p ? nextStep(p, foundationSettled()) : null;
@@ -364,15 +384,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     jobUsage().reduce((totals, entry) => entry.usages.reduce(addUsage, totals), usageTotals()),
   );
 
-  // The sidebar only appears where it has room to spare: on the review and
-  // reading surfaces, and never so narrow that it wraps the buttons or key
-  // hints underneath it. On a setup flow it would only fight the questions.
-  const sidebarVisible = createMemo(
-    () =>
-      !usageOpen() &&
-      dims().width >= 130 &&
-      (screen() === 'overview' || screen() === 'document'),
-  );
+  // The sidebar shows on every screen — the setup's questions are where the
+  // advisor answers most — but only where it has room to spare, never so
+  // narrow that it wraps the buttons or key hints underneath it.
+  const sidebarVisible = createMemo(() => !usageOpen() && dims().width >= 130);
   const contentWidth = createMemo(() =>
     Math.max(dims().width - (sidebarVisible() ? USAGE_WIDTH : 0), 40),
   );
@@ -453,9 +468,11 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const presets = advisor.presets?.(q, text) ?? [];
     refreshFoundation();
     const advice = track(q.item.name, async () => {
-      const { added, derived } = await advisor.afterAnswer(q, text);
+      const { added, recorded = [], derived } = await advisor.afterAnswer(q, text);
       const parts: string[] = [];
-      if (added.length > 0) parts.push(`${added.length} follow-up${added.length === 1 ? '' : 's'} on “${q.item.name}”`);
+      if (added.length > 0) parts.push(`a follow-up on “${q.item.name}” that the first change needs`);
+      // Not asked: in the files as left for later, raised when a change needs them.
+      if (recorded.length > 0) parts.push(`${recorded.length} detail${recorded.length === 1 ? '' : 's'} recorded for later`);
       if (derived.length > 0) parts.push(`${derived.length} later answer${derived.length === 1 ? '' : 's'} derived — confirm when you get there`);
       if (parts.length > 0) setAdviceNotice(`✦ ${parts.join(' · ')}`);
       // Re-read before resolving: the screen moves to the new questions as
@@ -472,9 +489,12 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // and read its instructions, and that answer costs one short model turn.
   // Warming twice is free, so both the stage and the screen may ask.
   createEffect(on(stage, (s) => {
-    if (s.kind === 'no-openspec' || s.kind === 'no-foundation' || s.kind === 'foundation') {
-      props.input.warm?.('foundation');
-    } else if (s.kind === 'vision') props.input.warm?.('vision');
+    // A new project talks to the vision's AI first, so that is what the start
+    // screen warms; one with a baseline goes straight to its ground rules.
+    if (s.kind === 'no-openspec' || s.kind === 'no-foundation') {
+      props.input.warm?.(greenfield() ? 'vision' : 'foundation');
+    } else if (s.kind === 'foundation') props.input.warm?.('foundation');
+    else if (s.kind === 'vision') props.input.warm?.('vision');
   }));
   createEffect(on(screen, (s) => {
     if (s === 'foundation' || s === 'vision') props.input.warm?.(s);
@@ -674,6 +694,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setVisionBusy(null);
     const current = vision.session();
     setVisionSession(current);
+    // The vision is complete once the interview is: the ground rules are
+    // proposed from it now, alongside the slicing and while the roadmap is
+    // reviewed, so they are ready when the ground rules open.
+    if (current?.finished && !visionError()) startVisionProposal();
     if (current?.finished && current.slices.length === 0 && !visionError() && !vision.unavailable) {
       await runVision('Splitting your vision into slices — the first is the smallest thing a user can do end to end…', () => vision.extract(taken()));
     }
@@ -691,13 +715,64 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const result = await props.input.createChange(first.id, sliceDescription(proposed));
     if (!result.ok) return setVisionError(result.reason);
     await reload(first.id);
+    if (!foundationSettled()) {
+      toGroundRulesFromVision(`Roadmap saved: ${kept.length} slices, first up: ${proposed.title}. Now the ground rules`);
+      return;
+    }
     setScreen('overview');
     setNotice(`Roadmap saved: ${kept.length} slices. First up: ${proposed.title}.`);
+  };
+
+  /** The ground rules being proposed from the vision: started once, when the interview ends. */
+  let visionProposal: Promise<string[]> | null = null;
+
+  const startVisionProposal = (): Promise<string[]> | null => {
+    if (visionProposal || !advisor?.proposeFromVision || !vision) return visionProposal;
+    const current = vision.session();
+    if (!current?.finished) return null;
+    const text = renderVision(current.refined || current.understood || current.vision, current);
+    const running = track('your vision', async () => {
+      const derived = await advisor.proposeFromVision!(text);
+      refreshFoundation();
+      return derived;
+    });
+    visionProposal = running;
+    // A failure is shown where it happened; the next chance tries again.
+    running.catch(() => {
+      if (visionProposal === running) visionProposal = null;
+    });
+    return running;
+  };
+
+  /**
+   * The vision is written: on to the ground rules, with every one the vision
+   * settles or implies proposed from it (⇐) — usually already, since that
+   * started when the interview ended.
+   */
+  const toGroundRulesFromVision = (said: string) => {
+    refreshFoundation();
+    setScreen('foundation');
+    const proposal = startVisionProposal();
+    if (!proposal) return setAdviceNotice(`${said}.`);
+    setAdviceNotice(`${said} — proposing them from your vision…`);
+    proposal.then(
+      (derived) => {
+        refreshFoundation();
+        setAdviceNotice(
+          derived.length > 0
+            ? `✦ ${derived.length} ground rule${derived.length === 1 ? '' : 's'} proposed from your vision — ⇐, enter confirms`
+            : `${said}.`,
+        );
+      },
+      () => setAdviceNotice(`${said}.`),
+    );
   };
 
   const notNewProject = () => {
     vision?.skip();
     refreshFoundation();
+    // No vision to propose from: the ground rules are asked, domain first.
+    if (!foundationSettled()) return setScreen('foundation');
     setScreen('overview');
     startNewChange();
   };
@@ -866,7 +941,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       case 'no-openspec': return 'This folder is not set up yet — Start sets it up here.';
       case 'no-foundation': return 'OpenSpec is here; spec-tacular is not set up yet.';
       case 'foundation': return `Ground rules: ${s.answered} of ${s.total} answered.`;
-      case 'vision': return 'Ground rules are set. Now: what are you building?';
+      case 'vision': return 'Set up. First: what are you building? The ground rules are proposed from it.';
       case 'no-changes': return 'Ground rules are set — time for your first change.';
       case 'working': {
         const n = pipelines().length;
@@ -895,7 +970,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
               return;
             }
             await reload();
-            setScreen('foundation');
+            // A new project describes its vision first; its ground rules are
+            // then proposed from it.
+            setScreen(stage().kind === 'vision' ? 'vision' : 'foundation');
           },
         }];
       case 'foundation':
@@ -1093,7 +1170,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     >
       {/* Header — not on home, which is its own header */}
       <Show when={screen() !== 'home'}>
-        <box style={{ flexDirection: 'row', paddingLeft: 1, paddingRight: 1 }}>
+        {/* Never squeezed: a screen that runs out of room scrolls its own body */}
+        <box style={{ flexDirection: 'row', paddingLeft: 1, paddingRight: 1, flexShrink: 0 }}>
           <text style={{ fg: THEME.accent }}>
             <strong>spec-tacular</strong>
           </text>
@@ -1151,6 +1229,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             maybeSuggest(q);
           }}
           onAnswer={onAnswer}
+          revise={props.input.reviseAnswer}
           onHelp={advisor ? onHelp : undefined}
           onDismiss={(q) => {
             if (advisor?.dismiss(q)) setAdviceNotice(`Removed “${q.item.name}”`);
@@ -1192,6 +1271,11 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
               // No interview without a model: keep the vision, start a change.
               void vision.start(text).then(() => {
                 refreshFoundation();
+                if (!foundationSettled()) {
+                  setScreen('foundation');
+                  setAdviceNotice('Your vision is saved to spec-tacular/vision.md. Now the ground rules.');
+                  return;
+                }
                 setScreen('overview');
                 startNewChange();
                 setNotice('Your vision is saved to spec-tacular/vision.md');
@@ -1207,6 +1291,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
               () => vision!.answer(answer),
             )}
           onFinish={() => void runVision('Wrapping up…', async () => vision!.finish())}
+          revise={
+            props.input.reviseVisionAnswer && vision
+              ? {
+                  unavailable: props.input.reviseVisionAnswer.unavailable,
+                  propose: (current, turns, instruction) => {
+                    const session = vision.session();
+                    if (!session) return Promise.reject(new Error('The interview was closed'));
+                    return props.input.reviseVisionAnswer!.propose(session, current, turns, instruction);
+                  },
+                }
+              : undefined
+          }
           onConfirm={(kept) => void confirmVision(kept)}
           onNotNew={notNewProject}
           onClose={() => setScreen('home')}
@@ -1247,7 +1343,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         when={session()}
         fallback={
           <>
-            <Show when={!help()} fallback={<Panel title="Help" grow focused><HelpOverlay /></Panel>}>
+            <Show when={!help()} fallback={<Panel title="Help" grow focused><ScrollArea><HelpOverlay /></ScrollArea></Panel>}>
               <Show when={stage().kind === 'foundation'}>
                 <Panel title="Ground rules">
                   <text style={{ fg: THEME.warn }}>
@@ -1264,6 +1360,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
               <box style={{ flexDirection: 'row', flexGrow: 1 }}>
                 {/* The changes */}
                 <Panel title={`Changes · ${pipelines().length}`} width={34}>
+                  {/* Scrolls, following the selection, rather than running into the button */}
+                  <ScrollArea follow={`change-${index()}`}>
                   <Show
                     when={pipelines().length > 0}
                     fallback={<text style={{ fg: THEME.dim }}>none yet</text>}
@@ -1271,6 +1369,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                     <For each={pipelines()}>
                       {(p, i) => (
                         <ChangeRow
+                          id={`change-${i()}`}
                           pipeline={p}
                           selected={i() === index()}
                           onPick={() => { setIndex(i()); setActionFocus(0); }}
@@ -1294,9 +1393,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                       )}
                     </For>
                   </Show>
-                  <box style={{ flexGrow: 1 }} />
+                  </ScrollArea>
                   <Show when={foundationSettled()}>
-                    <box style={{ flexDirection: 'row' }}>
+                    <box style={{ flexDirection: 'row', flexShrink: 0 }}>
                       <Button label="+ New change" primary={pipelines().length === 0} onPress={startNewChange} />
                     </box>
                   </Show>

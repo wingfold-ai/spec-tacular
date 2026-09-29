@@ -85,6 +85,15 @@ export function sumUsage(usages: Usage[]): UsageTotals {
   return usages.reduce(addUsage, emptyUsage());
 }
 
+/**
+ * Every input token the model read. `inputTokens` alone is only the part that
+ * missed the cache — with sessions that resend their context, a few tokens
+ * per turn while thousands are read from or written to the cache.
+ */
+export function totalInput(totals: UsageTotals): number {
+  return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens;
+}
+
 /** `$0.42`, `<$0.01` for a fraction of a cent, `$0.00` for nothing. */
 export function formatCost(usd: number | undefined): string {
   if (usd === undefined || usd <= 0) return '$0.00';

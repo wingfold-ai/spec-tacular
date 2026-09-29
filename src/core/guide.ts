@@ -25,7 +25,11 @@ export type ProjectStage =
   | { kind: 'no-foundation' }
   /** Ground rules scaffolded; some questions still open. */
   | { kind: 'foundation'; answered: number; total: number }
-  /** Ground rules settled on a new project: describe the vision next. */
+  /**
+   * A new project, set up, that has not described its vision yet. It comes
+   * before the ground rules: what the vision and its interview already say
+   * need not be asked again, and the rest is proposed from it.
+   */
   | { kind: 'vision' }
   /** Ground rules settled; nothing proposed yet. */
   | { kind: 'no-changes' }
@@ -33,12 +37,12 @@ export type ProjectStage =
 
 /**
  * The steps a first run walks through, as the stepper shows them. A new
- * project describes its vision before its first change; one with a baseline
- * goes straight to a change.
+ * project describes its vision first, and its ground rules are proposed from
+ * it; one with a baseline has no vision step.
  */
 export function setupSteps(greenfield: boolean): string[] {
   return greenfield
-    ? ['Set up', 'Ground rules', 'Vision', 'First change']
+    ? ['Set up', 'Vision', 'Ground rules', 'First change']
     : ['Set up', 'Ground rules', 'First change'];
 }
 
@@ -48,10 +52,10 @@ export function setupStep(stage: ProjectStage, greenfield = false): number | nul
     case 'no-openspec':
     case 'no-foundation':
       return 0;
-    case 'foundation':
-      return 1;
     case 'vision':
-      return 2;
+      return 1;
+    case 'foundation':
+      return greenfield ? 2 : 1;
     case 'no-changes':
       return greenfield ? 3 : 2;
     case 'working':
@@ -77,17 +81,21 @@ export function projectStage(projectRoot: string, changeCount: number): ProjectS
     return changeCount === 0 ? { kind: 'no-foundation' } : { kind: 'working' };
   }
 
+  // A new project with no roadmap yet starts from its vision, before the
+  // ground rules — unless the developer said it is not new, or already has
+  // a roadmap (or a change) to work from.
+  if (changeCount === 0 && isGreenfield(projectRoot)) {
+    const session = loadSession(projectRoot);
+    const started = session?.skipped || (loadRoadmap(projectRoot)?.slices.length ?? 0) > 0;
+    if (!started) return { kind: 'vision' };
+  }
+
   // Questions left for later are neither asked nor counted.
   const items = loadFoundation(projectRoot).filter((i) => !isDeferred(i));
   const answered = items.filter((i) => !isUnanswered(i)).length;
   if (answered < items.length) return { kind: 'foundation', answered, total: items.length };
 
-  if (changeCount > 0) return { kind: 'working' };
-  // A new project with no roadmap yet starts from its vision — unless the
-  // developer said it is not new, or already has a roadmap to work from.
-  const session = loadSession(projectRoot);
-  const started = session?.skipped || (loadRoadmap(projectRoot)?.slices.length ?? 0) > 0;
-  return isGreenfield(projectRoot) && !started ? { kind: 'vision' } : { kind: 'no-changes' };
+  return changeCount > 0 ? { kind: 'working' } : { kind: 'no-changes' };
 }
 
 /** What a change's next step is, and which keys act on it. */

@@ -29,24 +29,30 @@ bun install
 # Open the TUI in any folder — an empty one is fine. It opens on a start
 # screen with a Start button, then walks you through:
 #   1. Set up        runs `openspec init` and installs the spec-tacular schema
-#   2. Ground rules  domain first, then stack, architecture, conventions — one
-#                    question at a time, most of them proposed from the domain
-#   3. Vision        (new projects) describe what you are building; an AI
+#   2. Vision        (new projects) describe what you are building; an AI
 #                    interviews you, then splits it into a roadmap of slices
+#   3. Ground rules  domain, stack, architecture, conventions — one question at a
+#                    time, proposed from the vision (or, without one, the domain)
 #   4. First change  the first slice — or, on an existing project, describe a change
 # After that, every change shows its next step as buttons, and ? lists every key.
 bun run src/cli.ts --cwd /path/to/project
 ```
 
-The ground rules start with the domain — what you are building, and for
-whom — because that is the one thing only you know, and most of the rest
-follows from it. On a new project only what can be answered on day one is
-asked; the rest is left for later:
+A new project describes its vision first — what you are building, and for
+whom, in your own words, followed by a short AI interview — because that is
+the one thing only you know, and most of the ground rules follow from it.
+As soon as the interview ends — while you review the roadmap — the advisor
+proposes an answer for every ground rule the vision states or implies, the
+domain as much as the stack, so the ground rules open with their answers
+waiting and are mostly confirming (⇐, enter). Without a vision (an existing
+project, or one that skipped it) the ground rules start with the domain
+question instead, and the rest is proposed from that. On a new project only
+what can be answered on day one is asked; the rest is left for later:
 
 | | Questions |
 | --- | --- |
 | Asked | What the system is for, and who uses it |
-| Proposed from the domain (⇐, enter confirms) | the core terms · language and runtime · framework · datastore · package manager and tools · architecture style · layers and which may depend on which · where business rules live · naming · what a test must cover |
+| Proposed from the vision or the domain (⇐, enter confirms) | the core terms · language and runtime · framework · datastore · package manager and tools · architecture style · layers and which may depend on which · where business rules live · naming · what a test must cover |
 | Left for later | domain invariants · out of scope · what is ruled out · error handling · configuration and secrets · code review · comment style · what newcomers get wrong |
 
 Questions left for later stay in `spec-tacular/foundation/`, saying *Decide
@@ -69,22 +75,32 @@ With an AI advisor alongside:
   inversion at every boundary). Hexagonal / ports & adapters, layered, MVC,
   modular monolith and vertical slices have their rules too
   (`src/core/derivations.ts`); the advisor then fits them to your project.
-- **It digs in before moving on.** After each answer it looks at what the
-  answer leaves open and asks that next — answer "Python" and the next
-  question is which version, with the latest stable release (looked up, not
-  remembered) marked ★ recommended. Enter moves on without waiting.
+- **It keeps the setup short.** After each answer it looks at what the
+  answer leaves open. At most one question the first change cannot do without
+  is asked next; every other detail it notices is written into the Foundation
+  as *Decide later*, like the questions above, and a change that depends on
+  it raises it then. A follow-up raises no follow-ups of its own. Enter moves
+  on without waiting.
 - **Common answers need no waiting.** A small table of presets
   (`src/core/presets.ts`) knows what "Python", "TypeScript", "Rust", "Go",
-  "Postgres", "hexagonal" and friends leave open, so their follow-ups and
-  options (uv / poetry / pip, pytest, FastAPI, Node / Bun / Deno, …) appear
-  the instant you answer, marked ◇. The advisor refines them in the
-  background — adding questions, replacing options — but never moves the
-  option you have selected or touches a question you already answered.
-  Presets never carry version numbers: those are always looked up.
-- **It proposes.** Questions come with options for your project so far
-  (uv, pytest, FastAPI, …), and answers that already follow from earlier ones
-  are derived and pre-selected, marked ⇐. Nothing is written until you pick
-  one or type your own.
+  "Postgres", "hexagonal" and friends mean for the questions still ahead, so
+  their options (uv / poetry / pip, pytest, FastAPI, …) appear the instant you
+  answer, marked ◇; what they leave open (the Python version, the Rust
+  edition, …) is recorded for later, not asked. The advisor refines the
+  options in the background but never moves the one you have selected or
+  touches a question you already answered. Presets never carry version
+  numbers: those are always looked up.
+- **It proposes whole answers.** Questions come with options for your
+  project so far, and answers that already follow from earlier ones are
+  derived and pre-selected, marked ⇐. An option has a short name for the list
+  and a complete answer — for a broad question, every layer and which may
+  depend on which, or each tool with its role — shown in full under the list
+  for the one highlighted. Picking it writes that answer. Nothing is written
+  until you pick one or type your own.
+- **Pick, then adjust it with AI.** `ctrl+r` on an option (or on the answer
+  already given, or a draft you typed) opens the same conversation as
+  revising a requirement: say what should change, see the diff, accept, ask
+  again, or discard. Only an accepted revision is saved.
 - **Not sure?** Press `?`, type "help" or "not sure", or just press enter on
   an empty answer: you get a plain-words explanation, examples for your
   project, and simpler questions to answer first — whose answers often derive
@@ -99,15 +115,17 @@ With an AI advisor alongside:
   question the advisor added that is not relevant.
 
 A new project starts from its vision rather than a change — there is nothing
-to change yet. The description starts from what you told the Domain question,
-so nothing is described twice: add to it or press enter. The AI restates what
+to change yet, and it comes before the ground rules. (If you answered the
+Domain question first, the description starts from that answer, so nothing is
+described twice: add to it or press enter.) The AI restates what
 it understood and asks one question at a time, with options, until it has
 enough or you say "done" (Skip, the first choice, tab or "skip" pass on a
 question). It then proposes 3–8
 slices in build order, the first the smallest thing a user can do end to end.
 Drop the ones you do not want, and the rest become `spec-tacular/roadmap.yaml`;
 the vision and interview go to `spec-tacular/vision.md`, which every agent
-reads. The first slice becomes your first change.
+reads. The first slice becomes your first change, and the ground rules come
+next, proposed from the vision; its proposal is drafted once they are settled.
 
 Drafts are for reading. While an agent drafts, its progress streams into the
 change panel; when it lands, the draft opens: scroll through it, then
@@ -185,8 +203,10 @@ of the time taken for no better options.
 | Variable | Effect |
 | --- | --- |
 | `SPECTACULAR_NO_ADVISOR=1` | No AI during setup, the interview, naming or revising a requirement |
-| `SPECTACULAR_ADVISOR_MODEL` | Claude model for the advisor, interview and revising (default `sonnet`) |
-| `SPECTACULAR_QUICK_MODEL` | Claude model for naming changes (default `haiku`) |
+| `SPECTACULAR_ADVISOR_MODEL` | Claude model for the advisor, interview and revising (default: Claude Code's own model) |
+| `SPECTACULAR_QUICK_MODEL` | Claude model for naming changes (default: Claude Code's own model) |
+| `SPECTACULAR_NO_MCP=1` | Start no MCP servers (faster sessions). By default the agents load your Claude Code MCP servers and may call their tools unattended |
+| `SPECTACULAR_MCP_DENY` | MCP servers the agents may not call, space or comma separated and matched by name, e.g. `godaddy google_drive` |
 | `SPECTACULAR_ADVISOR_THINKING=1` | Let Claude use extended thinking again (slower) |
 | `SPECTACULAR_OPENCODE_MODEL` | opencode model, `provider/model`, e.g. `openrouter/anthropic/claude-sonnet-4` (default: opencode's own) |
 | `SPECTACULAR_OPENCODE_QUICK_MODEL` | opencode model for naming (default: `SPECTACULAR_OPENCODE_MODEL`) |
@@ -253,8 +273,9 @@ losing your place.
 The AI itself stays in view. A sidebar shows which driver and model is
 answering, what it has cost, and what it is doing right now — the running step
 while an agent drafts. `ctrl+b` (or the button in the sidebar) expands it into
-the per-model and per-job breakdown. It appears once the terminal is wide
-enough (130 columns), so it never squeezes the review surface; on a narrower
+the per-model and per-job breakdown. It is there from the start screen on —
+through the setup's questions and the vision interview too — once the
+terminal is wide enough (130 columns), so it never squeezes them; on a narrower
 terminal `ctrl+b` still opens the details full width. Cost and tokens come
 from the agents themselves — Claude reports actual USD, opencode its own cost
 — so there is no price table to keep current.

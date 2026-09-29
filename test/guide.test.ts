@@ -58,7 +58,7 @@ const summary = (over: Partial<ReviewSummary>): ReviewSummary => ({
 });
 
 describe('where a project is', () => {
-  test('walks set up → ground rules → first change → working', () => {
+  test('walks set up → vision → ground rules → first change → working', () => {
     const bare = root();
     expect(projectStage(bare, 0)).toEqual({ kind: 'no-openspec' });
 
@@ -66,16 +66,26 @@ describe('where a project is', () => {
     expect(projectStage(r, 0)).toEqual({ kind: 'no-foundation' });
 
     scaffoldFoundation(r);
+    // A new project describes its vision first, before its ground rules…
+    expect(projectStage(r, 0)).toEqual({ kind: 'vision' });
+    // …unless it says it is not new; then the ground rules are asked.
+    new VisionInterviewer(r, async () => ({})).skip();
     const open = projectStage(r, 0);
     expect(open.kind).toBe('foundation');
     expect(open).toMatchObject({ answered: 0 });
 
     answerAll(r);
-    // A new project describes its vision before its first change…
-    expect(projectStage(r, 0)).toEqual({ kind: 'vision' });
-    // …unless it says it is not new.
-    new VisionInterviewer(r, async () => ({})).skip();
     expect(projectStage(r, 0)).toEqual({ kind: 'no-changes' });
+    expect(projectStage(r, 1)).toEqual({ kind: 'working' });
+  });
+
+  test('once the vision made its first change, the ground rules come next', () => {
+    const r = withOpenSpec();
+    scaffoldFoundation(r);
+    expect(projectStage(r, 0)).toEqual({ kind: 'vision' });
+    // Confirming the vision creates the first slice's change.
+    expect(projectStage(r, 1).kind).toBe('foundation');
+    answerAll(r);
     expect(projectStage(r, 1)).toEqual({ kind: 'working' });
   });
 
@@ -88,7 +98,10 @@ describe('where a project is', () => {
     expect(isGreenfield(r)).toBe(false);
     expect(projectStage(r, 0)).toEqual({ kind: 'no-changes' });
     expect(setupSteps(false)).toEqual(['Set up', 'Ground rules', 'First change']);
-    expect(setupSteps(true)).toEqual(['Set up', 'Ground rules', 'Vision', 'First change']);
+    expect(setupSteps(true)).toEqual(['Set up', 'Vision', 'Ground rules', 'First change']);
+    expect(setupStep({ kind: 'vision' }, true)).toBe(1);
+    expect(setupStep({ kind: 'foundation', answered: 0, total: 1 }, true)).toBe(2);
+    expect(setupStep({ kind: 'foundation', answered: 0, total: 1 }, false)).toBe(1);
     expect(setupStep({ kind: 'no-changes' }, true)).toBe(3);
   });
 
@@ -143,6 +156,9 @@ describe('the guided questions', () => {
     // The rest are in the files, saying they are left for later.
     const domain = readFileSync(join(foundationDir(fresh), 'domain.md'), 'utf8');
     expect(domain).toContain('## Rules about the domain that must always hold.\n\nDecide later');
+    // Asked once its vision is described (or skipped).
+    expect(projectStage(fresh, 0)).toEqual({ kind: 'vision' });
+    new VisionInterviewer(fresh, async () => ({})).skip();
     expect(projectStage(fresh, 0)).toEqual({ kind: 'foundation', answered: 0, total: 11 });
   });
 

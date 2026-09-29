@@ -41,6 +41,11 @@ process.stdin.on('data', (chunk: string) => {
       subtype: 'success',
       is_error: false,
       structured_output: { text, turn, pid: process.pid, args: process.argv.slice(2) },
+      // As Claude Code reports it: the cost is the session's running total
+      // (the first turn writes the cache, later ones mostly read it), the
+      // token counts are this turn's.
+      total_cost_usd: 0.01 + 0.001 * (turn - 1),
+      usage: { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: turn === 1 ? 0 : 5000, cache_creation_input_tokens: turn === 1 ? 5000 : 100 },
     });
   }
 });

@@ -10,14 +10,16 @@
 
 import { useKeyboard } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
-import type { AdviceOption } from '../core/advisor.ts';
+import { optionAnswer, type AdviceOption } from '../core/advisor.ts';
+import type { RefineTurn, Refinement } from '../core/refine.ts';
 import type { ProposedSlice, VisionSession } from '../core/vision.ts';
+import { RevisePanel } from './revise.tsx';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
-import { Button, clip, KeyBar, Panel, Spinner } from './widgets.tsx';
+import { Button, clip, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
 
 export interface VisionScreenProps {
   session: VisionSession | null;
@@ -43,6 +45,14 @@ export interface VisionScreenProps {
   /** Asks the model again after a failure. */
   onRetry: () => void;
   onClose: () => void;
+  /**
+   * Revising an answer to the question on screen with the agent — an
+   * option's, or what is being typed — before it is given. Absent: no ctrl+r.
+   */
+  revise?: {
+    unavailable: string | null;
+    propose: (current: string, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  };
 }
 
 const DONE_WORDS = new Set(['done', 'enough', "that's it", 'thats it', 'finish', 'no more']);
@@ -58,6 +68,8 @@ export function VisionScreen(props: VisionScreenProps) {
   const [dropped, setDropped] = createSignal<Set<string>>(new Set());
   const [sliceSel, setSliceSel] = createSignal(0);
   const [hint, setHint] = createSignal<string | null>(null);
+  /** An answer being revised with the agent: the panel has the screen. */
+  const [revising, setRevising] = createSignal<{ ask: string; current: string } | null>(null);
 
   const phase = createMemo(() => {
     const s = props.session;
@@ -86,9 +98,32 @@ export function VisionScreen(props: VisionScreenProps) {
 
   const kept = createMemo(() => (props.session?.slices ?? []).filter((s) => !dropped().has(s.id)));
 
+  /** The highlighted option's whole answer, when there is more of it than its row shows. */
+  const preview = createMemo(() => {
+    const row = rows()[sel()];
+    if (row?.kind !== 'option') return null;
+    const text = optionAnswer(row.option);
+    return text !== row.option.label || text.length > 29 || text.includes('\n') ? text : null;
+  });
+  const PREVIEW_LINES = 10;
+
+  /**
+   * ctrl+r: what is revised is what is in front of you — the option
+   * highlighted, else what is being typed.
+   */
+  const startRevise = () => {
+    const q = question();
+    if (!q || !props.revise) return;
+    const row = rows()[sel()];
+    const text = row?.kind === 'option' ? optionAnswer(row.option) : draft().trim();
+    if (text === '') return setHint('Highlight an option (or type a first draft), then ctrl+r to revise it with AI');
+    setHint(null);
+    setRevising({ ask: q.ask, current: text });
+  };
+
   // Pasting a long description is the natural way to hand over a vision.
   usePasteInto(
-    () => (!props.busy && (phase() === 'describe' || phase() === 'interview') ? (text: string) => setDraft((d) => d + text) : null),
+    () => (!props.busy && !revising() && (phase() === 'describe' || phase() === 'interview') ? (text: string) => setDraft((d) => d + text) : null),
     { multiline: true },
   );
 
@@ -107,11 +142,13 @@ export function VisionScreen(props: VisionScreenProps) {
     if (text) return props.onAnswer(text);
     const row = rows()[sel()];
     if (row?.kind === 'skip') return props.onAnswer(null);
-    if (row?.kind === 'option') return props.onAnswer(row.option.label);
+    if (row?.kind === 'option') return props.onAnswer(optionAnswer(row.option));
     setHint('Pick an option or type an answer — tab skips it, "done" ends the questions');
   };
 
   useKeyboard((key) => {
+    // The revise panel has the keyboard while it is open.
+    if (revising()) return;
     if (props.busy) {
       if (isCancel(key)) props.onClose();
       return;
@@ -142,6 +179,7 @@ export function VisionScreen(props: VisionScreenProps) {
       if (isEnter(key)) return submitDescribe();
     } else if (phase() === 'interview') {
       if (key.ctrl && key.name === 'd') return props.onFinish();
+      if (key.ctrl && key.name === 'r') return startRevise();
       if (key.name === 'tab') return props.onAnswer(null);
       if (isEnter(key)) return submitAnswer();
       if (key.name === 'up' || key.name === 'down') {
@@ -171,7 +209,14 @@ export function VisionScreen(props: VisionScreenProps) {
       case 'describe':
         return [['enter', 'continue'], ['ctrl+n', 'not a new project'], ['ctrl+c', 'back']];
       case 'interview':
-        return [['↑↓', 'choose'], ['enter', 'answer'], ['tab', 'skip question'], ['ctrl+d', "that's enough — make slices"], ['ctrl+c', 'back']];
+        return [
+          ['↑↓', 'choose'],
+          ['enter', 'answer'],
+          ...(props.revise && (rows()[sel()]?.kind === 'option' || draft().trim() !== '') ? [['ctrl+r', 'revise with AI'] as [string, string]] : []),
+          ['tab', 'skip question'],
+          ['ctrl+d', "that's enough — make slices"],
+          ['ctrl+c', 'back'],
+        ];
       case 'review':
         return [['↑↓', 'move'], ['space', 'keep / drop'], ['enter', 'create the roadmap'], ['ctrl+c', 'back']];
       default:
@@ -241,14 +286,42 @@ export function VisionScreen(props: VisionScreenProps) {
 
       {/* 2. The interview */}
       <Show when={phase() === 'interview' || phase() === 'working'}>
-        <Show when={props.session?.understood}>
+        <Show when={props.session?.understood && !revising()}>
           <Panel title="What I understood so far">
             <For each={wrap(props.session!.understood, width())}>
               {(line) => <text style={{ fg: THEME.text }}>{line}</text>}
             </For>
           </Panel>
         </Show>
-        <Show when={phase() === 'interview' && !props.busy}>
+        <Show when={phase() === 'interview' && !props.busy && revising()}>
+          <box style={{ flexDirection: 'column', flexGrow: 1, padding: 1 }}>
+            <RevisePanel
+              name={revising()!.ask}
+              current={revising()!.current}
+              unavailable={props.revise?.unavailable ?? null}
+              noun="answer"
+              invite="How should this answer change? The agent proposes a revision; nothing is answered until you accept it."
+              examples={'e.g. "only receptionists, patients never log in" · "add that it must work offline" · "shorter"'}
+              editorHint="Type your own answer instead."
+              propose={(turns, instruction) => props.revise!.propose(revising()!.current, turns, instruction)}
+              onAccept={(block) => {
+                // Accepted is answered: as if it had been typed.
+                props.onAnswer(block);
+                return { ok: true };
+              }}
+              onKeep={(text) => {
+                // The option as proposed after all: as if it had been picked.
+                props.onAnswer(text);
+                return { ok: true };
+              }}
+              onClose={(message) => {
+                setRevising(null);
+                if (message) setHint(message);
+              }}
+            />
+          </box>
+        </Show>
+        <Show when={phase() === 'interview' && !props.busy && !revising()}>
           <Panel title={`Question ${(props.session?.turns.length ?? 0) + 1}`} focused>
             <text>{' '}</text>
             <text style={{ fg: THEME.accent }}>
@@ -262,7 +335,7 @@ export function VisionScreen(props: VisionScreenProps) {
               {(row, i) => (
                 <box
                   onMouseDown={() =>
-                    row.kind === 'option' ? props.onAnswer(row.option.label)
+                    row.kind === 'option' ? props.onAnswer(optionAnswer(row.option))
                       : row.kind === 'skip' ? props.onAnswer(null)
                       : setSel(i())}
                   style={{ flexDirection: 'row', backgroundColor: sel() === i() ? THEME.highlight : THEME.panel }}
@@ -290,6 +363,20 @@ export function VisionScreen(props: VisionScreenProps) {
                 </box>
               )}
             </For>
+            {/* The highlighted option in full: what picking it answers */}
+            <Show when={preview()}>
+              <box
+                style={{ border: true, borderStyle: 'rounded', borderColor: THEME.border, paddingLeft: 1, paddingRight: 1, flexDirection: 'column', marginTop: 1 }}
+                title={props.revise ? ' picking answers this · ctrl+r revise with AI ' : ' picking answers this '}
+              >
+                <For each={(() => {
+                  const lines = preview()!.split('\n').flatMap((l) => (l.trim() === '' ? [''] : wrap(l, width() - 6)));
+                  return lines.length > PREVIEW_LINES ? [...lines.slice(0, PREVIEW_LINES - 1), `… ${lines.length - PREVIEW_LINES + 1} more lines`] : lines;
+                })()}>
+                  {(line) => <text style={{ fg: THEME.text }}>{line || ' '}</text>}
+                </For>
+              </box>
+            </Show>
             <text>{' '}</text>
             <InputBox placeholder='type your answer — "skip" if you do not know, "done" when that is enough' />
             <Show when={hint()}>
@@ -305,7 +392,7 @@ export function VisionScreen(props: VisionScreenProps) {
 
       {/* 3. The slices */}
       <Show when={phase() === 'review' && !props.busy}>
-        <Panel title="Your roadmap — review the slices" focused>
+        <Panel title="Your roadmap — review the slices" focused grow>
           <text>{' '}</text>
           <For each={wrap(props.session?.refined || props.session?.understood || '', width())}>
             {(line) => <text style={{ fg: THEME.text }}>{line}</text>}
@@ -315,11 +402,14 @@ export function VisionScreen(props: VisionScreenProps) {
             Built in this order, one at a time — each becomes a change you review before the next.
           </text>
           <text>{' '}</text>
+          {/* Scrolls rather than squeezing slices into each other when there are many */}
+          <ScrollArea follow={`slice-${sliceSel()}`}>
           <For each={props.session!.slices}>
             {(slice, i) => (
               <box
+                id={`slice-${i()}`}
                 onMouseDown={() => setSliceSel(i())}
-                style={{ flexDirection: 'column', backgroundColor: sliceSel() === i() ? THEME.highlight : THEME.panel }}
+                style={{ flexDirection: 'column', flexShrink: 0, backgroundColor: sliceSel() === i() ? THEME.highlight : THEME.panel }}
               >
                 <box style={{ flexDirection: 'row' }}>
                   <text style={{ fg: THEME.accent, width: 3, flexShrink: 0 }}>{sliceSel() === i() ? ' ▸ ' : '   '}</text>
@@ -340,11 +430,12 @@ export function VisionScreen(props: VisionScreenProps) {
               </box>
             )}
           </For>
+          </ScrollArea>
           <Show when={hint()}>
             <text style={{ fg: THEME.warn }}>{hint()}</text>
           </Show>
           <text>{' '}</text>
-          <box style={{ flexDirection: 'row' }}>
+          <box style={{ flexDirection: 'row', flexShrink: 0 }}>
             <Button
               label={`▶ Create the roadmap — start with “${kept()[0]?.title ?? '…'}”`}
               focused
@@ -366,8 +457,14 @@ export function VisionScreen(props: VisionScreenProps) {
         <text style={{ fg: THEME.text }}> Press enter to ask again.</text>
       </Show>
 
-      <box style={{ flexGrow: 1 }} />
-      <KeyBar keys={keys()} />
+      {/* The roadmap panel grows into the free room itself */}
+      <Show when={phase() !== 'review' || props.busy}>
+        <box style={{ flexGrow: 1 }} />
+      </Show>
+      {/* The revise panel shows its own keys */}
+      <Show when={!revising()}>
+        <KeyBar keys={keys()} />
+      </Show>
     </box>
   );
 }

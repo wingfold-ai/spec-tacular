@@ -34,6 +34,20 @@ export interface RevisePanelProps {
   onAccept: (block: string) => { ok: true } | { ok: false; reason: string };
   /** Closes the panel; the message says what happened to the requirement. */
   onClose: (message: string | null) => void;
+  /** What is being revised, in messages: `requirement` unless said otherwise. */
+  noun?: string;
+  /** The line inviting the first instruction. */
+  invite?: string;
+  /** How else to edit it, shown when there is no agent. */
+  editorHint?: string;
+  /** Example instructions under the invitation. */
+  examples?: string;
+  /**
+   * Takes the text as it is, unrevised: enter with nothing typed, before
+   * anything was proposed — for a proposal that turns out fine after all.
+   * Absent: the text is already where it belongs, and there is nothing to take.
+   */
+  onKeep?: (text: string) => { ok: true } | { ok: false; reason: string };
 }
 
 const STYLE: Record<DiffLine['op'], string> = { ' ': THEME.text, '-': THEME.err, '+': THEME.ok };
@@ -60,6 +74,7 @@ export function isNewline(key: { name: string; shift?: boolean; meta?: boolean }
 }
 
 export function RevisePanel(props: RevisePanelProps) {
+  const noun = () => props.noun ?? 'requirement';
   const dims = useTerminalDimensions();
   const contentWidth = useContentWidth();
   const copy = useCopy();
@@ -71,6 +86,8 @@ export function RevisePanel(props: RevisePanelProps) {
   /** The instruction in flight, kept to retry it or edit it after a failure. */
   const [asked, setAsked] = createSignal('');
   const [top, setTop] = createSignal(0);
+  /** Scroll position in the text being revised, before there is a proposal. */
+  const [currentTop, setCurrentTop] = createSignal(0);
   const [elapsed, setElapsed] = createSignal(0);
   // Bumped to disown a request: a cancelled one may still answer, and its
   // answer must not appear as though it had been asked for.
@@ -89,6 +106,18 @@ export function RevisePanel(props: RevisePanelProps) {
   const height = () => Math.max(dims().height - 18 - (latest()?.warnings.length ?? 0), 6);
   const scroll = (delta: number) =>
     setTop((t) => Math.min(Math.max(t + delta, 0), Math.max(diff().length - height(), 0)));
+
+  const draftRows = createMemo(() => {
+    const rows = `${draft()}▏`.split('\n').flatMap((line) => (line === '' ? [''] : wrap(line, width() - 4)));
+    return rows.slice(-8);
+  });
+
+  /** What is being revised, in full: on screen until the first proposal replaces it with a diff. */
+  const currentRows = createMemo(() =>
+    props.current.split('\n').flatMap((line) => (line.trim() === '' ? [''] : wrap(line, width() - 2))));
+  const currentHeight = () => Math.max(dims().height - 20 - draftRows().length, 5);
+  const scrollCurrent = (delta: number) =>
+    setCurrentTop((t) => Math.min(Math.max(t + delta, 0), Math.max(currentRows().length - currentHeight(), 0)));
 
   const send = (instruction: string) => {
     const mine = ++generation;
@@ -146,26 +175,39 @@ export function RevisePanel(props: RevisePanelProps) {
         return;
 
       case 'working':
-        if (isCancel(key)) back('Revision cancelled — the requirement is unchanged');
+        if (isCancel(key)) back(`Revision cancelled — the ${noun()} is unchanged`);
         return;
 
       case 'prompt': {
-        if (isCancel(key)) return back('Revision cancelled — the requirement is unchanged');
+        if (isCancel(key)) return back(`Revision cancelled — the ${noun()} is unchanged`);
         if (isNewline(key, draft())) {
           setDraft((d) => (d.endsWith('\\') ? d.slice(0, -1) : d) + '\n');
           return;
         }
         if (isEnter(key)) {
-          if (draft().trim()) send(draft().trim());
+          if (draft().trim()) return send(draft().trim());
+          // Nothing asked, nothing proposed: take it as it is.
+          if (!latest() && props.onKeep) {
+            const result = props.onKeep(props.current);
+            if (!result.ok) {
+              setError(result.reason);
+              setPhase('error');
+              return;
+            }
+            props.onClose(null);
+          }
           return;
         }
+        // Page keys scroll the text being revised; arrows stay with the input.
+        if (!latest() && key.name === 'pagedown') return scrollCurrent(currentHeight() - 2);
+        if (!latest() && key.name === 'pageup') return scrollCurrent(-(currentHeight() - 2));
         const next = editLine(draft(), key);
         if (next !== null) setDraft(next);
         return;
       }
 
       case 'error':
-        if (isCancel(key)) return back('Revision cancelled — the requirement is unchanged');
+        if (isCancel(key)) return back(`Revision cancelled — the ${noun()} is unchanged`);
         if (isEnter(key)) return send(asked());
         if (key.name === 'e' || key.name === 'i') {
           setDraft(asked());
@@ -176,7 +218,7 @@ export function RevisePanel(props: RevisePanelProps) {
       case 'proposal':
         if (isCancel(key) || key.name === 'd' || key.name === 'q') {
           generation++;
-          return props.onClose('Revision discarded — the requirement is unchanged');
+          return props.onClose(`Revision discarded — the ${noun()} is unchanged`);
         }
         if (key.name === 'a' || isEnter(key)) return accept();
         if (key.name === 'i' || key.name === 'e') {
@@ -184,7 +226,7 @@ export function RevisePanel(props: RevisePanelProps) {
           setPhase('prompt');
           return;
         }
-        if (key.name === 'y') return copy(latest()!.block, 'the revised requirement');
+        if (key.name === 'y') return copy(latest()!.block, `the revised ${noun()}`);
         if (key.name === 'down' || key.name === 'j') return scroll(1);
         if (key.name === 'up' || key.name === 'k') return scroll(-1);
         if (key.name === 'pagedown' || key.name === 'space') return scroll(height() - 2);
@@ -197,9 +239,10 @@ export function RevisePanel(props: RevisePanelProps) {
     switch (phase()) {
       case 'prompt':
         return [
-          ['enter', 'send'],
+          ['enter', !latest() && props.onKeep && draft().trim() === '' ? 'take it as it is' : 'send'],
           ['alt+enter / \\', 'new line'],
           ['ctrl+v', 'paste'],
+          ...(!latest() && currentRows().length > currentHeight() ? [['pgup/pgdn', 'scroll the text'] as [string, string]] : []),
           ['ctrl+c', latest() ? 'back to the proposal' : 'cancel'],
         ];
       case 'working':
@@ -219,11 +262,6 @@ export function RevisePanel(props: RevisePanelProps) {
     }
   });
 
-  const draftRows = createMemo(() => {
-    const rows = `${draft()}▏`.split('\n').flatMap((line) => (line === '' ? [''] : wrap(line, width() - 4)));
-    return rows.slice(-8);
-  });
-
   return (
     <box style={{ flexDirection: 'column', flexGrow: 1 }}>
       <text style={{ fg: THEME.accent }}>{`Revise with AI: ${props.name}`}</text>
@@ -236,7 +274,22 @@ export function RevisePanel(props: RevisePanelProps) {
 
       <Show when={phase() === 'unavailable'}>
         <text style={{ fg: THEME.warn }}>{`No AI to revise with: ${props.unavailable}.`}</text>
-        <text style={{ fg: THEME.text }}>E opens the requirement in your editor instead.</text>
+        <text style={{ fg: THEME.text }}>{props.editorHint ?? 'E opens the requirement in your editor instead.'}</text>
+      </Show>
+
+      {/* Before any proposal: the text being revised, in full */}
+      <Show when={!latest() && phase() !== 'unavailable'}>
+        <text style={{ fg: THEME.dim }}>
+          {currentRows().length > currentHeight()
+            ? `The ${noun()} as it is now — lines ${currentTop() + 1}–${Math.min(currentTop() + currentHeight(), currentRows().length)} of ${currentRows().length}`
+            : `The ${noun()} as it is now`}
+        </text>
+        <box style={{ flexDirection: 'column', border: ['left'], borderColor: THEME.border, paddingLeft: 1 }}>
+          <For each={currentRows().slice(currentTop(), currentTop() + currentHeight())}>
+            {(row) => <text style={{ fg: THEME.text }}>{row || ' '}</text>}
+          </For>
+        </box>
+        <text>{' '}</text>
       </Show>
 
       {/* The proposal: what accepting it changes in the file */}
@@ -259,10 +312,13 @@ export function RevisePanel(props: RevisePanelProps) {
         <text style={{ fg: THEME.warn }}>
           {latest()
             ? 'What else should change? The agent revises its proposal above.'
-            : 'How should this requirement change? The agent proposes a revision; nothing is written until you accept it.'}
+            : (props.invite ?? 'How should this requirement change? The agent proposes a revision; nothing is written until you accept it.')}
         </text>
         <Show when={!latest()}>
-          <text style={{ fg: THEME.dim }}>e.g. "make the timeout configurable" · "split it into two scenarios"</text>
+          <text style={{ fg: THEME.dim }}>{props.examples ?? 'e.g. "make the timeout configurable" · "split it into two scenarios"'}</text>
+          <Show when={props.onKeep}>
+            <text style={{ fg: THEME.dim }}>Happy with it after all? Press enter with nothing typed to take it as it is.</text>
+          </Show>
         </Show>
         <box style={{ border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1, flexDirection: 'column' }}>
           <For each={draftRows()}>
