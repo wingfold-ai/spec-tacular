@@ -18,7 +18,7 @@ pipeline that is always visible.
 | Design decisions stay local to a change | Cross-cutting decisions are **promoted to global ADRs** |
 | No project ground rules before the first change | A **Foundation** phase: stack, architecture style, conventions, ADRs |
 | Greenfield = 15 changes proposed at once | A **Roadmap** layer that sequences an idea into reviewable slices |
-| `apply` blocks the terminal | `apply` runs in the **background** while you keep reviewing |
+| Drafting blocks the terminal | Drafts are written in the **background** while you keep reviewing; implementing opens your agent itself, right in the TUI |
 | A task needing a deployed env blocks archive | That task is **deferred**; the rest of the change archives |
 
 ## Install
@@ -79,9 +79,10 @@ request that touches the workflow or `scripts/` runs the same builds as a dry ru
 ```bash
 bun install
 
-# Open the TUI in any folder — an empty one is fine. It opens on a start
-# screen with a Start button, then walks you through:
-#   1. Set up        runs `openspec init` and installs the spec-tacular schema
+# First run `openspec init` in the folder and pick your agent (Claude Code or
+# opencode): spec-tacular will not start without it. Then open the TUI there.
+# It opens on a start screen with a Start button, then walks you through:
+#   1. Set up        installs the spec-tacular schema
 #   2. Vision        (new projects) describe what you are building; an AI
 #                    interviews you, then splits it into a roadmap of slices
 #   3. Ground rules  domain, stack, architecture, conventions — one question at a
@@ -182,8 +183,14 @@ next, proposed from the vision; its proposal is drafted once they are settled.
 
 Drafts are for reading. While an agent drafts, its progress streams into the
 change panel; when it lands, the draft opens: scroll through it, then
-*looks good* (draft the next artifact), *edit it*, or *redraft with feedback*
+*accept* (and draft the next artifact), *edit it*, or *redraft with feedback*
 — the agent revises it with what you typed. `v` reads it again later.
+
+The proposal, design and tasks are accepted as a whole, the specs
+requirement by requirement; either way the next artifact waits for it, and
+the stage is ticked off only then. An acceptance holds for the text you read:
+edit or redraft the document and it is waiting to be read again (ticking
+tasks off while implementing does not count as a change).
 
 Requirements are reviewed one at a time: `a` accepts, `r` rejects (asking
 why), `d` defers (asking what would verify it). `e` revises the requirement
@@ -318,10 +325,11 @@ requires `specs` (OpenSpec's own has it require only `proposal`), and
 `spectacular instructions design -c <change>` is refused — exit 1 — while any
 spec requirement is unreviewed.
 
-Agents run in the background. `spectacular run <artifact> -c <change>`
+Drafting agents run in the background. `spectacular run <artifact> -c <change>`
 dispatches Claude Code or opencode and returns immediately, so you keep
 reviewing while it works. `ctrl+j` pulls up the job pane mid-review without
-losing your place.
+losing your place: what each agent read, ran and wrote, and every tool call it
+was refused.
 
 The AI itself stays in view. A sidebar shows which driver and model is
 answering, what it has cost, and what it is doing right now — the running step
@@ -382,8 +390,17 @@ Specification 'data-export' is valid
 ```
 
 Greenfield gets sequenced. `spec-tacular/roadmap.yaml` holds the vision and an
-ordered list of slices; one is active at a time, so the review queue never
-exceeds a single change.
+ordered list of slices; one is in planning at a time, so the review queue never
+exceeds a single change. Once a slice is planned through its tasks, the next
+one can be planned (`s` in the TUI) while the first is implemented — but it is
+implemented only after the slices before it are applied: every task ticked
+off, except those marked `(defer: …)` that need a deployment to verify. An
+applied slice turns ✓ on its own.
+
+Implementing is your agent's own session. *Implement it* hands the terminal to
+Claude Code (or opencode) on the change's apply instructions, exactly as if you
+had started it yourself: it runs the project's commands and asks before it
+does. Quit it and spec-tacular is back, counting the tasks ticked off.
 
 Tune the linter per project with `spec-tacular/lint.json`:
 

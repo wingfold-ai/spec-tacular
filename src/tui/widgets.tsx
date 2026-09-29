@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { createEffect, createSignal, For, onCleanup, Show, type JSX } from 'solid-js';
 import type { ScrollBoxRenderable } from '@opentui/core';
 import { THEME } from './theme.ts';
+import { wrap } from '../render/requirement.ts';
 
 /** A bordered panel with its title set into the top edge. */
 export function Panel(props: {
@@ -152,6 +153,24 @@ export function KeyBar(props: { keys: [key: string, action: string][]; right?: s
       </box>
     </box>
   );
+}
+
+/**
+ * What the developer is typing, with its cursor, wrapped to `width` columns
+ * (the `› ` prompt included) and kept to the last `maxLines` lines.
+ *
+ * One text, not one per line: rows that reflow on every keystroke, each its
+ * own node, are laid out stale — a new line drawn over the one above it.
+ */
+export function DraftText(props: { draft: string; width: number; maxLines?: number }) {
+  const text = () => {
+    const lines = wrap(`${props.draft}▏`, Math.max(props.width - 2, 10));
+    return lines
+      .slice(props.maxLines ? -props.maxLines : 0)
+      .map((line, i) => `${i === 0 ? '› ' : '  '}${line}`)
+      .join('\n');
+  };
+  return <text style={{ fg: THEME.text }}>{text()}</text>;
 }
 
 /** Cuts a line to `max` characters, marking the cut. */

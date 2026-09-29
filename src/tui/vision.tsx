@@ -19,7 +19,7 @@ import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
-import { Button, clip, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
+import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
 
 export interface VisionScreenProps {
   session: VisionSession | null;
@@ -237,9 +237,8 @@ export function VisionScreen(props: VisionScreenProps) {
       }}
     >
       <Show when={draft()} fallback={<text style={{ fg: THEME.dim }}>{`› ▏${p.placeholder}`}</text>}>
-        <For each={wrap(`${draft()}▏`, width() - 6).slice(-8)}>
-          {(line, i) => <text style={{ fg: THEME.text }}>{`${i() === 0 ? '› ' : '  '}${line}`}</text>}
-        </For>
+        {/* Inside a panel and this box: two borders and two paddings a side. */}
+        <DraftText draft={draft()} width={contentWidth() - 8} maxLines={8} />
       </Show>
     </box>
   );

@@ -74,6 +74,21 @@ describe('job pane', () => {
     expect(frame).toContain('1 running · 1 succeeded');
   });
 
+  test('a log longer than the pane shows its latest lines, each on its own row', async () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `step ${i + 1}: ${'word '.repeat(30)}`);
+    const jobs = Array.from({ length: 8 }, (_, i) => job({ id: `j${i}`, artifact: `a${i}`, status: 'succeeded' }));
+    const frame = (await mount(jobs, [...lines, 'done · $0.10 · 2 tool calls refused'])).frame();
+    const rows = frame.split('\n');
+    expect(rows.some((r) => r.trim() === 'done · $0.10 · 2 tool calls refused')).toBe(true);
+    expect(frame).toContain('step 60:');
+    expect(frame).not.toContain('step 1:');
+    // The list keeps to five jobs, and says there are more.
+    expect(frame).toContain('1 of 8 — j/k for the others');
+    expect(frame).not.toContain('a5');
+    // Nothing drawn over anything: every step row starts where a row starts.
+    for (const r of rows.filter((r) => r.includes('step '))) expect(r).toMatch(/^ (step \d+: )?(word )+/);
+  });
+
   test('j/k move the selection', async () => {
     const ui = await mount([job(), job({ id: 'j2' })]);
     await ui.press('j');

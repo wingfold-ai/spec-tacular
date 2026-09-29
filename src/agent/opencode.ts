@@ -152,7 +152,15 @@ export class OpencodeServer {
       const child = adopt(spawn(this.command.command, this.command.args, {
         cwd: this.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, OPENCODE_SERVER_PASSWORD: this.password },
+        env: {
+          ...process.env,
+          OPENCODE_SERVER_PASSWORD: this.password,
+          // A file the developer points at may sit outside the project, and
+          // headless nobody can approve reading it. The plan agent still
+          // edits nothing, wherever the file is.
+          OPENCODE_CONFIG_CONTENT: process.env['OPENCODE_CONFIG_CONTENT']
+            ?? JSON.stringify({ permission: { external_directory: 'allow' } }),
+        },
       }));
       this.child = child;
       let output = '';
@@ -336,6 +344,10 @@ export class OpencodeSession implements StructuredSession {
 export const opencodeDriver: AgentDriver = {
   id: 'opencode',
   label: 'opencode',
+  interactive(prompt: string): AgentCommand {
+    return { command: 'opencode', args: ['--prompt', prompt] };
+  },
+
   build(request: AgentRequest): AgentCommand {
     // JSON events rather than prose: they carry what each step cost, and can
     // be rendered back into readable lines by `formatLine`.

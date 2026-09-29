@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import {
   completeSlice,
   loadRoadmap,
+  markApplied,
   nextPromotable,
   promoteSlice,
   roadmapPath,
   saveRoadmap,
   scaffoldRoadmap,
+  waitingOn,
   type Roadmap,
 } from '../src/core/roadmap.ts';
 
@@ -81,14 +83,40 @@ describe('promoting', () => {
     expect(result.ok === true && result.roadmap.slices[0]!.status).toBe('active');
   });
 
-  test('only one slice may be active at a time', () => {
+  test('only one slice may be in planning at a time', () => {
     // The single rule that stops a greenfield project becoming a dozen
     // changes nobody can review.
     const promoted = promoteSlice(roadmap(), 'auth');
     const second = promoteSlice(promoted.ok === true ? promoted.roadmap : roadmap(), 'billing');
     expect(second.ok).toBe(false);
-    expect(second.ok === false && second.reason).toContain('already active');
-    expect(second.ok === false && second.reason).toContain('one slice at a time');
+    expect(second.ok === false && second.reason).toContain("'auth' is still being planned");
+    expect(second.ok === false && second.reason).toContain('one slice in planning at a time');
+  });
+
+  test('once a slice is fully planned, the next — even one depending on it — may be planned', () => {
+    const promoted = promoteSlice(roadmap(), 'auth');
+    const r = promoted.ok ? promoted.roadmap : roadmap();
+    const planned = (id: string) => id === 'auth';
+    expect(nextPromotable(r, planned)?.id).toBe('export');
+    const next = promoteSlice(r, 'export', planned);
+    expect(next.ok).toBe(true);
+    // Its implementing waits for auth to be applied.
+    expect(waitingOn(next.ok ? next.roadmap : r, 'export')).toEqual(['auth']);
+    expect(waitingOn(next.ok ? next.roadmap : r, 'auth')).toEqual([]);
+    expect(waitingOn(r, 'not-a-slice')).toEqual([]);
+    // And while export is in planning, nothing else opens.
+    expect(nextPromotable(next.ok ? next.roadmap : r, planned)).toBeNull();
+  });
+
+  test('an applied slice is done, and waits on nothing any more', () => {
+    const r: Roadmap = {
+      ...roadmap(),
+      slices: roadmap().slices.map((s) => (s.id === 'billing' ? s : { ...s, status: 'active' as const })),
+    };
+    const updated = markApplied(r, (id) => id === 'auth');
+    expect(updated?.slices.map((s) => s.status)).toEqual(['done', 'active', 'planned']);
+    expect(waitingOn(updated, 'export')).toEqual([]);
+    expect(markApplied(updated!, (id) => id === 'auth')).toBeNull();
   });
 
   test('refuses while a dependency is unfinished', () => {

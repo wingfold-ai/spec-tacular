@@ -13,7 +13,7 @@ import { createCliRenderer } from '@opentui/core';
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { staleArtifacts } from '../core/gate.ts';
-import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
+import { fullyPlanned, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
 import {
   decide,
   move as moveCursor,
@@ -23,7 +23,7 @@ import {
 } from '../core/session.ts';
 import { isRequirement, type ReviewItem } from '../core/requirements.ts';
 import { currentItem } from '../core/session.ts';
-import { openInEditor } from './editor.ts';
+import { openInEditor, runInTerminal } from './editor.ts';
 import { JobPane, summarizeJobs } from './jobs.tsx';
 import { ReviewScreen } from './review.tsx';
 import { THEME } from './theme.ts';
@@ -43,15 +43,14 @@ import {
 import type { FollowUp, QuestionMeta } from '../core/advisor.ts';
 import { FoundationScreen, type AnswerResult } from './foundation.tsx';
 import { nameFromDescription } from '../core/naming.ts';
-import type { Roadmap, Slice } from '../core/roadmap.ts';
+import { nextPromotable, type Roadmap, type Slice } from '../core/roadmap.ts';
 import { renderVision, sliceDescription, type ProposedSlice, type VisionSession } from '../core/vision.ts';
 import { DocumentView, type DocumentAction } from './document.tsx';
 import { VisionScreen } from './vision.tsx';
 import { FirstChangeGuide, HelpOverlay, Stepper } from './guide.tsx';
 import { HomeScreen, type HomeAction } from './home.tsx';
 import { editLine, isCancel, isEnter } from './input.ts';
-import { Button, clip, KeyBar, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
-import { wrap } from '../render/requirement.ts';
+import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
 import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn } from '../core/refine.ts';
 import type { Requirement } from '../core/requirements.ts';
 import type { RefinePort } from './review.tsx';
@@ -92,6 +91,20 @@ export interface TuiInput {
   createChange: (name: string, description: string) => Promise<Result>;
   /** Starts an agent on one artifact in the background, behind the gate. */
   dispatch: (change: string, artifact: string, feedback?: string) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * Records that a human read a prose artifact — proposal, design, tasks —
+   * and accepted it as shown: `content` is the text they saw.
+   */
+  acceptDocument?: (change: string, artifact: string, content: string) => Result;
+  /**
+   * The agent's own interactive session for implementing a change, behind
+   * the same gates as a draft. Without it, implementing runs in the background.
+   */
+  /** Opens the roadmap's next slice as a change, once the one before it is fully planned. */
+  startNextSlice?: () => Promise<{ ok: true; change: string } | { ok: false; reason: string }>;
+  implement?: (change: string) => Promise<
+    { ok: true; command: { command: string; args: string[]; env?: Record<string, string> }; label: string } | { ok: false; reason: string }
+  >;
   /** A written, single-file artifact's content, for reading it in full. */
   readArtifact?: (change: string, artifact: string) => Promise<{ ok: true; file: string; content: string } | { ok: false; reason: string }>;
   /** The vision interview, for a project that starts from nothing. */
@@ -643,7 +656,31 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     if (!d) return [];
     const out: DocumentAction[] = [];
     const step = next();
-    if (step?.actions.includes('draft') && step.artifact && step.artifact !== d.artifact) {
+    const p = pipelines().find((c) => c.name === d.change);
+    const at = p?.stages.findIndex((s) => s.id === d.artifact) ?? -1;
+    const stage = p?.stages[at];
+    if (p && stage?.signoff && !stage.signoff.accepted && props.input.acceptDocument) {
+      // Accepting is what lets the next stage be drafted — so it does both.
+      const after = p.stages[at + 1] ?? p.apply;
+      const then = after.state === 'ready' ? after.id : null;
+      out.push({
+        label: then === null
+          ? '✓ Accept it'
+          : then === 'apply'
+            ? '✓ Accept — start implementing'
+            : `✓ Accept — draft the ${then}`,
+        key: 'n',
+        run: () => {
+          const accepted = props.input.acceptDocument!(d.change, d.artifact, d.content);
+          if (!accepted.ok) return setNotice(accepted.reason);
+          closeDoc();
+          setNotice(`✓ The ${d.artifact} of ${d.change} is accepted`);
+          void reload(d.change).then(() => {
+            if (then !== null) void draftNext();
+          });
+        },
+      });
+    } else if (step?.actions.includes('draft') && step.artifact && step.artifact !== d.artifact) {
       out.push({
         label: step.artifact === 'apply'
           ? '✓ Looks good — start implementing'
@@ -893,9 +930,31 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       setNotice(step ? `Nothing to draft — ${step.text}` : 'No change selected — n starts one');
       return;
     }
+    if (step.artifact === 'apply' && props.input.implement) return implementIn(p.name);
     const result = await props.input.dispatch(p.name, step.artifact);
     setJobs(props.input.listJobs());
     setNotice(result.message);
+  };
+
+  /**
+   * Implementing happens in the agent itself, in this terminal: it runs the
+   * project's commands and asks before it does, exactly as when started by
+   * hand. spec-tacular steps aside until it exits, then reads the tasks.
+   */
+  const implementIn = async (change: string) => {
+    const handoff = await props.input.implement!(change);
+    if (!handoff.ok) return setNotice(handoff.reason);
+    const ran = runInTerminal(renderer, handoff.command, props.input.root);
+    await reload(change);
+    if (!ran.ok) return setNotice(`${handoff.label} could not start: ${ran.reason}`);
+    const tasks = pipelines().find((c) => c.name === change)?.apply.tasks;
+    setNotice(
+      !tasks
+        ? `Back from ${handoff.label}.`
+        : tasks.applied
+          ? `✓ ${change} is implemented — every task is ticked off`
+          : `Back from ${handoff.label}: ${tasks.done} of ${tasks.total} tasks ticked off — w continues`,
+    );
   };
 
   const writeNext = async () => {
@@ -913,23 +972,51 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     await reload(p.name);
   };
 
+  /**
+   * The roadmap's next slice, once the ones before it are fully planned: it
+   * can be planned while they are implemented.
+   */
+  const nextSlice = createMemo(() => {
+    const r = roadmap();
+    if (!r || !props.input.startNextSlice) return null;
+    return nextPromotable(r, (id) => fullyPlanned(pipelines().find((p) => p.name === id)));
+  });
+
+  const startSlice = async () => {
+    const result = await props.input.startNextSlice!();
+    if (!result.ok) return setNotice(result.reason);
+    await reload(result.change);
+    setNotice(`Started ${result.change}. Its implementing waits until the slices before it are applied.`);
+  };
+
   /** The selected change's next step, as buttons. */
   const actionButtons = createMemo((): { label: string; key: string; run: () => void }[] => {
     const actions = next()?.actions ?? [];
     const out: { label: string; key: string; run: () => void }[] = [];
     if (actions.includes('review')) out.push({ label: '▶ Review', key: 'enter', run: enterReview });
+    const toRead = actions.includes('read') ? next()?.artifact : undefined;
+    if (toRead && selected()) {
+      const change = selected()!.name;
+      out.push({ label: `▶ Read the ${toRead}`, key: 'enter', run: () => void openDoc(change, toRead) });
+    }
     if (actions.includes('draft')) {
       out.push({
-        label: next()?.artifact === 'apply' ? '▶ Start implementing' : '✦ Let an agent draft it',
+        label: next()?.artifact === 'apply'
+          ? props.input.implement ? `▶ Implement it in ${driverLabel(props.input.driver ?? 'claude')}` : '▶ Start implementing'
+          : '✦ Let an agent draft it',
         key: 'w',
         run: () => void draftNext(),
       });
     }
     if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'e', run: () => void writeNext() });
     if (actions.includes('foundation')) out.push({ label: '▶ Ground rules', key: 'f', run: () => void openFoundation() });
+    const slice = nextSlice();
+    if (slice && fullyPlanned(selected())) {
+      out.push({ label: `▶ Next slice: ${slice.id}`, key: 's', run: () => void startSlice() });
+    }
     const latest = readable().at(-1);
     const p = selected();
-    if (latest && p) out.push({ label: `📄 Read the ${latest}`, key: 'v', run: () => void openDoc(p.name, latest) });
+    if (latest && p && latest !== toRead) out.push({ label: `📄 Read the ${latest}`, key: 'v', run: () => void openDoc(p.name, latest) });
     return out;
   });
 
@@ -938,7 +1025,12 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const homeStatus = createMemo(() => {
     const s = stage();
     switch (s.kind) {
-      case 'no-openspec': return 'This folder is not set up yet — Start sets it up here.';
+      case 'no-openspec': {
+        const agent = driverLabel(props.input.driver ?? 'claude');
+        return s.tools
+          ? `OpenSpec is not set up for ${agent} here. Run \`openspec init\` in this folder again and choose ${agent}, then check again.`
+          : `OpenSpec is not initialized here. Run \`openspec init\` in this folder and choose ${agent}, then check again.`;
+      }
       case 'no-foundation': return 'OpenSpec is here; spec-tacular is not set up yet.';
       case 'foundation': return `Ground rules: ${s.answered} of ${s.total} answered.`;
       case 'vision': return 'Set up. First: what are you building? The ground rules are proposed from it.';
@@ -957,6 +1049,16 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const groundRules = { label: 'Ground rules', run: () => openFoundation() };
     switch (s.kind) {
       case 'no-openspec':
+        // OpenSpec's own init asks which agents to set up: it is the
+        // developer's to run, in their shell. Nothing goes on before it.
+        return [{
+          label: 'Check again',
+          run: async () => {
+            await reload();
+            if (stage().kind === 'no-openspec') setHomeError('Still not set up — run `openspec init` here first.');
+            else setHomeError(null);
+          },
+        }];
       case 'no-foundation':
         return [{
           label: 'Start',
@@ -1138,6 +1240,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     } else if (key.name === 'r') enterReview();
     else if (key.name === 'n') startNewChange();
     else if (key.name === 'w') void draftNext();
+    else if (key.name === 's' && nextSlice() && fullyPlanned(selected())) void startSlice();
     else if (key.name === 'e') void writeNext();
     else if (key.name === 'f') void openFoundation();
     else if (key.name === 'h') setScreen('home');
@@ -1498,10 +1601,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                     A name for it — proposed from your description; adjust it if you like.
                   </text>
                 </Show>
-                <box style={{ border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1 }}>
-                  <For each={wrap(`${draft()}▏`, 100)}>
-                    {(line, i) => <text style={{ fg: THEME.text }}>{`${i() === 0 ? '› ' : '  '}${line}`}</text>}
-                  </For>
+                <box style={{ border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1, paddingRight: 1 }}>
+                  {/* Inside a panel and this box: two borders and two paddings a side. */}
+                  <DraftText draft={draft()} width={contentWidth() - 8} />
                 </box>
                 <Show when={asking() === 'name'}>
                   <Show

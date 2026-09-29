@@ -7,7 +7,7 @@
  * advisor is a fake; the Foundation is real files in a temp dir.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Ask } from '../src/core/advisor.ts';
 import { answerFoundation, foundationDir, guidedQuestions } from '../src/core/foundation.ts';
@@ -76,7 +76,7 @@ describe('the start screen', () => {
     mounted.push(ui);
     await ui.settle(1000);
     expect(ui.frame()).toContain('███████╗');
-    expect(ui.frame()).toContain('This folder is not set up yet');
+    expect(ui.frame()).toContain('OpenSpec is here; spec-tacular is not set up yet.');
     expect(ui.frame()).toContain('▶ Start');
     expect(ui.frame()).toContain('Quit');
 
@@ -89,6 +89,31 @@ describe('the start screen', () => {
     expect(ui.frame()).toContain('Before the first change, settle the ground rules.');
     // Only what can be answered on day one.
     expect(ui.frame()).toContain('▶ Begin — 11 questions');
+  });
+
+  test('without OpenSpec, nothing goes on until `openspec init` has run', async () => {
+    const ui = await mountApp({ openspec: false });
+    mounted.push(ui);
+    expect(ui.frame()).toContain('OpenSpec is not initialized here. Run `openspec init` in this folder and choose');
+    expect(ui.frame()).toContain('▶ Check again');
+    expect(ui.frame()).not.toContain('▶ Start');
+
+    await ui.press('return'); // still nothing
+    expect(ui.frame()).toContain('Still not set up — run `openspec init` here first.');
+    expect(existsSync(join(ui.root, 'openspec'))).toBe(false);
+
+    // The developer runs it, for Claude Code, and checks again.
+    mkdirSync(join(ui.root, 'openspec'));
+    mkdirSync(join(ui.root, '.claude', 'skills', 'openspec-apply-change'), { recursive: true });
+    await ui.press('return');
+    expect(ui.frame()).toContain('▶ Start');
+  });
+
+  test('OpenSpec set up without the agent counts as not set up', async () => {
+    const ui = await mountApp({ openspec: 'agent' });
+    mounted.push(ui);
+    expect(ui.frame()).toContain('OpenSpec is not set up for Claude Code here.');
+    expect(ui.frame()).toContain('▶ Check again');
   });
 
   test('a new folder warms the vision AI before anything is described', async () => {
@@ -118,6 +143,21 @@ describe('the start screen', () => {
     ui.warmed.splice(0);
     await ui.press('c', { ctrl: true });
     expect(ui.warmed).toEqual([]);
+  });
+});
+
+describe('typing a long answer', () => {
+  test('wraps to the box, every line on its own row', async () => {
+    const ui = await mount(undefined, { width: 100 });
+    await ui.press('return');
+    await ui.press('return');
+    for (let i = 0; i < 4; i++) await ui.type('lorem ipsum dolor sit amet consectetur adipiscing elit sed ');
+
+    // Each wrap used to be drawn over the row above it, a row left empty below.
+    const frame = ui.frame();
+    expect(frame).toContain('│ › lorem ipsum dolor sit amet consectetur adipiscing elit sed lorem ipsum dolor sit amet      │');
+    expect(frame).toContain('│   consectetur adipiscing elit sed lorem ipsum dolor sit amet consectetur adipiscing elit sed │');
+    expect(frame).toContain('│   lorem ipsum dolor sit amet consectetur adipiscing elit sed ▏');
   });
 });
 

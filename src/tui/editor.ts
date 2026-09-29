@@ -51,3 +51,26 @@ export function openInEditor(
     renderer?.resume();
   }
 }
+
+/**
+ * Hands the terminal to another program — an agent's own session — until it
+ * exits, then takes it back.
+ */
+export function runInTerminal(
+  renderer: CliRenderer | undefined,
+  command: { command: string; args: string[]; env?: Record<string, string> },
+  cwd: string,
+): { ok: boolean; reason?: string } {
+  renderer?.suspend();
+  try {
+    const result = spawnSync(command.command, command.args, {
+      stdio: 'inherit',
+      cwd,
+      env: command.env ? { ...process.env, ...command.env } : process.env,
+    });
+    if (result.error) return { ok: false, reason: result.error.message };
+    return { ok: true };
+  } finally {
+    renderer?.resume();
+  }
+}

@@ -32,6 +32,13 @@ export interface AgentDriver {
   /** The command to run. Building it is separate from running it so it is testable. */
   build(request: AgentRequest): AgentCommand;
   /**
+   * The agent's own interactive session, started on `prompt`: run in the
+   * developer's terminal, it asks for permissions exactly as it would if they
+   * had started it themselves. How implementing runs — optional: without it
+   * a driver implements in the background like it drafts.
+   */
+  interactive?(prompt: string): AgentCommand;
+  /**
    * Renders one line of the agent's stdout for display, or null to drop it.
    * Agents emit a lot of protocol noise that nobody wants tailing past.
    */
@@ -53,8 +60,9 @@ export interface AgentDriver {
    */
   structured?: {
     /**
-     * `research` may look things up on the web (current versions); `think`
-     * reasons with no tools; `quick` is a small offline task on a fast model.
+     * Every mode may read the files and links the developer points at.
+     * `research` may also search the web (current versions); `think` reasons
+     * without searching; `quick` is a small task on a fast model.
      */
     build(request: AgentRequest & { schema: object; mode?: StructuredMode }): AgentCommand;
     /**

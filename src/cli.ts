@@ -9,18 +9,20 @@
  * terminal, which is what makes the overview usable in CI and over a pipe.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject } from './adapter/openspec.ts';
+import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject, openSpecToolsInstalled } from './adapter/openspec.ts';
 import {
   buildPipeline,
+  fullyPlanned,
   sortByProgress,
   type ChangePipeline,
   type ReviewByArtifact,
 } from './core/pipeline.ts';
 import { loadChangeReview, specFilesOf, specsArtifactId } from './core/change-review.ts';
 import { openSession, type ReviewSession } from './core/session.ts';
-import { saveReview } from './core/review.ts';
+import { loadReview, saveReview } from './core/review.ts';
+import { acceptDocument, loadSignoff, type Signoff } from './core/signoff.ts';
 import type { OpenSpecChangeStatus } from './adapter/types.ts';
 import { renderOverview } from './render/text.ts';
 import { foundationGate, gateFor } from './core/gate.ts';
@@ -36,6 +38,7 @@ import {
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
 import { ALLOW_MCP_HOOK_ARG } from './agent/claude.ts';
+import type { AgentCommand } from './agent/driver.ts';
 import { version as VERSION } from '../package.json';
 import { createAssistants, type Assistants } from './assistants.ts';
 import type { Usage } from './core/usage.ts';
@@ -59,12 +62,15 @@ import { refineContext } from './core/refine.ts';
 import {
   completeSlice,
   loadRoadmap,
+  markApplied,
   nextPromotable,
   promoteSlice,
   roadmapPath,
   saveRoadmap,
   scaffoldRoadmap,
+  waitingOn,
 } from './core/roadmap.ts';
+import { taskProgress } from './core/tasks.ts';
 
 type Command =
   | 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation'
@@ -203,7 +209,7 @@ async function loadPipelines(
   const { changes, failed } = await adapter.statusAll();
   const statuses = new Map(changes.map((c) => [c.changeName, c]));
 
-  const pipelines = changes.map((status) => {
+  const parts = changes.map((status) => {
     const reviews: Record<string, ReviewByArtifact[string]> = {};
     // Only an artifact that actually carries requirements gets review state.
     // Attaching an empty summary elsewhere would read as "reviewed, zero
@@ -212,14 +218,85 @@ async function loadPipelines(
     if (specsId && specFilesOf(status).length > 0) {
       reviews[specsId] = loadChangeReview(projectRoot, status).summary;
     }
-    return buildPipeline(status, reviews);
+    // Every other written artifact that is one document is accepted as a whole.
+    const signoffs: Record<string, Signoff> = {};
+    for (const artifact of status.artifacts) {
+      if (artifact.id === specsId || artifact.status !== 'done') continue;
+      const content = singleDocument(status, artifact.id);
+      if (content !== null) signoffs[artifact.id] = loadSignoff(projectRoot, status.changeName, artifact.id, content);
+    }
+    const tasksFile = singleDocument(status, 'tasks');
+    const tasks = tasksFile === null ? undefined : taskProgress(tasksFile);
+    return { status, reviews, signoffs, tasks };
   });
+
+  // A slice is done once its change is applied — or archived, which it
+  // cannot be before. What is not done yet holds up the slices after it.
+  let roadmap = loadRoadmap(projectRoot);
+  if (roadmap) {
+    const archived = archivedChanges(projectRoot);
+    const applied = new Set(parts.filter((p) => p.tasks?.applied).map((p) => p.status.changeName));
+    const updated = markApplied(roadmap, (id) => applied.has(id) || archived.has(id));
+    if (updated) {
+      saveRoadmap(projectRoot, updated);
+      roadmap = updated;
+    }
+  }
+
+  const pipelines = parts.map(({ status, reviews, signoffs, tasks }) =>
+    buildPipeline(status, reviews, signoffs, {
+      ...(tasks ? { tasks } : {}),
+      waitingOn: waitingOn(roadmap, status.changeName),
+    }),
+  );
 
   return { pipelines: sortByProgress(pipelines), failed, statuses };
 }
 
+/** The names of the changes that were archived: `archive/2026-09-29-<name>`. */
+function archivedChanges(projectRoot: string): Set<string> {
+  try {
+    return new Set(
+      readdirSync(join(projectRoot, 'openspec', 'changes', 'archive')).map((d) => d.replace(/^\d{4}-\d{2}-\d{2}-/, '')),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/** An artifact's content, when it is a single document that has been written. */
+function singleDocument(status: OpenSpecChangeStatus, artifact: string): string | null {
+  const file = status.artifactPaths[artifact]?.resolvedOutputPath;
+  if (!file || file.includes('*')) return null;
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why OpenSpec is not ready for spec-tacular here, or null when it is.
+ * `openspec init` is the developer's to run: it asks which agents to set up.
+ */
+function openSpecMissing(root: string, driver: string): string | null {
+  const agent = defaultRegistry().get(driver).label;
+  if (!isOpenSpecProject(root)) {
+    return `OpenSpec is not initialized here. Run \`openspec init\` in this folder first, and choose ${agent}.`;
+  }
+  if (!openSpecToolsInstalled(root, driver)) {
+    return `OpenSpec is not set up for ${agent} here. Run \`openspec init\` in this folder again, and choose ${agent}.`;
+  }
+  return null;
+}
+
 /** `spectacular init` — install the schema that enforces the sequencing. */
 function runInit(args: Args): number {
+  const missing = openSpecMissing(args.cwd, args.driver);
+  if (missing) {
+    process.stderr.write(`${missing}\n`);
+    return 1;
+  }
   const schemaDir = join(args.cwd, 'openspec', 'schemas', SCHEMA_NAME);
   if (existsSync(schemaDir) && !args.force) {
     process.stderr.write(
@@ -625,7 +702,10 @@ async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number>
 }
 
 /** `spectacular roadmap` — show, promote, or complete a slice. */
-function runRoadmap(args: Args): number {
+async function runRoadmap(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  // Loading the changes also marks the slices whose changes are applied done.
+  const pipelines = isOpenSpecProject(args.cwd) ? (await loadPipelines(adapter, args.cwd)).pipelines : [];
+  const planned = (id: string) => fullyPlanned(pipelines.find((p) => p.name === id));
   const roadmap = loadRoadmap(args.cwd);
   if (!roadmap) {
     if (scaffoldRoadmap(args.cwd)) {
@@ -642,7 +722,7 @@ function runRoadmap(args: Args): number {
   if (args.slice) {
     const result = args.done
       ? completeSlice(roadmap, args.slice)
-      : promoteSlice(roadmap, args.slice);
+      : promoteSlice(roadmap, args.slice, planned);
     if (!result.ok) {
       process.stderr.write(`${result.reason}\n`);
       return 1;
@@ -664,13 +744,13 @@ function runRoadmap(args: Args): number {
     process.stdout.write(`${MARK[slice.status]} ${slice.id}${blocked}\n    ${slice.summary}\n`);
   }
 
-  const next = nextPromotable(roadmap);
-  const active = roadmap.slices.find((s) => s.status === 'active');
+  const next = nextPromotable(roadmap, planned);
+  const planning = roadmap.slices.find((s) => s.status === 'active' && !planned(s.id));
   process.stdout.write(
-    active
-      ? `\n'${active.id}' is active. One slice at a time keeps the review queue to one change.\n`
-      : next
-        ? `\nNext: spectacular roadmap --promote ${next.id}\n`
+    next
+      ? `\nNext: spectacular roadmap --promote ${next.id}\n`
+      : planning
+        ? `\n'${planning.id}' is being planned. The next slice opens once its tasks are accepted.\n`
         : '\nNothing left to promote.\n',
   );
   return 0;
@@ -682,17 +762,18 @@ function describeError(err: unknown): string {
 }
 
 /**
- * The TUI's one-key setup: OpenSpec if missing, then the schema, then the
- * Foundation questions. Each step is skipped when already done, so it is safe
- * to run on a half-set-up project — and never overwrites a schema someone
- * edited, which `init` only does under `--force`.
+ * The TUI's one-key setup: the schema, then the Foundation questions, on a
+ * folder where `openspec init` already ran. Each step is skipped when already
+ * done, so it is safe to run on a half-set-up project — and never overwrites a
+ * schema someone edited, which `init` only does under `--force`.
  */
 async function setUpProject(
   root: string,
-  adapter: OpenSpecAdapter,
+  driver: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
-    if (!isOpenSpecProject(root)) await adapter.init();
+    const missing = openSpecMissing(root, driver);
+    if (missing) return { ok: false, reason: missing };
     if (!schemaInstalled(root)) initProject(root);
     else scaffoldFoundation(root, { defer: isGreenfield(root) });
     return { ok: true };
@@ -740,6 +821,56 @@ async function dispatch(
     };
   } catch (err) {
     return { ok: false, message: describeError(err) };
+  }
+}
+
+/**
+ * Opens the next slice on the roadmap as a change: once the one before it is
+ * fully planned, so it can be planned while that one is implemented.
+ */
+async function startNextSlice(
+  args: Args,
+  adapter: OpenSpecAdapter,
+): Promise<{ ok: true; change: string } | { ok: false; reason: string }> {
+  try {
+    const roadmap = loadRoadmap(args.cwd);
+    if (!roadmap) return { ok: false, reason: 'There is no roadmap' };
+    const { pipelines } = await loadPipelines(adapter, args.cwd);
+    const planned = (id: string) => fullyPlanned(pipelines.find((p) => p.name === id));
+    const next = nextPromotable(roadmap, planned);
+    if (!next) return { ok: false, reason: 'No slice can start yet — plan the current one through its tasks first' };
+    const promoted = promoteSlice(roadmap, next.id, planned);
+    if (!promoted.ok) return { ok: false, reason: promoted.reason };
+    await adapter.newChange(next.id, next.summary);
+    saveRoadmap(args.cwd, promoted.roadmap);
+    return { ok: true, change: next.id };
+  } catch (err) {
+    return { ok: false, reason: describeError(err) };
+  }
+}
+
+/**
+ * Implementing, from the TUI: the same gates as a draft, then the agent's own
+ * interactive session on the apply instructions — so it runs commands and
+ * asks for permissions just as it does when started by hand.
+ */
+async function implementCommand(
+  args: Args,
+  adapter: OpenSpecAdapter,
+  change: string,
+): Promise<{ ok: true; command: AgentCommand; label: string } | { ok: false; reason: string }> {
+  try {
+    const { pipelines } = await loadPipelines(adapter, args.cwd);
+    const pipeline = pipelines.find((p) => p.name === change);
+    if (!pipeline) return { ok: false, reason: `No change called '${change}'` };
+    const gate = gateFor(pipeline, 'apply');
+    if (!gate.allowed) return { ok: false, reason: `Not yet: ${gate.blockers.join('; ')}` };
+    const driver = defaultRegistry().get(args.driver);
+    if (!driver.interactive) return { ok: false, reason: `${driver.label} cannot be opened interactively` };
+    const prompt = await composePrompt(args, adapter, 'apply', change);
+    return { ok: true, command: driver.interactive(prompt), label: driver.label };
+  } catch (err) {
+    return { ok: false, reason: describeError(err) };
   }
 }
 
@@ -811,11 +942,10 @@ async function main(): Promise<number> {
   if (args.command === 'adr') return runAdrs(args);
   if (args.command === 'foundation') return runFoundation(args);
   if (args.command === 'pending') return runPending(args);
-  if (args.command === 'roadmap') return runRoadmap(args);
-
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
   try {
+    if (args.command === 'roadmap') return await runRoadmap(args, adapter);
     if (args.command === 'instructions') return await runInstructions(args, adapter);
     if (args.command === 'run') return await runAgent(args, adapter);
     if (args.command === 'archive') return await runArchive(args, adapter);
@@ -869,7 +999,12 @@ async function main(): Promise<number> {
           queue.review,
         );
       },
-      saveSession: (session) => saveReview(args.cwd, session.review),
+      // The session's review was loaded when it opened: documents accepted
+      // since are on disk only, and must not be overwritten by it.
+      saveSession: (session) => {
+        const { documents } = loadReview(args.cwd, session.review.change);
+        saveReview(args.cwd, { ...session.review, ...(documents ? { documents } : {}) });
+      },
       lintConfig: loadLintConfig(args.cwd),
       reparse: (change) =>
         queueFor(change)?.requirements.map((r) => r.item) ?? [],
@@ -928,8 +1063,8 @@ async function main(): Promise<number> {
           return { ok: false, reason: (err as Error).message };
         }
       },
-      stage: () => projectStage(args.cwd, statuses.size),
-      setup: () => setUpProject(args.cwd, adapter),
+      stage: () => projectStage(args.cwd, statuses.size, args.driver),
+      setup: () => setUpProject(args.cwd, args.driver),
       questions: () => guidedQuestions(args.cwd),
       answer: (question, text) => answerFoundation(question.item, text),
       createChange: async (name, description) => {
@@ -941,6 +1076,16 @@ async function main(): Promise<number> {
         }
       },
       dispatch: (change, artifact, feedback) => dispatch(args, adapter, change, artifact, feedback),
+      implement: (change) => implementCommand(args, adapter, change),
+      startNextSlice: () => startNextSlice(args, adapter),
+      acceptDocument: (change, artifact, content) => {
+        try {
+          acceptDocument(args.cwd, change, artifact, content);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, reason: `Could not record it: ${(err as Error).message}` };
+        }
+      },
       readArtifact: async (change, artifact) => {
         const file = statuses.get(change)?.artifactPaths[artifact]?.resolvedOutputPath;
         if (!file || file.includes('*')) return { ok: false, reason: `${artifact} is not a single document` };

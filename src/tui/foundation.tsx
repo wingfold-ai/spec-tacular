@@ -30,7 +30,7 @@ import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
-import { Button, clip, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
+import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
 import { RevisePanel } from './revise.tsx';
 
 type Result = { ok: true } | { ok: false; reason: string };
@@ -818,11 +818,8 @@ export function FoundationScreen(props: FoundationScreenProps) {
                 </text>
               }
             >
-              <For each={wrap(`${draft()}▏`, 88)}>
-                {(line, i) => (
-                  <text style={{ fg: THEME.text }}>{`${i() === 0 ? '› ' : '  '}${line}`}</text>
-                )}
-              </For>
+              {/* Inside a panel and this box: two borders and two paddings a side. */}
+              <DraftText draft={draft()} width={contentWidth() - 8} />
             </Show>
           </box>
           <Show when={error()}>
