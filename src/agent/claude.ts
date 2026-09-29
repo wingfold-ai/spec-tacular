@@ -97,6 +97,16 @@ function mcpEnabled(): boolean {
 
 const ALLOW_MCP_HOOK = fileURLToPath(new URL('./allow-mcp.mjs', import.meta.url));
 
+/** The argument that makes `spectacular` run the allow hook (src/cli.ts). */
+export const ALLOW_MCP_HOOK_ARG = '__allow-mcp-hook';
+
+/**
+ * A compiled binary carries its modules in Bun's embedded filesystem, so
+ * there is no allow-mcp.mjs on disk to hand Claude Code; the binary runs the
+ * hook itself instead.
+ */
+const compiled = import.meta.url.includes('$bunfs') || import.meta.url.includes('~BUN');
+
 const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /**
@@ -108,7 +118,7 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
  */
 export function mcpFlags(): string[] {
   if (!mcpEnabled()) return ['--strict-mcp-config'];
-  const hook = `${shellQuote(process.execPath)} ${shellQuote(ALLOW_MCP_HOOK)}`;
+  const hook = `${shellQuote(process.execPath)} ${compiled ? ALLOW_MCP_HOOK_ARG : shellQuote(ALLOW_MCP_HOOK)}`;
   return [
     '--settings',
     JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'mcp__.*', hooks: [{ type: 'command', command: hook }] }] } }),

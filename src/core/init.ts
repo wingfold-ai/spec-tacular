@@ -8,23 +8,19 @@
  * instruction wording for abstraction, example marking and deferral.
  */
 
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scaffoldFoundation } from './foundation.ts';
+import { SCHEMA_FILES } from './schema-files.ts';
 import { isGreenfield } from './vision.ts';
 
 export const SCHEMA_NAME = 'spec-tacular';
 
-/** The schema shipped inside this package. */
+/**
+ * The schema's source directory in this repository. Installs are written from
+ * the embedded copy (./schema-files.ts), which a compiled binary carries.
+ */
 export function bundledSchemaDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'schemas', SCHEMA_NAME);
 }
@@ -41,16 +37,12 @@ export interface InitResult {
   notes: string[];
 }
 
-function copyTree(from: string, to: string, written: string[], base = to): void {
-  mkdirSync(to, { recursive: true });
-  for (const entry of readdirSync(from)) {
-    const src = join(from, entry);
-    const dst = join(to, entry);
-    if (statSync(src).isDirectory()) copyTree(src, dst, written, base);
-    else {
-      copyFileSync(src, dst);
-      written.push(dst.slice(base.length + 1));
-    }
+function writeSchema(to: string, written: string[]): void {
+  for (const [file, content] of Object.entries(SCHEMA_FILES)) {
+    const dst = join(to, file);
+    mkdirSync(dirname(dst), { recursive: true });
+    writeFileSync(dst, content, 'utf8');
+    written.push(file);
   }
 }
 
@@ -88,16 +80,11 @@ export function initProject(
   projectRoot: string,
   options: { setSchema?: boolean } = {},
 ): InitResult {
-  const source = bundledSchemaDir();
-  if (!existsSync(source)) {
-    throw new Error(`The bundled ${SCHEMA_NAME} schema is missing at ${source}`);
-  }
-
   const schemaDir = join(projectRoot, 'openspec', 'schemas', SCHEMA_NAME);
   const replaced = existsSync(schemaDir);
 
   const files: string[] = [];
-  copyTree(source, schemaDir, files);
+  writeSchema(schemaDir, files);
 
   const notes: string[] = [];
   if (replaced) {
