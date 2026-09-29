@@ -369,6 +369,15 @@ describe('reaching the model', () => {
       expect(decide('mcp__claude_ai_Google_Drive__delete', 'godaddy, google_drive')).toBeNull();
       expect(decide('mcp__claude_ai_Context7__query', 'godaddy, google_drive')).toBe('allow');
     });
+    test('the CLI runs it too, which is how a compiled binary serves it', () => {
+      const cli = join(import.meta.dir, '..', 'src', 'cli.ts');
+      const run = (tool: string) =>
+        Bun.spawnSync([process.execPath, cli, '__allow-mcp-hook'], {
+          stdin: Buffer.from(JSON.stringify({ tool_name: tool })),
+        }).stdout.toString();
+      expect(JSON.parse(run('mcp__claude_ai_Context7__query')).hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(run('Bash')).toBe('');
+    });
   });
 
   test("claude runs on Claude Code's own model unless one is set", () => {

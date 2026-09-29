@@ -35,6 +35,8 @@ import {
   tailJob,
 } from './core/jobs.ts';
 import { defaultRegistry, DEFAULT_DRIVER } from './agent/index.ts';
+import { ALLOW_MCP_HOOK_ARG } from './agent/claude.ts';
+import { version as VERSION } from '../package.json';
 import { createAssistants, type Assistants } from './assistants.ts';
 import type { Usage } from './core/usage.ts';
 import { isGreenfield } from './core/vision.ts';
@@ -78,6 +80,7 @@ interface Args {
   bin: string | undefined;
   force: boolean;
   help: boolean;
+  version: boolean;
   driver: string;
   /** For `jobs`: a job id to cancel or tail. */
   job: string | undefined;
@@ -100,6 +103,7 @@ function parseArgs(argv: string[]): Args {
     bin: undefined,
     force: false,
     help: false,
+    version: false,
     driver: DEFAULT_DRIVER,
     job: undefined,
     cancel: false,
@@ -114,6 +118,7 @@ function parseArgs(argv: string[]): Args {
     const a = argv[i];
     if (a === '--print' || a === '-p') args.print = true;
     else if (a === '--help' || a === '-h') args.help = true;
+    else if (a === '--version' || a === '-V') args.version = true;
     else if (a === '--force' || a === '-f') args.force = true;
     else if (a === '--cwd') args.cwd = argv[++i] ?? args.cwd;
     else if (a === '--change' || a === '-c') args.change = argv[++i];
@@ -184,6 +189,7 @@ Options:
       --driver <name>    Agent to run (claude, opencode). Default: claude
   -f, --force            Overwrite an existing schema install
   -h, --help             Show this help
+  -V, --version          Show the version
 `;
 
 async function loadPipelines(
@@ -770,10 +776,21 @@ async function artifactFile(
 }
 
 async function main(): Promise<number> {
+  // Claude Code runs this as the MCP allow hook when spec-tacular is a
+  // compiled binary, which has no allow-mcp.mjs on disk (agent/claude.ts).
+  if (process.argv[2] === ALLOW_MCP_HOOK_ARG) {
+    await import('./agent/allow-mcp.mjs');
+    return 0;
+  }
+
   const args = parseArgs(process.argv.slice(2));
 
   if (args.help) {
     process.stdout.write(HELP);
+    return 0;
+  }
+  if (args.version) {
+    process.stdout.write(`spectacular ${VERSION}\n`);
     return 0;
   }
 

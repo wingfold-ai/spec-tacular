@@ -21,6 +21,59 @@ pipeline that is always visible.
 | `apply` blocks the terminal | `apply` runs in the **background** while you keep reviewing |
 | A task needing a deployed env blocks archive | That task is **deferred**; the rest of the change archives |
 
+## Install
+
+spec-tacular is a single binary for Linux and macOS (x64 and arm64); it needs no
+Bun or Node of its own. It drives the [OpenSpec](https://github.com/Fission-AI/OpenSpec)
+CLI, which you install separately:
+
+```bash
+npm i -g @fission-ai/openspec
+```
+
+**With the GitHub CLI** — works while the repository is private, as long as `gh`
+is signed in with access to it:
+
+```bash
+gh api repos/mhoegger/spec-tacular/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+```
+
+The script picks the build for your OS and CPU, checks it against the
+release's `SHA256SUMS`, and installs `spectacular` to `~/.local/bin`. Set
+`SPECTACULAR_VERSION=v0.1.0` for a particular release and
+`SPECTACULAR_INSTALL_DIR` for another directory. Without `gh` it downloads with
+`curl` from github.com, which works once the repository is public. Run it again
+to update.
+
+**By hand** — download `spectacular-<version>-<os>-<arch>.tar.gz` and
+`SHA256SUMS` from a release, then:
+
+```bash
+gh release download -R mhoegger/spec-tacular -p 'spectacular-*-linux-x64.tar.gz' -p SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS   # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
+tar -xzf spectacular-*-linux-x64.tar.gz
+install spectacular-*-linux-x64/spectacular ~/.local/bin/
+```
+
+**From source** — needs [Bun](https://bun.sh):
+
+```bash
+bun install && bun run build   # writes dist/spectacular
+```
+
+### Releasing
+
+Bump `version` in `package.json`, merge, then tag that commit and push the tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The release workflow checks the tag matches `package.json`, builds and
+smoke-tests each platform on its own runner, and publishes the archives with
+`SHA256SUMS`. A tag with a hyphen (`v0.2.0-rc.1`) makes a pre-release. A pull
+request that touches the workflow or `scripts/` runs the same builds as a dry run.
+
 ## Try it
 
 ```bash

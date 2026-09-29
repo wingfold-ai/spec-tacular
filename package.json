@@ -1,6 +1,6 @@
 {
   "name": "spec-tacular",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A terminal UI for spec-driven development, built on OpenSpec",
   "type": "module",
   "license": "MIT",
@@ -12,6 +12,7 @@
   },
   "scripts": {
     "start": "bun run src/cli.ts",
+    "build": "bun scripts/build.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
