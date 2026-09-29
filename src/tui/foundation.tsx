@@ -10,6 +10,10 @@
  * picked or an answer typed, so the Foundation still holds only decisions
  * somebody made.
  *
+ * A proposal is a starting point, not a take-it-or-leave-it: ctrl+r on an
+ * option (or on the answer already given) revises it with the agent, in the
+ * same conversation as revising a requirement on the review screen.
+ *
  * Nothing here can trap anyone: every question can be skipped, a pass ends
  * once each is answered or skipped, and ctrl+f ends it early. What was not
  * answered is then left for later — open, but not blocking the first change.
@@ -17,7 +21,8 @@
 
 import { useKeyboard } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, Show, untrack } from 'solid-js';
-import type { AdviceOption, QuestionMeta } from '../core/advisor.ts';
+import { optionAnswer, type AdviceOption, type QuestionMeta } from '../core/advisor.ts';
+import type { RefineTurn, Refinement } from '../core/refine.ts';
 import type { GuidedQuestion } from '../core/foundation.ts';
 import { mergeOptions } from '../core/presets.ts';
 import { wrap } from '../render/requirement.ts';
@@ -25,7 +30,8 @@ import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
 import { editLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
-import { Button, clip, KeyBar, Panel, Spinner } from './widgets.tsx';
+import { Button, clip, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
+import { RevisePanel } from './revise.tsx';
 
 type Result = { ok: true } | { ok: false; reason: string };
 
@@ -78,6 +84,14 @@ export interface FoundationScreenProps {
    * there is no advisor.
    */
   onHelp?: (question: GuidedQuestion) => Promise<{ probes: string[] }>;
+  /**
+   * Revising an answer with the agent: an option's, the one already given, or
+   * one being typed. Absent: no ctrl+r.
+   */
+  revise?: {
+    unavailable: string | null;
+    propose: (question: GuidedQuestion, current: string, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  };
   /** Removes a follow-up the developer finds irrelevant. */
   onDismiss?: (question: GuidedQuestion) => void;
   /** Opens the question's section in $EDITOR, for an answer longer than a line. */
@@ -125,6 +139,8 @@ export function FoundationScreen(props: FoundationScreenProps) {
   const [waiting, setWaiting] = createSignal<{ token: number; answer: string } | null>(null);
   /** Help was asked for the current question and is on its way. */
   const [helping, setHelping] = createSignal(false);
+  /** An answer being revised with the agent: the panel has the screen. */
+  const [revising, setRevising] = createSignal<{ question: GuidedQuestion; current: string } | null>(null);
   /** Set once the developer moves the selection or types; null until then. */
   const [picked, setPicked] = createSignal<Pick | null>(null);
   let token = 0;
@@ -177,6 +193,14 @@ export function FoundationScreen(props: FoundationScreenProps) {
     return out;
   });
   const ownRow = createMemo(() => rows().length - 1);
+  /** The highlighted option's whole answer, when there is more of it than its row shows. */
+  const preview = createMemo(() => {
+    const row = rows()[sel()];
+    if (row?.kind !== 'option') return null;
+    const text = optionAnswer(row.option);
+    return text !== row.option.label || text.length > labelWidth() || text.includes('\n') ? text : null;
+  });
+  const PREVIEW_LINES = 14;
   /** Wide enough for the longest proposal, within reason, so labels line up. */
   const labelWidth = createMemo(() =>
     Math.min(Math.max(...options().map((o) => o.label.length), 12) + 2, Math.floor(contentWidth() / 2)),
@@ -278,6 +302,11 @@ export function FoundationScreen(props: FoundationScreenProps) {
     if (!q) return;
     const result = props.onAnswer(q, text);
     if (!result.ok) return setError(result.reason);
+    afterSave(result, text, confirmed);
+  };
+
+  /** What follows a written answer: on to the next, or waiting on the advisor. */
+  const afterSave = (result: AnswerResult, text: string, confirmed = false) => {
     setDraft('');
     setError(null);
     if (!result.advice || confirmed) return advance();
@@ -337,12 +366,30 @@ export function FoundationScreen(props: FoundationScreenProps) {
 
     const row = rows()[sel()];
     if (row?.kind === 'skip') return skip();
-    if (row?.kind === 'option') return save(row.option.label, row.derived !== undefined);
+    if (row?.kind === 'option') return save(optionAnswer(row.option), row.derived !== undefined);
     if (row?.kind === 'help') return help();
     if (q.answered) return advance();
     // Enter on nothing, with nothing chosen, most often means "I don't know".
     if (props.onHelp) return help();
     setError('Type an answer, or press tab (or type "skip") to leave it for now');
+  };
+
+  /**
+   * ctrl+r: what is revised is what is in front of you — the option
+   * highlighted, else what is being typed, else the answer already given.
+   */
+  const startRevise = () => {
+    const q = current();
+    if (!q || !props.revise) return;
+    const row = rows()[sel()];
+    const text =
+      row?.kind === 'option' ? optionAnswer(row.option)
+        : draft().trim() !== '' ? draft().trim()
+          : q.answered ? q.item.text.trim()
+            : '';
+    if (text === '') return setError('Highlight an option (or type a first draft), then ctrl+r to revise it with AI');
+    setError(null);
+    setRevising({ question: q, current: text });
   };
 
   const skip = () => {
@@ -353,7 +400,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
 
   // A pasted answer is typed text: it chooses writing your own, as typing does.
   usePasteInto(() =>
-    intro() || showDone() || waiting() || helping() || !current()
+    intro() || showDone() || waiting() || helping() || revising() || !current()
       ? null
       : (text: string) => {
           setDraft((d) => d + text);
@@ -364,6 +411,8 @@ export function FoundationScreen(props: FoundationScreenProps) {
   );
 
   useKeyboard((key) => {
+    // The revise panel has the keyboard while it is open.
+    if (revising()) return;
     if (intro()) {
       if (isEnter(key)) setIntro(false);
       else if (isCancel(key)) props.onClose();
@@ -406,6 +455,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
       if (q) props.onEdit(q);
       return;
     }
+    if (key.ctrl && key.name === 'r') return startRevise();
     if (key.ctrl && key.name === 'd') {
       const q = current();
       if (q && (currentMeta().parent || currentMeta().helps)) props.onDismiss?.(q);
@@ -439,6 +489,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
     const row = rows()[sel()]?.kind;
     k.push(['enter', draft() ? 'save' : row === 'skip' ? 'skip' : row === 'option' ? 'pick' : current()?.answered ? 'keep' : 'save']);
     if (props.onHelp) k.push(['?', 'not sure']);
+    if (props.revise && (row === 'option' || draft().trim() !== '' || current()?.answered)) k.push(['ctrl+r', 'revise with AI']);
     k.push(['tab', 'skip'], ['←→', 'questions'], ['ctrl+e', 'editor']);
     if (currentMeta().parent || currentMeta().helps) k.push(['ctrl+d', 'not relevant']);
     k.push(['ctrl+f', 'done — rest later'], ['ctrl+c', 'back']);
@@ -466,6 +517,17 @@ export function FoundationScreen(props: FoundationScreenProps) {
               <text style={{ fg: THEME.accent2 }}>
                 {'  and proposes options with a recommendation. You always choose.'}
               </text>
+            </Show>
+            {/* Coming from the vision: what it has proposed already, or is proposing */}
+            <Show when={(props.thinking ?? []).includes('your vision')}>
+              <text>{' '}</text>
+              <Spinner label="Proposing answers from your vision — each appears as ⇐ on its question" />
+            </Show>
+            <Show when={props.notice && !(props.thinking ?? []).includes('your vision')}>
+              <text>{' '}</text>
+              <For each={wrap(props.notice!, 78)}>
+                {(line) => <text style={{ fg: THEME.accent2 }}>{line}</text>}
+              </For>
             </Show>
             <text>{' '}</text>
             <box style={{ flexDirection: 'row' }}>
@@ -511,7 +573,42 @@ export function FoundationScreen(props: FoundationScreenProps) {
         <KeyBar keys={[['enter', 'continue'], ['←', 'revisit an answer'], ['ctrl+c', 'back']]} />
       </Show>
 
-      <Show when={!intro() && !showDone() && current()}>
+      <Show when={revising()}>
+        <box style={{ flexDirection: 'column', flexGrow: 1, padding: 1 }}>
+          <RevisePanel
+            name={revising()!.question.item.name}
+            current={revising()!.current}
+            unavailable={props.revise?.unavailable ?? null}
+            noun="answer"
+            invite="How should this answer change? The agent proposes a revision; nothing is saved until you accept it."
+            editorHint="ctrl+e opens the question in your editor instead."
+            examples={'e.g. "we deploy to Fly.io, not AWS" · "add the linter and its config" · "shorter, just the essentials"'}
+            propose={(turns, instruction) => props.revise!.propose(revising()!.question, revising()!.current, turns, instruction)}
+            onAccept={(block) => {
+              const q = revising()!.question;
+              const result = props.onAnswer(q, block);
+              if (!result.ok) return result;
+              // As if it had been typed: on to what comes next.
+              afterSave(result, block);
+              return { ok: true };
+            }}
+            onKeep={(text) => {
+              // The option as proposed after all: as if it had been picked.
+              const q = revising()!.question;
+              const result = props.onAnswer(q, text);
+              if (!result.ok) return result;
+              afterSave(result, text);
+              return { ok: true };
+            }}
+            onClose={(message) => {
+              setRevising(null);
+              if (message) setError(message);
+            }}
+          />
+        </box>
+      </Show>
+
+      <Show when={!intro() && !showDone() && !revising() && current()}>
         {/* Progress, per section */}
         <Panel title="Ground rules">
           <box style={{ flexDirection: 'row' }}>
@@ -540,6 +637,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
         <Panel
           title={`${current()!.title}${current()!.purpose ? ` · ${current()!.purpose}` : ''}`}
           focused
+          shrink
         >
           <text>{' '}</text>
           <text style={{ fg: THEME.accent }}>
@@ -569,12 +667,10 @@ export function FoundationScreen(props: FoundationScreenProps) {
           <text>{' '}</text>
 
           <Show when={current()!.answered}>
-            <box style={{ flexDirection: 'row' }}>
-              <text style={{ fg: THEME.ok }}>✓ Current answer: </text>
-              <text style={{ fg: THEME.text }}>
-                {wrap(current()!.item.text, 70)[0] ?? ''}
-              </text>
-            </box>
+            <text style={{ fg: THEME.ok }}>✓ Current answer</text>
+            <For each={current()!.item.text.split('\n').flatMap((l) => (l.trim() === '' ? [''] : wrap(l, Math.max(contentWidth() - 8, 30)))).slice(0, PREVIEW_LINES)}>
+              {(line) => <text style={{ fg: THEME.text }}>{`  ${line}`}</text>}
+            </For>
             <text>{' '}</text>
           </Show>
 
@@ -595,13 +691,16 @@ export function FoundationScreen(props: FoundationScreenProps) {
           </Show>
 
           <Show when={!waiting()}>
+          {/* The choices and the preview scroll when the screen is short; the input stays */}
+          <ScrollArea grow={false} follow={`choice-${sel()}`}>
           {/* The choices — one line each, so the list reads as a menu */}
           <For each={rows()}>
             {(row, i) => (
               <box
+                id={`choice-${i()}`}
                 onMouseDown={() => {
                   if (row.kind === 'skip') skip();
-                  else if (row.kind === 'option') save(row.option.label, row.derived !== undefined);
+                  else if (row.kind === 'option') save(optionAnswer(row.option), row.derived !== undefined);
                   else if (row.kind === 'help') help();
                   else {
                     setSel(i());
@@ -610,6 +709,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
                 }}
                 style={{
                   flexDirection: 'row',
+                  flexShrink: 0,
                   backgroundColor: sel() === i() ? THEME.highlight : THEME.panel,
                 }}
               >
@@ -672,6 +772,29 @@ export function FoundationScreen(props: FoundationScreenProps) {
               ].join(' · ')}`}
             </text>
           </Show>
+          {/* The highlighted option in full: what picking it writes */}
+          <Show when={preview()}>
+            <box
+              style={{
+                border: true,
+                borderStyle: 'rounded',
+                borderColor: THEME.border,
+                paddingLeft: 1,
+                paddingRight: 1,
+                flexDirection: 'column',
+                marginTop: 1,
+              }}
+              title={props.revise ? ' picking writes this · ctrl+r revise with AI ' : ' picking writes this '}
+            >
+              <For each={(() => {
+                const lines = preview()!.split('\n').flatMap((l) => (l.trim() === '' ? [''] : wrap(l, Math.max(contentWidth() - 10, 30))));
+                return lines.length > PREVIEW_LINES ? [...lines.slice(0, PREVIEW_LINES - 1), `… ${lines.length - PREVIEW_LINES + 1} more lines`] : lines;
+              })()}>
+                {(line) => <text style={{ fg: THEME.text }}>{line || ' '}</text>}
+              </For>
+            </box>
+          </Show>
+          </ScrollArea>
           <text>{' '}</text>
 
           {/* Your own answer */}

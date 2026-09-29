@@ -15,6 +15,7 @@ import {
   formatCost,
   formatTokens,
   sumUsage,
+  totalInput,
   type Usage,
   type UsageTotals,
 } from '../core/usage.ts';
@@ -69,10 +70,10 @@ export function UsageColumn(props: {
         <strong>{formatCost(props.totals.costUsd)}</strong>
       </text>
       <text style={{ fg: THEME.dim }}>{clip(requests(), USAGE_WIDTH - 3)}</text>
-      <Show when={props.totals.inputTokens + props.totals.outputTokens > 0}>
+      <Show when={totalInput(props.totals) + props.totals.outputTokens > 0}>
         <text style={{ fg: THEME.dim }}>
           {clip(
-            `${formatTokens(props.totals.inputTokens)} in · ${formatTokens(props.totals.outputTokens)} out`,
+            `${formatTokens(totalInput(props.totals))} in · ${formatTokens(props.totals.outputTokens)} out`,
             USAGE_WIDTH - 3,
           )}
         </text>
@@ -111,9 +112,16 @@ export function UsagePane(props: {
   active: ActiveAI | null;
   jobs: JobUsage[];
 }) {
-  const tokenLine = () =>
-    `${formatTokens(props.totals.inputTokens)} in · ${formatTokens(props.totals.outputTokens)} out` +
-    (props.totals.cacheReadTokens > 0 ? ` · ${formatTokens(props.totals.cacheReadTokens)} cached` : '');
+  // In, split by what it cost: read from the cache is cheapest, written to it dearest.
+  const tokenLine = () => {
+    const t = props.totals;
+    const split = [
+      t.cacheReadTokens > 0 ? `${formatTokens(t.cacheReadTokens)} from cache` : '',
+      t.cacheWriteTokens > 0 ? `${formatTokens(t.cacheWriteTokens)} cached` : '',
+      t.cacheReadTokens + t.cacheWriteTokens > 0 ? `${formatTokens(t.inputTokens)} uncached` : '',
+    ].filter(Boolean);
+    return `${formatTokens(totalInput(t))} in${split.length ? ` (${split.join(', ')})` : ''} · ${formatTokens(t.outputTokens)} out`;
+  };
 
   return (
     <box style={{ flexDirection: 'column', flexGrow: 1 }}>

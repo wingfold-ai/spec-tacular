@@ -62,6 +62,8 @@ export async function mountApp(
     saveSession?: TuiInput['saveSession'];
     reparse?: TuiInput['reparse'];
     refine?: TuiInput['refine'];
+    reviseAnswer?: TuiInput['reviseAnswer'];
+    reviseVisionAnswer?: TuiInput['reviseVisionAnswer'];
     /** Never the real clipboard: a test that pastes brings its own. */
     clipboard?: TuiInput['clipboard'];
     /** The AI usage sidebar's wiring, for tests that exercise it. */
@@ -93,6 +95,8 @@ export async function mountApp(
     saveSession: options.saveSession ?? (() => {}),
     reparse: options.reparse ?? (() => []),
     refine: options.refine,
+    reviseAnswer: options.reviseAnswer,
+    reviseVisionAnswer: options.reviseVisionAnswer,
     clipboard: options.clipboard ?? {
       read: async () => ({ ok: false, reason: 'no clipboard in this test' }),
       write: async () => ({ ok: false, reason: 'no clipboard in this test' }),

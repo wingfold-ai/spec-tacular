@@ -46,6 +46,18 @@ describe('a stream-json session', () => {
     expect(session.alive).toBe(true);
   });
 
+  test('reports what each turn cost, not the running total Claude Code sends', async () => {
+    const session = fakeSession();
+    await session.send('one', { timeoutMs: 5000 });
+    expect(session.lastUsage()?.costUsd).toBeCloseTo(0.01, 6);
+    await session.send('two', { timeoutMs: 5000 });
+    expect(session.lastUsage()?.costUsd).toBeCloseTo(0.001, 6);
+    await session.send('three', { timeoutMs: 5000 });
+    expect(session.lastUsage()?.costUsd).toBeCloseTo(0.001, 6);
+    // Token counts are already per turn and pass through unchanged.
+    expect(session.lastUsage()).toMatchObject({ inputTokens: 3, outputTokens: 20, cacheReadTokens: 5000 });
+  });
+
   test('a model error fails that request, and the session lives on', async () => {
     const session = fakeSession();
     await expect(session.send('FAIL', { timeoutMs: 5000 })).rejects.toThrow('model said no');

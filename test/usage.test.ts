@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  totalInput,
   addUsage,
   driverLabel,
   emptyUsage,
@@ -41,6 +42,17 @@ describe('usage totals', () => {
     addUsage(before, { driver: 'claude', model: 'm', costUsd: 1 });
     expect(before.requests).toBe(0);
     expect(before.models).toEqual([]);
+  });
+});
+
+describe('input tokens', () => {
+  test('count what came from and went into the cache, not only the uncached rest', () => {
+    const totals = sumUsage([
+      { driver: 'claude', inputTokens: 3, outputTokens: 50, cacheWriteTokens: 9000 },
+      { driver: 'claude', inputTokens: 2, outputTokens: 40, cacheReadTokens: 9100 },
+    ]);
+    expect(totals.inputTokens).toBe(5);
+    expect(totalInput(totals)).toBe(18105);
   });
 });
 

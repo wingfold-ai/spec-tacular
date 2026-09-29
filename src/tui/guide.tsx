@@ -13,7 +13,7 @@ import { THEME } from './theme.ts';
 /** `✓ Set up ── 2. Ground rules ── 3. Vision ── 4. First change`. */
 export function Stepper(props: { step: number; steps: string[] }) {
   return (
-    <box style={{ flexDirection: 'row', paddingLeft: 1, paddingRight: 1 }}>
+    <box style={{ flexDirection: 'row', paddingLeft: 1, paddingRight: 1, flexShrink: 0 }}>
       <For each={props.steps}>
         {(label, i) => (
           <text
@@ -73,7 +73,7 @@ const HELP_LINES = [
   '  q              quit',
   '',
   'Ground rules',
-  '  enter          take the highlighted choice — ⇐ derived or ★ recommended',
+  '  enter, ctrl+r  take the highlighted choice (⇐ derived, ★ recommended); ctrl+r revises it with AI first',
   '  tab, Skip      skip a question: left for later, never blocking a change',
   '  ctrl+f         done: leave the open questions for later and move on',
   '  ?              not sure: an explanation, examples and simpler questions',

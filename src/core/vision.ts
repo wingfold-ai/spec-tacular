@@ -121,9 +121,10 @@ const OPTION_SCHEMA = {
   properties: {
     label: { type: 'string' },
     detail: { type: 'string' },
+    answer: { type: 'string' },
     recommended: { type: 'boolean' },
   },
-  required: ['label', 'detail', 'recommended'],
+  required: ['label', 'detail', 'answer', 'recommended'],
 } as const;
 
 export const INTERVIEW_SCHEMA = {
@@ -246,9 +247,12 @@ const INTERVIEW_TASK = [
   'concrete question a developer can answer from what they want — about',
   'users, what they do, what comes first, what is out of scope, constraints',
   'such as data, integrations or platforms. Never technology already settled.',
-  'Offer 2 to 5 options where natural (short label, one-line detail, exactly',
-  'one recommended); none for questions only they can answer. "why" says in',
-  'one line what the answer decides. When enough, return an empty ask.',
+  'Offer 2 to 5 options where natural, exactly one recommended; none for',
+  'questions only they can answer. Each option has a short label for a list',
+  '(under 40 characters), a one-line detail, and an answer: the whole answer as',
+  'the developer would give it if they picked it — as short as the label for a',
+  'narrow question, a few concrete sentences for a broad one. "why" says in one',
+  'line what the answer decides. When enough, return an empty ask.',
 ].join('\n');
 
 export function buildSlicesPrompt(projectRoot: string, session: VisionSession): string {
@@ -293,11 +297,17 @@ function parseOptions(raw: unknown): AdviceOption[] {
   if (!Array.isArray(raw)) return [];
   const options = raw
     .filter(isRecord)
-    .map((o) => ({
-      label: String(o['label'] ?? '').trim(),
-      detail: String(o['detail'] ?? '').trim(),
-      recommended: o['recommended'] === true,
-    }))
+    .map((o) => {
+      const label = String(o['label'] ?? '').trim();
+      const answer = String(o['answer'] ?? '').trim();
+      return {
+        label,
+        detail: String(o['detail'] ?? '').trim(),
+        recommended: o['recommended'] === true,
+        // What picking it answers; absent when the label says it all.
+        ...(answer !== '' && answer !== label ? { answer } : {}),
+      };
+    })
     .filter((o) => o.label !== '')
     .slice(0, 5);
   const first = options.findIndex((o) => o.recommended);

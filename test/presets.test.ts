@@ -12,7 +12,7 @@ import {
   type Ask,
   type AskOptions,
 } from '../src/core/advisor.ts';
-import { answerFoundation, foundationDir, guidedQuestions, scaffoldFoundation } from '../src/core/foundation.ts';
+import { answerFoundation, DEFERRED, foundationDir, guidedQuestions, scaffoldFoundation } from '../src/core/foundation.ts';
 import { matchPresets, mergeOptions } from '../src/core/presets.ts';
 
 const dirs: string[] = [];
@@ -114,17 +114,17 @@ describe('the preset table', () => {
 describe('presets in the Foundation', () => {
   const quiet: Ask = async () => ({ followUps: [], upcoming: [], derived: [] });
 
-  test('follow-ups go in at once after the answer, marked as presets and left for the advisor', () => {
+  test('follow-ups are recorded for later at once, never asked; options go to the questions there', () => {
     const r = root();
     const advisor = new FoundationAdvisor(r, quiet);
     const lang = find(r, 'Language');
     answerFoundation(lang.item, 'Python');
-    expect(advisor.presets(lang, 'Python')).toEqual(['Which Python version?']);
-    expect(stack(r)).toContain('Python\n\n## Which Python version?\n\nTBD\n\n## Framework');
+    // Nothing to ask: the setup stays short.
+    expect(advisor.presets(lang, 'Python')).toEqual([]);
+    expect(stack(r)).toContain(`Python\n\n## Which Python version?\n\n${DEFERRED}\n\n## Framework`);
+    expect(guidedQuestions(r).some((q) => q.item.name === 'Which Python version?')).toBe(false);
 
     const meta = advisor.meta();
-    const version = meta[find(r, 'Which Python version?').item.id]!;
-    expect(version).toMatchObject({ parent: lang.item.name, depth: 1, preset: true, suggested: false });
     expect(meta[find(r, 'Package manager').item.id]).toMatchObject({ preset: true });
     expect(meta[find(r, 'Framework').item.id]!.options![0]!.label).toBe('FastAPI');
   });
@@ -144,37 +144,33 @@ describe('presets in the Foundation', () => {
     });
   });
 
-  test('the advisor then refines the first preset question, and adds its own after the presets', async () => {
+  test("the advisor's one follow-up for now is asked right after the answer; the presets stay recorded", async () => {
     const r = root();
     const prompts: string[] = [];
     const advisor = new FoundationAdvisor(r, async (prompt) => {
       prompts.push(prompt);
       return {
-        followUps: [{ ask: 'Which Python implementation?', why: '', options: [] }],
-        upcoming: [{ label: '3.14', detail: 'latest stable', recommended: true }],
+        followUps: [{ ask: 'Which embedded target?', why: '', now: true, options: [] }],
+        upcoming: [{ label: 'none', detail: 'a CLI', recommended: true }],
         derived: [],
       };
     });
     const lang = find(r, 'Language');
     answerFoundation(lang.item, 'Rust');
     advisor.presets(lang, 'Rust');
-    await advisor.afterAnswer(lang, 'Rust');
+    const { added } = await advisor.afterAnswer(lang, 'Rust');
+    expect(added.map((f) => f.ask)).toEqual(['Which embedded target?']);
 
-    // The presets stay where the developer expects them; the advisor's own
-    // follow-up comes after them.
     const names = guidedQuestions(r).filter((q) => q.title === 'Stack').map((q) => q.item.name);
-    expect(names.slice(0, 4)).toEqual([
+    expect(names.slice(0, 3)).toEqual([
       'Language and runtime, with versions.',
-      'Which Rust edition, and the minimum supported Rust version (MSRV)?',
-      'Which async runtime, if any?',
-      'Which Python implementation?',
+      'Which embedded target?',
+      'Framework, if any, and why it over the alternatives.',
     ]);
-    // The first preset question got the advisor's options; the preset mark is gone.
-    expect(prompts[0]).toContain('upcoming: options for the next question — [Stack] Which Rust edition');
-    const edition = advisor.meta()[find(r, 'Which Rust edition').item.id]!;
-    expect(edition.options![0]!.label).toBe('3.14');
-    expect(edition.preset).toBeUndefined();
-    expect(edition.suggested).toBe(true);
+    // The table's own follow-ups are in the file for later, after the answer.
+    expect(stack(r)).toContain(`## Which Rust edition, and the minimum supported Rust version (MSRV)?\n\n${DEFERRED}`);
+    // The next question asked got the advisor's options.
+    expect(prompts[0]).toContain('upcoming: options for the next question — [Stack] Framework');
   });
 
   test('preset options are shown to the advisor to improve on, and kept if it has none', async () => {
@@ -185,12 +181,12 @@ describe('presets in the Foundation', () => {
       return { followUps: [], upcoming: [], derived: [] };
     });
     const lang = find(r, 'Language');
-    answerFoundation(lang.item, 'TypeScript');
-    advisor.presets(lang, 'TypeScript');
-    const runtime = find(r, 'Which runtime runs it');
-    await advisor.suggest(runtime);
-    expect(prompts[0]).toContain('Generic options are shown for it already: Node.js (LTS); Bun; Deno.');
-    expect(advisor.meta()[runtime.item.id]!.options!.map((o) => o.label)).toEqual(['Node.js (LTS)', 'Bun', 'Deno']);
+    answerFoundation(lang.item, 'Python');
+    advisor.presets(lang, 'Python');
+    const framework = find(r, 'Framework');
+    await advisor.suggest(framework);
+    expect(prompts[0]).toContain('Generic options are shown for it already: FastAPI; Django; Flask; none.');
+    expect(advisor.meta()[framework.item.id]!.options!.map((o) => o.label)).toEqual(['FastAPI', 'Django', 'Flask', 'none']);
   });
 
   test('advice for a question answered while the model thought is dropped', async () => {
@@ -198,23 +194,23 @@ describe('presets in the Foundation', () => {
     let release: (v: unknown) => void = () => {};
     const advisor = new FoundationAdvisor(r, () => new Promise((res) => { release = res; }));
     const lang = find(r, 'Language');
-    answerFoundation(lang.item, 'TypeScript');
-    advisor.presets(lang, 'TypeScript');
-    const pending = advisor.afterAnswer(lang, 'TypeScript');
+    answerFoundation(lang.item, 'Python');
+    advisor.presets(lang, 'Python');
+    const pending = advisor.afterAnswer(lang, 'Python');
 
-    // The developer picks Bun before the advisor is back.
-    const runtime = find(r, 'Which runtime runs it');
-    answerFoundation(runtime.item, 'Bun');
+    // The developer picks Django before the advisor is back.
+    const framework = find(r, 'Framework');
+    answerFoundation(framework.item, 'Django');
     release({
       followUps: [],
-      upcoming: [{ label: 'Node.js 24', detail: '', recommended: true }],
-      derived: [{ question: runtime.item.name, answer: 'Node.js', reason: 'TypeScript' }],
+      upcoming: [{ label: 'Litestar', detail: '', recommended: true }],
+      derived: [{ question: framework.item.name, answer: 'FastAPI', reason: 'Python' }],
     });
     await pending;
 
-    expect(stack(r)).toContain('## Which runtime runs it: Node.js, Bun or Deno?\n\nBun');
-    const meta = advisor.meta()[find(r, 'Which runtime runs it').item.id]!;
-    expect(meta.options!.map((o) => o.label)).toEqual(['Node.js (LTS)', 'Bun', 'Deno']);
+    expect(stack(r)).toContain('## Framework, if any, and why it over the alternatives.\n\nDjango');
+    const meta = advisor.meta()[find(r, 'Framework').item.id]!;
+    expect(meta.options!.map((o) => o.label)).toEqual(['FastAPI', 'Django', 'Flask', 'none']);
     expect(meta.derived).toBeUndefined();
   });
 
