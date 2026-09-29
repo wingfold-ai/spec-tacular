@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundledSchemaDir, initProject, setProjectSchema, SCHEMA_NAME } from '../src/core/init.ts';
+import { SCHEMA_FILES } from '../src/core/schema-files.ts';
 
 const dirs: string[] = [];
 const project = () => {
@@ -70,6 +71,16 @@ describe('initProject', () => {
 
   test('the bundled schema ships with the package', () => {
     expect(existsSync(join(bundledSchemaDir(), 'schema.yaml'))).toBe(true);
+  });
+
+  test('the embedded schema is exactly the files under schemas/', () => {
+    // A compiled binary installs the embedded copy, so a file added to the
+    // directory but not to schema-files.ts would silently go missing.
+    const onDisk = [...new Bun.Glob('**/*').scanSync({ cwd: bundledSchemaDir() })].sort();
+    expect(Object.keys(SCHEMA_FILES).sort()).toEqual(onDisk);
+    for (const file of onDisk) {
+      expect(SCHEMA_FILES[file]).toBe(readFileSync(join(bundledSchemaDir(), file), 'utf8'));
+    }
   });
 });
 
