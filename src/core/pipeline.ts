@@ -9,12 +9,15 @@
  *
  * Two different truths live here and must not be confused. `written` is
  * OpenSpec's: the file exists. `accepted` is spec-tacular's: a human reviewed
- * every requirement in it. An artifact with no review data can only ever reach
- * `written`, never `accepted` — absence of review is never evidence of review.
+ * every requirement in it, or read the whole document and accepted it. An
+ * artifact with no review data can only ever reach `written`, never `accepted`
+ * — absence of review is never evidence of review.
  */
 
 import type { OpenSpecArtifact, OpenSpecChangeStatus } from '../adapter/types.ts';
 import type { ReviewSummary } from './review.ts';
+import type { Signoff } from './signoff.ts';
+import type { TaskProgress } from './tasks.ts';
 
 export type StageState =
   /** Prerequisites unmet — cannot be started. */
@@ -23,7 +26,10 @@ export type StageState =
   | 'ready'
   /** Written to disk. Reviewed? Unknown, or known to be unfinished. */
   | 'written'
-  /** Written AND every requirement accepted or deferred, with no drift. */
+  /**
+   * Written AND reviewed: every requirement accepted or deferred, or the
+   * document accepted as a whole — with no drift since.
+   */
   | 'accepted';
 
 export interface Stage {
@@ -34,6 +40,10 @@ export interface Stage {
   blockedBy: string[];
   /** Review progress, when this artifact carries reviewable requirements. */
   review?: ReviewSummary;
+  /** Whether it was accepted as a whole, when it is a document read in one piece. */
+  signoff?: Signoff;
+  /** `apply` only: how many of the tasks are ticked. */
+  tasks?: TaskProgress;
 }
 
 /**
@@ -60,8 +70,13 @@ export interface ChangePipeline {
   schema: string;
   root: string;
   stages: Stage[];
-  /** Appended after the schema's artifacts; gated by the schema's `apply.requires`. */
+  /**
+   * Appended after the schema's artifacts; gated by the schema's
+   * `apply.requires`. `accepted` once every task is ticked or deferred.
+   */
   apply: Stage;
+  /** Changes before this one on the roadmap that must be applied first. */
+  waitingOn: string[];
   gaps: PrerequisiteGap[];
   /** The stage a human should look at next, or null when planning is finished. */
   current: Stage | null;
@@ -74,6 +89,7 @@ function toState(
   artifact: OpenSpecArtifact,
   writtenIds: ReadonlySet<string>,
   review: ReviewSummary | undefined,
+  signoff: Signoff | undefined,
 ): Stage {
   const blockedBy = artifact.requires.filter((r) => !writtenIds.has(r));
   // OpenSpec's own status is trusted for done/blocked, but `blockedBy` is
@@ -83,7 +99,7 @@ function toState(
   if (artifact.status !== 'done') {
     state = blockedBy.length > 0 ? 'blocked' : 'ready';
   } else {
-    state = review?.complete ? 'accepted' : 'written';
+    state = (review ? review.complete : signoff?.accepted) ? 'accepted' : 'written';
   }
   return {
     id: artifact.id,
@@ -91,31 +107,38 @@ function toState(
     requires: artifact.requires,
     blockedBy,
     ...(review ? { review } : {}),
+    ...(signoff ? { signoff } : {}),
   };
 }
 
 /** Review summaries keyed by artifact id. Only `specs` carries one today. */
 export type ReviewByArtifact = Readonly<Record<string, ReviewSummary>>;
 
+/** Whole-document acceptance keyed by artifact id: proposal, design, tasks. */
+export type SignoffByArtifact = Readonly<Record<string, Signoff>>;
+
 export function buildPipeline(
   status: OpenSpecChangeStatus,
   reviews: ReviewByArtifact = {},
+  signoffs: SignoffByArtifact = {},
+  implementation: { tasks?: TaskProgress; waitingOn?: string[] } = {},
 ): ChangePipeline {
   const written = new Set(
     status.artifacts.filter((a) => a.status === 'done').map((a) => a.id),
   );
 
-  const stages = status.artifacts.map((a) => toState(a, written, reviews[a.id]));
+  const stages = status.artifacts.map((a) => toState(a, written, reviews[a.id], signoffs[a.id]));
 
   const applyBlockedBy = status.applyRequires.filter((r) => !written.has(r));
+  const { tasks, waitingOn = [] } = implementation;
   const apply: Stage = {
     id: 'apply',
     // `apply` is never `written`: whether implementation is finished is a
-    // question about tasks.md checkboxes, not about a file existing. That
-    // lands with the task parser in M8.
-    state: applyBlockedBy.length > 0 ? 'blocked' : 'ready',
+    // question about tasks.md checkboxes, not about a file existing.
+    state: applyBlockedBy.length > 0 ? 'blocked' : tasks?.applied ? 'accepted' : 'ready',
     requires: status.applyRequires,
     blockedBy: applyBlockedBy,
+    ...(tasks ? { tasks } : {}),
   };
 
   const gaps: PrerequisiteGap[] = [];
@@ -130,7 +153,7 @@ export function buildPipeline(
   // is exactly the work this tool exists for, and it comes before writing the
   // next artifact.
   const current =
-    stages.find((s) => s.state === 'written' && s.review !== undefined) ??
+    stages.find((s) => s.state === 'written' && (s.review !== undefined || s.signoff !== undefined)) ??
     stages.find((s) => s.state === 'ready') ??
     null;
 
@@ -140,6 +163,7 @@ export function buildPipeline(
     root: status.changeRoot,
     stages,
     apply,
+    waitingOn,
     gaps,
     current,
     written: written.size,
@@ -154,4 +178,12 @@ export function sortByProgress(pipelines: ChangePipeline[]): ChangePipeline[] {
     const ratio = (p: ChangePipeline) => (p.total === 0 ? 1 : p.written / p.total);
     return ratio(a) - ratio(b) || a.name.localeCompare(b.name);
   });
+}
+
+/**
+ * Every artifact up to the tasks accepted: all that is left is implementing,
+ * which needs no review — so the next slice may be planned meanwhile.
+ */
+export function fullyPlanned(pipeline: ChangePipeline | undefined): boolean {
+  return !!pipeline && pipeline.stages.length > 0 && pipeline.stages.every((s) => s.state === 'accepted');
 }

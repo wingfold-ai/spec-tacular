@@ -58,6 +58,16 @@ const summary = (over: Partial<ReviewSummary>): ReviewSummary => ({
 });
 
 describe('where a project is', () => {
+  test('OpenSpec counts as set up only once `openspec init` wired it into the agent', () => {
+    const r = withOpenSpec();
+    expect(projectStage(r, 0, 'claude')).toEqual({ kind: 'no-openspec', tools: true });
+    mkdirSync(join(r, '.claude', 'skills', 'openspec-apply-change'), { recursive: true });
+    expect(projectStage(r, 0, 'claude')).toEqual({ kind: 'no-foundation' });
+    // Set up for Claude Code is not set up for opencode.
+    expect(projectStage(r, 0, 'opencode')).toEqual({ kind: 'no-openspec', tools: true });
+    expect(projectStage(root(), 0, 'claude')).toEqual({ kind: 'no-openspec' });
+  });
+
   test('walks set up → vision → ground rules → first change → working', () => {
     const bare = root();
     expect(projectStage(bare, 0)).toEqual({ kind: 'no-openspec' });

@@ -45,6 +45,18 @@ export interface ChangeReview {
    * exactly when the specs have been revised.
    */
   cursor?: string | null;
+  /**
+   * The prose artifacts — proposal, design, tasks — accepted as a whole, by
+   * artifact id. They carry no requirements to review one by one, so it is
+   * the document that is accepted, and its hash that must still match.
+   */
+  documents?: Record<string, DocumentReview>;
+}
+
+export interface DocumentReview {
+  /** Hash of the document as it was accepted. */
+  hash: string;
+  acceptedAt: string;
 }
 
 /** A review item joined with its state, as the UI consumes it. */
@@ -111,6 +123,7 @@ export function loadReview(projectRoot: string, change: string): ChangeReview {
       schemaVersion: parsed.schemaVersion,
       requirements: parsed.requirements ?? {},
       cursor: parsed.cursor ?? null,
+      ...(parsed.documents ? { documents: parsed.documents } : {}),
     };
   } catch {
     return emptyReview(change);

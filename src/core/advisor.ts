@@ -280,7 +280,7 @@ function optionRules(mode: StructuredMode): string {
           'web search rather than relying on memory, and never propose a pre-release.',
         ]
       : [
-          'You cannot look anything up here, so never propose a specific version number;',
+          'You cannot search the web here, so never propose a specific version number;',
           'a question that needs one is asked where it can be looked up.',
         ]),
     'A question\'s "ask" is the question text alone, with no [Section] prefix; its',

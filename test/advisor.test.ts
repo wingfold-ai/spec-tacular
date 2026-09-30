@@ -311,15 +311,16 @@ describe('reaching the model', () => {
     }
   };
 
-  test('claude is asked for schema-shaped JSON, with web search, MCP and nothing else', () => {
+  test('claude is asked for schema-shaped JSON, with file reading, web search, MCP and nothing else', () => {
     withEnv({ SPECTACULAR_NO_MCP: undefined }, () => {
       const { command, args } = claudeDriver.structured!.build({ prompt: 'P', cwd: '/', schema: { type: 'object' } });
       expect(command).toBe('claude');
       expect(args).toContain('--json-schema');
-      // Built-in tools: web search for the advisor, and ToolSearch to load the deferred MCP tools.
-      expect(args[args.indexOf('--tools') + 1]).toBe('WebSearch,ToolSearch');
+      // Built-in tools: reading what the developer points at, web search for
+      // the advisor, and ToolSearch to load the deferred MCP tools.
+      expect(args[args.indexOf('--tools') + 1]).toBe('Read,Glob,Grep,WebFetch,WebSearch,ToolSearch');
       const quick = claudeDriver.structured!.build({ prompt: 'P', cwd: '/', schema: {}, mode: 'quick' }).args;
-      expect(quick[quick.indexOf('--tools') + 1]).toBe('ToolSearch');
+      expect(quick[quick.indexOf('--tools') + 1]).toBe('Read,Glob,Grep,WebFetch,ToolSearch');
       // The developer's servers load, and a hook approves their tools.
       expect(args).not.toContain('--strict-mcp-config');
       const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
@@ -331,11 +332,11 @@ describe('reaching the model', () => {
   test('SPECTACULAR_NO_MCP starts no MCP servers, as before', () => {
     withEnv({ SPECTACULAR_NO_MCP: '1' }, () => {
       const args = claudeDriver.structured!.build({ prompt: 'P', cwd: '/', schema: {} }).args;
-      expect(args[args.indexOf('--tools') + 1]).toBe('WebSearch');
+      expect(args[args.indexOf('--tools') + 1]).toBe('Read,Glob,Grep,WebFetch,WebSearch');
       expect(args).toContain('--strict-mcp-config');
       expect(args).not.toContain('--settings');
       const quick = claudeDriver.structured!.build({ prompt: 'P', cwd: '/', schema: {}, mode: 'quick' }).args;
-      expect(quick[quick.indexOf('--tools') + 1]).toBe('');
+      expect(quick[quick.indexOf('--tools') + 1]).toBe('Read,Glob,Grep,WebFetch');
     });
   });
 

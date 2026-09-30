@@ -23,7 +23,7 @@ import {
 interface StreamEvent {
   type?: string;
   subtype?: string;
-  message?: { content?: { type?: string; text?: string; name?: string }[] };
+  message?: { content?: string | ContentPart[] };
   result?: string;
   is_error?: boolean;
   structured_output?: unknown;
@@ -39,6 +39,63 @@ interface StreamEvent {
     cache_read_input_tokens?: number;
   };
   modelUsage?: Record<string, unknown>;
+  permission_denials?: unknown[];
+}
+
+interface ContentPart {
+  type?: string;
+  text?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  is_error?: boolean;
+  content?: unknown;
+}
+
+/** A path as the log shows it: relative to the project the job runs in. */
+function shortPath(path: string): string {
+  const root = `${process.cwd()}/`;
+  return path.startsWith(root) ? path.slice(root.length) : path;
+}
+
+const oneLine = (text: string, max = 160) => {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length <= max ? line : `${line.slice(0, max - 1)}…`;
+};
+
+/** A tool call as one line: what it did, not only which tool. */
+export function describeToolUse(name: string, input: Record<string, unknown> = {}): string {
+  const str = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : undefined);
+  const path = str('file_path') ?? str('notebook_path') ?? str('path');
+  switch (name) {
+    case 'Bash':
+      return `$ ${oneLine(str('command') ?? '')}`;
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'NotebookEdit':
+      return path ? `· ${name} ${shortPath(path)}` : `· ${name}`;
+    case 'Grep':
+    case 'Glob':
+      return `· ${name} ${oneLine(str('pattern') ?? '')}${path ? ` in ${shortPath(path)}` : ''}`;
+    case 'WebFetch':
+      return `· ${name} ${str('url') ?? ''}`;
+    case 'WebSearch':
+      return `· ${name} ${oneLine(str('query') ?? '')}`;
+    case 'TodoWrite':
+      return '· updating its task list';
+    default:
+      return `· ${name}`;
+  }
+}
+
+/** A tool result's text, whichever shape it came in. */
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((c) => (typeof c === 'object' && c && 'text' in c ? String(c.text) : '')).join(' ');
+  }
+  return '';
 }
 
 /**
@@ -125,20 +182,32 @@ export function mcpFlags(): string[] {
   ];
 }
 
+/**
+ * What every structured request may use, whatever its mode: the developer
+ * writes answers as they would to Claude Code itself — "see docs/notes.md",
+ * a pasted link — so the files and pages they point at must be readable.
+ */
+const READ_TOOLS = ['Read', 'Glob', 'Grep', 'WebFetch'];
+
 /** Model, tools and schema for a structured request, one-shot or session. */
 function structuredFlags(schema: object, mode: StructuredMode = 'research'): string[] {
   const model = chosenModel(mode);
-  // MCP tools are deferred: the agent finds and loads them with ToolSearch.
-  const builtIn = [...(mode === 'research' ? ['WebSearch'] : []), ...(mcpEnabled() ? ['ToolSearch'] : [])];
+  const builtIn = [
+    ...READ_TOOLS,
+    ...(mode === 'research' ? ['WebSearch'] : []),
+    // MCP tools are deferred: the agent finds and loads them with ToolSearch.
+    ...(mcpEnabled() ? ['ToolSearch'] : []),
+  ];
   return [
     '--json-schema',
     JSON.stringify(schema),
     ...(model ? ['--model', model] : []),
-    // Of the built-in tools, web search at most: the advisor looks up current
-    // versions, and has no business reading or editing the project.
+    // Reading, never editing or running anything: the advisor answers
+    // questions, the artifact jobs are what change the project.
     '--tools',
     builtIn.join(','),
-    ...(builtIn.length > 0 ? ['--allowedTools', ...builtIn] : []),
+    '--allowedTools',
+    ...builtIn,
     '--no-session-persistence',
     ...mcpFlags(),
   ];
@@ -282,6 +351,10 @@ export const claudeDriver: AgentDriver = {
   id: 'claude',
   label: 'Claude Code',
 
+  interactive(prompt: string): AgentCommand {
+    return { command: 'claude', args: [prompt] };
+  },
+
   build(request: AgentRequest): AgentCommand {
     return {
       command: 'claude',
@@ -369,23 +442,32 @@ export const claudeDriver: AgentDriver = {
       return trimmed;
     }
 
-    if (event.type === 'assistant') {
-      const parts = event.message?.content ?? [];
-      const text = parts
-        .filter((p) => p.type === 'text' && p.text)
-        .map((p) => p.text!.trim())
-        .filter(Boolean)
-        .join(' ');
-      if (text) return text;
+    const parts = Array.isArray(event.message?.content) ? event.message.content : [];
 
-      const tools = parts.filter((p) => p.type === 'tool_use' && p.name).map((p) => p.name!);
-      return tools.length > 0 ? `· ${tools.join(', ')}` : null;
+    if (event.type === 'assistant') {
+      const out = parts.flatMap((p) => {
+        if (p.type === 'text' && p.text?.trim()) return [p.text.trim()];
+        if (p.type === 'tool_use' && p.name) return [describeToolUse(p.name, p.input)];
+        return [];
+      });
+      return out.length > 0 ? out.join('\n') : null;
+    }
+
+    // What a tool answered is noise — unless it refused or failed, which is
+    // exactly what explains an agent that stops short.
+    if (event.type === 'user') {
+      const failed = parts
+        .filter((p) => p.type === 'tool_result' && p.is_error)
+        .map((p) => `  ✗ ${oneLine(resultText(p.content))}`);
+      return failed.length > 0 ? failed.join('\n') : null;
     }
 
     if (event.type === 'result') {
       const usage = usageFromResult(event);
       const cost = usage?.costUsd !== undefined ? ` · $${usage.costUsd.toFixed(4)}` : '';
-      return event.is_error ? `failed: ${event.result ?? 'unknown error'}` : `done${cost}`;
+      const denied = event.permission_denials?.length ?? 0;
+      const refused = denied > 0 ? ` · ${denied} tool call${denied === 1 ? '' : 's'} refused` : '';
+      return event.is_error ? `failed: ${event.result ?? 'unknown error'}` : `done${cost}${refused}`;
     }
 
     // System init, user echoes, partial chunks: protocol noise.
