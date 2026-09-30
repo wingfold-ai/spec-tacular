@@ -6,6 +6,10 @@ name: Release
 # with the README and the licence, and a SHA256SUMS file. A tag with a hyphen
 # (`v1.0.0-rc.1`) makes a pre-release.
 #
+# Merging a pull request into ts/main that bumps the version does this on its
+# own: auto-release.yml tags the merge and calls this workflow for the tag
+# (a tag pushed by a workflow never triggers another one by itself).
+#
 # A pull request that changes this workflow or the build scripts runs the
 # build and every check as a dry run, packaged as `dev`; only a tag publishes.
 on:
@@ -14,7 +18,14 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .github/workflows/auto-release.yml
       - scripts/**
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build and publish, already pushed
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -39,16 +50,19 @@ jobs:
           - { platform: darwin-arm64, os: macos-15, target: bun-darwin-arm64 }
           - { platform: darwin-x64, os: macos-15-intel, target: bun-darwin-x64-baseline }
     env:
-      TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+      TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Called for a tag: build exactly what was tagged.
+          ref: ${{ inputs.tag }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check the tag matches package.json
-        if: github.ref_type == 'tag'
+        if: env.TAG != 'dev'
         shell: bash
         run: |
           version=$(bun -e 'console.log(require("./package.json").version)')
@@ -110,12 +124,12 @@ jobs:
   release:
     name: publish the release
     needs: build
-    if: github.ref_type == 'tag'
+    if: inputs.tag || github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
