@@ -63,10 +63,13 @@ bun install && bun run build   # writes dist/spectacular
 
 ### Releasing
 
-Bump `version` in `package.json`, merge, then tag that commit and push the tag:
+Bump `version` in `package.json` in the pull request and merge it into
+`ts/main`: that is the whole release. The auto-release workflow tags the merge
+`v<version>` and runs the release. A merge that leaves the version alone
+releases nothing. Tagging by hand still works too:
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
 The release workflow checks the tag matches `package.json`, builds and
