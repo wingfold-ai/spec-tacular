@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { OpenSpecArtifact, OpenSpecChangeStatus } from '../src/adapter/types.ts';
 import { gateFor } from '../src/core/gate.ts';
 import { nextStep } from '../src/core/guide.ts';
-import { buildPipeline, fullyPlanned } from '../src/core/pipeline.ts';
+import { buildPipeline, specified } from '../src/core/pipeline.ts';
 import { taskProgress } from '../src/core/tasks.ts';
 
 const TASKS = `## 1. Setup
@@ -53,7 +53,7 @@ const planned = (implementation: Parameters<typeof buildPipeline>[3]) =>
 describe('implementing', () => {
   test('a fully planned change is ready to implement, and says how far it got', () => {
     const p = planned({ tasks: taskProgress(TASKS) });
-    expect(fullyPlanned(p)).toBe(true);
+    expect(specified(p)).toBe(true);
     expect(p.apply.state).toBe('ready');
     expect(nextStep(p, true)).toMatchObject({ actions: ['draft'], artifact: 'apply' });
     expect(nextStep(p, true).text).toBe('2 of 4 tasks ticked off. Carry on implementing — the agent opens right here.');
@@ -76,7 +76,33 @@ describe('implementing', () => {
     });
     const gate = gateFor(p, 'apply');
     expect(gate.allowed === false && gate.blockers).toEqual(['auth is not applied yet']);
-    // Planning is not held up by it.
-    expect(gateFor(p, 'tasks').allowed).toBe(true);
+    // What it does is not held up by it; how it is built is.
+    expect(gateFor(p, 'specs').allowed).toBe(true);
+    expect(gateFor(p, 'tasks').allowed).toBe(false);
+  });
+
+  test('specified ahead: the design waits for the code before it', () => {
+    const p = buildPipeline(
+      { ...status, artifacts: [a('proposal'), a('specs', ['proposal']), { ...a('design', ['specs']), status: 'ready' }, { ...a('tasks', ['specs', 'design']), status: 'blocked' }] },
+      { specs: { total: 1, accepted: 1, rejected: 0, deferred: 0, pending: 0, drifted: 0, complete: true } },
+      { proposal: ACCEPTED },
+      { waitingOn: ['auth'] },
+    );
+    expect(specified(p)).toBe(true);
+    expect(p.current?.id).toBe('design');
+    expect(nextStep(p, true)).toEqual({
+      text: 'Specified. The design waits until auth is applied — it builds on that code.',
+      actions: [],
+    });
+    expect(gateFor(p, 'design').allowed === false && gateFor(p, 'design')).toMatchObject({
+      blockers: ['auth is not applied yet'],
+    });
+    // Once auth is applied, the design is next like any other.
+    const free = buildPipeline(
+      { ...status, artifacts: p.stages.map((st) => ({ id: st.id, requires: st.requires, outputPath: `${st.id}.md`, status: st.state === 'blocked' ? 'blocked' : st.state === 'ready' ? 'ready' : 'done' })) },
+      { specs: { total: 1, accepted: 1, rejected: 0, deferred: 0, pending: 0, drifted: 0, complete: true } },
+      { proposal: ACCEPTED },
+    );
+    expect(nextStep(free, true)).toMatchObject({ actions: ['draft', 'write'], artifact: 'design' });
   });
 });

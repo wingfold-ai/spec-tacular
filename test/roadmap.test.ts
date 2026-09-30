@@ -83,29 +83,29 @@ describe('promoting', () => {
     expect(result.ok === true && result.roadmap.slices[0]!.status).toBe('active');
   });
 
-  test('only one slice may be in planning at a time', () => {
+  test('only one slice may be specified at a time', () => {
     // The single rule that stops a greenfield project becoming a dozen
     // changes nobody can review.
     const promoted = promoteSlice(roadmap(), 'auth');
     const second = promoteSlice(promoted.ok === true ? promoted.roadmap : roadmap(), 'billing');
     expect(second.ok).toBe(false);
-    expect(second.ok === false && second.reason).toContain("'auth' is still being planned");
-    expect(second.ok === false && second.reason).toContain('one slice in planning at a time');
+    expect(second.ok === false && second.reason).toContain("'auth' is still being specified");
+    expect(second.ok === false && second.reason).toContain('one slice specified at a time');
   });
 
-  test('once a slice is fully planned, the next — even one depending on it — may be planned', () => {
+  test('once a slice is specified, the next — even one depending on it — may be specified', () => {
     const promoted = promoteSlice(roadmap(), 'auth');
     const r = promoted.ok ? promoted.roadmap : roadmap();
-    const planned = (id: string) => id === 'auth';
-    expect(nextPromotable(r, planned)?.id).toBe('export');
-    const next = promoteSlice(r, 'export', planned);
+    const specified = (id: string) => id === 'auth';
+    expect(nextPromotable(r, specified)?.id).toBe('export');
+    const next = promoteSlice(r, 'export', specified);
     expect(next.ok).toBe(true);
-    // Its implementing waits for auth to be applied.
+    // Its design, tasks and implementing wait for auth to be applied.
     expect(waitingOn(next.ok ? next.roadmap : r, 'export')).toEqual(['auth']);
     expect(waitingOn(next.ok ? next.roadmap : r, 'auth')).toEqual([]);
     expect(waitingOn(r, 'not-a-slice')).toEqual([]);
-    // And while export is in planning, nothing else opens.
-    expect(nextPromotable(next.ok ? next.roadmap : r, planned)).toBeNull();
+    // And while export is being specified, nothing else opens.
+    expect(nextPromotable(next.ok ? next.roadmap : r, specified)).toBeNull();
   });
 
   test('an applied slice is done, and waits on nothing any more', () => {

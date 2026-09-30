@@ -13,7 +13,7 @@ import { createCliRenderer } from '@opentui/core';
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { staleArtifacts } from '../core/gate.ts';
-import { fullyPlanned, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
+import { specified, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
 import {
   decide,
   move as moveCursor,
@@ -973,20 +973,20 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   };
 
   /**
-   * The roadmap's next slice, once the ones before it are fully planned: it
-   * can be planned while they are implemented.
+   * The roadmap's next slice, once the ones before it are specified: it can
+   * be specified while they are designed and built.
    */
   const nextSlice = createMemo(() => {
     const r = roadmap();
     if (!r || !props.input.startNextSlice) return null;
-    return nextPromotable(r, (id) => fullyPlanned(pipelines().find((p) => p.name === id)));
+    return nextPromotable(r, (id) => specified(pipelines().find((p) => p.name === id)));
   });
 
   const startSlice = async () => {
     const result = await props.input.startNextSlice!();
     if (!result.ok) return setNotice(result.reason);
     await reload(result.change);
-    setNotice(`Started ${result.change}. Its implementing waits until the slices before it are applied.`);
+    setNotice(`Started ${result.change}: specify it now — its design waits until the slices before it are applied.`);
   };
 
   /** The selected change's next step, as buttons. */
@@ -1010,10 +1010,6 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
     if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'e', run: () => void writeNext() });
     if (actions.includes('foundation')) out.push({ label: '▶ Ground rules', key: 'f', run: () => void openFoundation() });
-    const slice = nextSlice();
-    if (slice && fullyPlanned(selected())) {
-      out.push({ label: `▶ Next slice: ${slice.id}`, key: 's', run: () => void startSlice() });
-    }
     const latest = readable().at(-1);
     const p = selected();
     if (latest && p && latest !== toRead) out.push({ label: `📄 Read the ${latest}`, key: 'v', run: () => void openDoc(p.name, latest) });
@@ -1240,7 +1236,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     } else if (key.name === 'r') enterReview();
     else if (key.name === 'n') startNewChange();
     else if (key.name === 'w') void draftNext();
-    else if (key.name === 's' && nextSlice() && fullyPlanned(selected())) void startSlice();
+    else if (key.name === 's' && nextSlice() && specified(selected())) void startSlice();
     else if (key.name === 'e') void writeNext();
     else if (key.name === 'f') void openFoundation();
     else if (key.name === 'h') setScreen('home');
@@ -1578,6 +1574,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                           )}
                         </For>
                       </box>
+                      {/* Not a button: it is not this change's next step, and a
+                          fourth button would not fit the row. */}
+                      <Show when={nextSlice() && specified(selected())}>
+                        <text>{' '}</text>
+                        <text style={{ fg: THEME.dim }}>
+                          {`s  specify the next slice on the roadmap: ${nextSlice()!.id}`}
+                        </text>
+                      </Show>
                     </Show>
                   </Panel>
                 </Show>

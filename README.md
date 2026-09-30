@@ -393,10 +393,11 @@ Specification 'data-export' is valid
 ```
 
 Greenfield gets sequenced. `spec-tacular/roadmap.yaml` holds the vision and an
-ordered list of slices; one is in planning at a time, so the review queue never
-exceeds a single change. Once a slice is planned through its tasks, the next
-one can be planned (`s` in the TUI) while the first is implemented — but it is
-implemented only after the slices before it are applied: every task ticked
+ordered list of slices; one is being specified at a time, so the review queue
+never exceeds a single change. Once a slice's proposal and specs are accepted,
+the next one can be specified (`s` in the TUI) — without waiting for anything
+to be built. Its design, tasks and implementing wait until the slices before it
+are applied, since they build on that code: applied means every task ticked
 off, except those marked `(defer: …)` that need a deployment to verify. An
 applied slice turns ✓ on its own.
 

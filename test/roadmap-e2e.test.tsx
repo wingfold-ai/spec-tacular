@@ -83,21 +83,21 @@ describe('the next slice', () => {
     return ui;
   };
 
-  test('waits while the current slice is still being planned', async () => {
+  test('waits while the current slice is still being specified', async () => {
     const started: string[] = [];
     const ui = await mountWith(changeWith('book-rooms', ['proposal'], []), started);
-    expect(ui.frame()).not.toContain('Next slice');
+    expect(ui.frame()).not.toContain('next slice');
     await ui.press('s');
     expect(started).toEqual([]);
   });
 
-  test('can be planned once the current one is planned through its tasks', async () => {
+  test('can be specified once the current one is — before it is designed, let alone applied', async () => {
     const started: string[] = [];
-    const ui = await mountWith(planned('book-rooms'), started);
-    expect(ui.frame()).toContain('▶ Next slice: see-the-week');
+    const ui = await mountWith(changeWith('book-rooms', ['proposal', 'specs'], ['proposal', 'specs']), started);
+    expect(ui.frame()).toContain('s  specify the next slice on the roadmap: see-the-week');
     await ui.press('s');
     await ui.settle(50);
     expect(started).toEqual(['see-the-week']);
-    expect(ui.frame()).toContain('Started see-the-week. Its implementing waits until the slices before it are applied.');
+    expect(ui.frame()).toContain('Started see-the-week: specify it now — its design waits until the slices before it are applied.');
   });
 });
