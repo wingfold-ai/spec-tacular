@@ -7,7 +7,9 @@
  * before any code exists (docs/problem-analysis.md §4).
  *
  * The roadmap is reviewed first, cheaply: one line per slice. Changes then
- * open one slice at a time, so the review queue never exceeds one change.
+ * open one slice at a time, so the review queue never exceeds one change:
+ * the next slice opens once the one before it is fully planned, so it can be
+ * planned while that one is implemented — but it is implemented only after.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -103,25 +105,34 @@ export type PromoteSliceResult =
   | { ok: false; reason: string };
 
 /**
+ * Whether an active slice's change is fully planned: every artifact up to its
+ * tasks accepted. What is left of it is implementing, which needs no review.
+ */
+export type IsPlanned = (sliceId: string) => boolean;
+
+/**
  * Marks a slice active, so a change can be opened for it.
  *
- * One active slice at a time. That single rule is what stops a greenfield
+ * One slice in planning at a time. That single rule is what stops a greenfield
  * project turning into a dozen changes nobody can review: the queue is bounded
- * by construction rather than by discipline.
+ * by construction rather than by discipline. A slice that is fully planned no
+ * longer holds the queue — the next one may be planned while it is built —
+ * and counts as far enough along for the slices that depend on it: their
+ * implementing still waits for it (see `waitingOn`).
  */
-export function promoteSlice(roadmap: Roadmap, id: string): PromoteSliceResult {
+export function promoteSlice(roadmap: Roadmap, id: string, planned: IsPlanned = () => false): PromoteSliceResult {
   const slice = roadmap.slices.find((s) => s.id === id);
   if (!slice) return { ok: false, reason: `no slice called '${id}'` };
   if (slice.status === 'done') return { ok: false, reason: `'${id}' is already done` };
   if (slice.status === 'active') return { ok: false, reason: `'${id}' is already active` };
 
-  const active = roadmap.slices.find((s) => s.status === 'active');
-  if (active) {
+  const planning = roadmap.slices.find((s) => s.status === 'active' && !planned(s.id));
+  if (planning) {
     return {
       ok: false,
       reason:
-        `'${active.id}' is already active. Finish or park it first — one slice at a ` +
-        'time is what keeps the review queue to a single change.',
+        `'${planning.id}' is still being planned. Accept its tasks first — one slice in ` +
+        'planning at a time is what keeps the review queue to a single change.',
     };
   }
 
@@ -129,7 +140,7 @@ export function promoteSlice(roadmap: Roadmap, id: string): PromoteSliceResult {
     const other = roadmap.slices.find((s) => s.id === dep);
     // A dependency that does not exist is a broken roadmap, and treating it as
     // satisfied would let the slice through on a typo.
-    return !other || other.status !== 'done';
+    return !other || !(other.status === 'done' || (other.status === 'active' && planned(other.id)));
   });
   if (blocking.length > 0) {
     return { ok: false, reason: `'${id}' depends on ${blocking.join(', ')}, not done yet` };
@@ -154,13 +165,30 @@ export function completeSlice(roadmap: Roadmap, id: string): PromoteSliceResult 
 }
 
 /** The next slice that could be promoted, or null when none can be. */
-export function nextPromotable(roadmap: Roadmap): Slice | null {
-  if (roadmap.slices.some((s) => s.status === 'active')) return null;
-  return (
-    roadmap.slices.find(
-      (s) =>
-        s.status === 'planned' &&
-        s.dependsOn.every((d) => roadmap.slices.find((o) => o.id === d)?.status === 'done'),
-    ) ?? null
-  );
+export function nextPromotable(roadmap: Roadmap, planned: IsPlanned = () => false): Slice | null {
+  return roadmap.slices.find((s) => s.status === 'planned' && promoteSlice(roadmap, s.id, planned).ok) ?? null;
+}
+
+/**
+ * The slices before `id` on the roadmap that are not done yet: what its
+ * implementing waits for. Empty for a change that is no slice.
+ */
+export function waitingOn(roadmap: Roadmap | null, id: string): string[] {
+  const at = roadmap?.slices.findIndex((s) => s.id === id) ?? -1;
+  if (!roadmap || at < 0) return [];
+  return roadmap.slices.slice(0, at).filter((s) => s.status === 'active').map((s) => s.id);
+}
+
+/**
+ * The roadmap with the slices whose changes are applied marked done, or null
+ * when that changes nothing.
+ */
+export function markApplied(roadmap: Roadmap, applied: (sliceId: string) => boolean): Roadmap | null {
+  let changed = false;
+  const slices = roadmap.slices.map((s) => {
+    if (s.status !== 'active' || !applied(s.id)) return s;
+    changed = true;
+    return { ...s, status: 'done' as const };
+  });
+  return changed ? { ...roadmap, slices } : null;
 }

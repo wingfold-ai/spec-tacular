@@ -22,16 +22,19 @@ export type GateDecision =
 /**
  * Acceptance is only required where it can be measured.
  *
- * Today only the specs artifact carries per-requirement review, so a prose
- * artifact (proposal, design, tasks) is gated on existence alone. Claiming
- * otherwise would either block every change forever or quietly treat
- * "unreviewable" as "reviewed" — both worse than saying so. Document-level
- * review is follow-up work; until it lands this function is deliberately
- * honest about what it cannot check.
+ * The specs are accepted requirement by requirement; a prose artifact
+ * (proposal, design, tasks) as a whole, once read (core/signoff.ts). One
+ * with neither — no review data loaded — is gated on existence alone, rather
+ * than blocking forever or treating "unreviewable" as "reviewed".
  */
 function describeBlocker(stage: Stage): string | null {
   if (stage.state === 'ready' || stage.state === 'blocked') {
     return `${stage.id} has not been written yet`;
+  }
+  if (stage.signoff && !stage.signoff.accepted) {
+    return stage.signoff.drifted
+      ? `${stage.id} changed since it was accepted`
+      : `${stage.id} has not been accepted yet`;
   }
   const review = stage.review;
   if (!review) return null; // written, and nothing reviewable to check
@@ -49,6 +52,7 @@ function describeBlocker(stage: Stage): string | null {
 
 /** A prerequisite that drifted after this artifact was written against it. */
 function describeStaleness(stage: Stage): string | null {
+  if (stage.signoff?.drifted) return `${stage.id} changed after it was accepted`;
   const drifted = stage.review?.drifted ?? 0;
   return drifted > 0
     ? `${stage.id} changed after review (${drifted} requirement${drifted === 1 ? '' : 's'})`
@@ -81,6 +85,12 @@ export function gateFor(pipeline: ChangePipeline, artifactId: string): GateDecis
     if (blocker) blockers.push(blocker);
     const stale = describeStaleness(prerequisite);
     if (stale) warnings.push(stale);
+  }
+
+  // A slice builds on the ones before it: planning it may run ahead, but
+  // implementing it waits until they are implemented.
+  if (artifactId === 'apply') {
+    for (const change of pipeline.waitingOn) blockers.push(`${change} is not applied yet`);
   }
 
   if (blockers.length > 0) {

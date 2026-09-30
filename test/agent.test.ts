@@ -38,6 +38,28 @@ describe('claude driver', () => {
     expect(claudeDriver.formatLine(line)).toBe('· Write');
   });
 
+  test('says what each tool call did', () => {
+    const use = (name: string, input: object) =>
+      claudeDriver.formatLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } }));
+    expect(use('Read', { file_path: `${process.cwd()}/openspec/changes/c/design.md` })).toBe('· Read openspec/changes/c/design.md');
+    expect(use('Bash', { command: 'pnpm   test\n  --run', description: 'Run the tests' })).toBe('$ pnpm test --run');
+    expect(use('Grep', { pattern: 'TODO', path: '/elsewhere' })).toBe('· Grep TODO in /elsewhere');
+  });
+
+  test('shows a refused or failed tool call, and counts the refusals at the end', () => {
+    const results = JSON.stringify({
+      type: 'user',
+      message: { content: [
+        { type: 'tool_result', is_error: true, content: 'This command requires approval' },
+        { type: 'tool_result', content: 'v22.23.1' },
+      ] },
+    });
+    expect(claudeDriver.formatLine(results)).toBe('  ✗ This command requires approval');
+    expect(claudeDriver.formatLine(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } }))).toBeNull();
+    expect(claudeDriver.formatLine(JSON.stringify({ type: 'result', result: 'ok', permission_denials: [{}, {}] })))
+      .toBe('done · 2 tool calls refused');
+  });
+
   test('reports the result, success or failure', () => {
     expect(claudeDriver.formatLine(JSON.stringify({ type: 'result', result: 'ok' }))).toBe('done');
     expect(

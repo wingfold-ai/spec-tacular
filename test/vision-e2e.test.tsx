@@ -352,7 +352,7 @@ describe('an agent’s draft', () => {
     expect(ui.frame()).toContain('book-rooms › proposal');
     expect(ui.frame()).toContain('Clinics double-book rooms.');
     expect(ui.frame()).toContain('• Add booking');
-    expect(ui.frame()).toContain('✓ Looks good — draft the specs');
+    expect(ui.frame()).toContain('✓ Accept — draft the specs');
     expect(ui.frame()).toContain('↻ Redraft with feedback');
 
     // Feedback goes back to the agent.
@@ -363,7 +363,7 @@ describe('an agent’s draft', () => {
     expect(ui.dispatched.at(-1)).toBe('book-rooms/proposal (mention cancellations)');
   });
 
-  test('"looks good" drafts the next artifact, and v reads it again', async () => {
+  test('accepting it ticks it off and drafts the next artifact, and v reads it again', async () => {
     const ui = await mountApp({ baseline: true });
     mounted.push(ui);
     await ui.press('return');
@@ -377,13 +377,43 @@ describe('an agent’s draft', () => {
     ui.finishJob('book-rooms', 'proposal', '# Proposal\n\nBody.\n');
     await ui.settle(2300);
 
-    await ui.press('return'); // ✓ Looks good — draft the specs
+    await ui.press('return'); // ✓ Accept — draft the specs
     await ui.settle(50);
     expect(ui.dispatched.at(-1)).toBe('book-rooms/specs');
     expect(ui.frame()).toContain('Claude Code is drafting the specs');
+    expect(ui.frame()).toContain('✓ proposal');
 
+    // Read again once accepted, there is nothing left to accept.
     await ui.press('v');
     await ui.settle(50);
     expect(ui.frame()).toContain('book-rooms › proposal');
+    expect(ui.frame()).not.toContain('✓ Accept');
+    expect(ui.frame()).toContain('✓ Looks good');
+  });
+
+  test('a proposal left unread is the next step, and blocks the specs', async () => {
+    const ui = await mountApp({ baseline: true });
+    mounted.push(ui);
+    await ui.press('return');
+    ui.settleGroundRules();
+    await ui.press('c', { ctrl: true });
+    await ui.press('n');
+    await ui.type('Let users book rooms');
+    await ui.press('return');
+    await ui.press('return');
+    await ui.press('return');
+    ui.finishJob('book-rooms', 'proposal', '# Proposal\n\nBody.\n');
+    await ui.settle(2300);
+
+    await ui.press('q'); // not now
+    await ui.settle(50);
+    expect(ui.frame()).toContain('● proposal');
+    expect(ui.frame()).toContain('Read the proposal, then accept it or ask for changes.');
+    expect(ui.frame()).toContain('▶ Read the proposal');
+    await ui.press('w'); // drafting the specs is not open yet
+    expect(ui.dispatched).toEqual(['book-rooms/proposal']);
+
+    await ui.press('return'); // ▶ Read the proposal
+    expect(ui.frame()).toContain('✓ Accept — draft the specs');
   });
 });

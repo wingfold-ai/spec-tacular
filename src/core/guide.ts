@@ -11,7 +11,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { isOpenSpecProject } from '../adapter/openspec.ts';
+import { isOpenSpecProject, openSpecToolsInstalled } from '../adapter/openspec.ts';
 import { foundationExists, isDeferred, isUnanswered, loadFoundation } from './foundation.ts';
 import { gateFor } from './gate.ts';
 import type { ChangePipeline, Stage } from './pipeline.ts';
@@ -19,8 +19,13 @@ import { loadRoadmap } from './roadmap.ts';
 import { isGreenfield, loadSession } from './vision.ts';
 
 export type ProjectStage =
-  /** No `openspec/` directory — nothing to work on yet. */
-  | { kind: 'no-openspec' }
+  /**
+   * OpenSpec is not set up: no `openspec/` directory, or (`tools`) one that
+   * `openspec init` did not wire into the agent. Running it is the
+   * developer's step — it asks which agents to set up — and nothing else
+   * can happen before it.
+   */
+  | { kind: 'no-openspec'; tools?: boolean }
   /** OpenSpec, but not spec-tacular's schema and ground rules. */
   | { kind: 'no-foundation' }
   /** Ground rules scaffolded; some questions still open. */
@@ -73,9 +78,11 @@ export function schemaInstalled(projectRoot: string): boolean {
  * A project that already has changes but no Foundation is `working`, not
  * sent back to setup: it adopted OpenSpec before spec-tacular existed, and the
  * gate deliberately lets it proceed (core/gate.ts). The overview still nudges.
+ * With `driver`, OpenSpec must also be set up for that agent.
  */
-export function projectStage(projectRoot: string, changeCount: number): ProjectStage {
+export function projectStage(projectRoot: string, changeCount: number, driver?: string): ProjectStage {
   if (!isOpenSpecProject(projectRoot)) return { kind: 'no-openspec' };
+  if (driver && !openSpecToolsInstalled(projectRoot, driver)) return { kind: 'no-openspec', tools: true };
 
   if (!foundationExists(projectRoot)) {
     return changeCount === 0 ? { kind: 'no-foundation' } : { kind: 'working' };
@@ -102,8 +109,8 @@ export function projectStage(projectRoot: string, changeCount: number): ProjectS
 export interface NextStep {
   text: string;
   /** Keys the overview offers for this step. */
-  actions: ('review' | 'draft' | 'write' | 'foundation')[];
-  /** The artifact `draft`/`write` act on. */
+  actions: ('review' | 'read' | 'draft' | 'write' | 'foundation')[];
+  /** The artifact `read`/`draft`/`write` act on. */
   artifact?: string;
 }
 
@@ -121,14 +128,39 @@ export function nextStep(pipeline: ChangePipeline, foundationSettled: boolean): 
   const stage = pipeline.current;
 
   if (!stage) {
+    const tasks = pipeline.apply.tasks;
+    if (pipeline.apply.state === 'accepted' && tasks) {
+      const later = tasks.deferred > 0
+        ? ` ${tasks.deferred} deferred until it is deployed — they are checked when it is archived.`
+        : '';
+      return { text: `Implemented: all ${tasks.done} tasks are ticked off.${later}`, actions: [] };
+    }
+    if (pipeline.apply.state === 'ready' && pipeline.waitingOn.length > 0) {
+      return {
+        text: `Planned. Implementing it waits for ${pipeline.waitingOn.join(', ')} to be applied first.`,
+        actions: [],
+      };
+    }
     if (pipeline.apply.state === 'ready') {
       return {
-        text: 'Planning is done — an agent can start implementing it, in the background.',
+        text: tasks && tasks.done > 0
+          ? `${tasks.done} of ${tasks.total} tasks ticked off. Carry on implementing — the agent opens right here.`
+          : 'Planning is done. Implement it — the agent opens right here, as if you had started it yourself.',
         actions: ['draft'],
         artifact: 'apply',
       };
     }
     return { text: `Waiting on ${pipeline.apply.blockedBy.join(', ')}.`, actions: [] };
+  }
+
+  if (stage.state === 'written' && stage.signoff) {
+    return {
+      text: stage.signoff.drifted
+        ? `The ${stage.id} changed since you accepted it. Read it again, then accept it or ask for changes.`
+        : `Read the ${stage.id}, then accept it or ask for changes.`,
+      actions: ['read'],
+      artifact: stage.id,
+    };
   }
 
   if (stage.state === 'written' && stage.review) {

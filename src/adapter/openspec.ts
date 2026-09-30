@@ -46,6 +46,19 @@ export function isOpenSpecProject(dir: string): boolean {
   return existsSync(join(dir, 'openspec'));
 }
 
+/** Where `openspec init` puts each agent's skills and commands. */
+const AGENT_DIRS: Record<string, string> = { claude: '.claude', opencode: '.opencode' };
+
+/**
+ * Whether `openspec init` wired OpenSpec into `driver`: its skills and
+ * commands are how the agent knows the workflow. An agent OpenSpec does not
+ * know counts as wired — there is nothing to check.
+ */
+export function openSpecToolsInstalled(dir: string, driver: string): boolean {
+  const agentDir = AGENT_DIRS[driver];
+  return !agentDir || existsSync(join(dir, agentDir, 'skills', 'openspec-apply-change'));
+}
+
 export class OpenSpecAdapter {
   private readonly cwd: string;
   private readonly bin: string;
@@ -117,16 +130,6 @@ export class OpenSpecAdapter {
   async validate(item: string): Promise<string> {
     const { stdout, stderr } = await this.run(['validate', item, '--type', 'spec']);
     return stdout + stderr;
-  }
-
-  /**
-   * Makes `cwd` an OpenSpec project.
-   *
-   * `--tools none` because choosing which agents to wire up is an interactive
-   * question this UI does not ask; stdin is closed, so the prompt would fail.
-   */
-  async init(): Promise<void> {
-    await this.run(['init', '--tools', 'none', '--no-animation']);
   }
 
   /** Creates a change. Its schema comes from the project's config. */
