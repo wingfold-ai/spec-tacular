@@ -401,10 +401,14 @@ are applied, since they build on that code: applied means every task ticked
 off, except those marked `(defer: …)` that need a deployment to verify. An
 applied slice turns ✓ on its own.
 
-Implementing is your agent's own session. *Implement it* hands the terminal to
-Claude Code (or opencode) on the change's apply instructions, exactly as if you
-had started it yourself: it runs the project's commands and asks before it
-does. Quit it and spec-tacular is back, counting the tasks ticked off.
+Implementing is your agent's own session. *Implement it* opens Claude Code (or
+opencode) on the change's apply instructions in a new tab — tmux, kitty,
+WezTerm, GNOME Terminal, Konsole, iTerm — or, in a terminal that cannot open
+tabs (an IDE's), a new window of the desktop's terminal. It is exactly as if
+you had started it yourself: it runs the project's commands and asks before it
+does. spec-tacular stays open, shows the change being implemented, and follows
+the tasks as they are ticked off. Only when no tab or window can be opened does
+the agent take over spec-tacular's own terminal until it exits.
 
 Tune the linter per project with `spec-tacular/lint.json`:
 

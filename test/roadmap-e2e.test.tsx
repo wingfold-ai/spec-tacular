@@ -44,6 +44,40 @@ describe('implementing', () => {
     expect(ui.frame()).toContain('Back from Claude Code.');
   });
 
+  test('opens in another tab, and this one stays open and follows it', async () => {
+    const launched: string[] = [];
+    let running: string[] = [];
+    const ui = await mountApp({
+      baseline: true,
+      changes: [planned('book-rooms')],
+      implement: async () => ({ ok: true, label: 'Claude Code', command: { command: 'claude', args: ['apply it'] } }),
+      launch: (change, command) => {
+        launched.push(`${change}: ${command.command} ${command.args.join(' ')}`);
+        running = [change];
+        return { ok: true, where: 'a new GNOME Terminal tab' };
+      },
+      implementing: () => running,
+    });
+    mounted.push(ui);
+    await ui.press('return'); // Open project
+    await ui.press('w');
+    await ui.settle(50);
+
+    expect(launched).toEqual(['book-rooms: claude apply it']);
+    expect(ui.frame()).toContain('Claude Code is implementing book-rooms in a new GNOME Terminal tab.');
+    expect(ui.frame()).toContain('◉ Being implemented in another tab');
+    // Not twice at once.
+    await ui.press('w');
+    expect(launched).toHaveLength(1);
+    expect(ui.frame()).toContain('book-rooms is already being implemented in another tab');
+
+    // The session ends: said so, from the tasks as they are now.
+    running = [];
+    await ui.settle(4300);
+    expect(ui.frame()).toContain('The session implementing book-rooms ended.');
+    expect(ui.frame()).not.toContain('◉ Being implemented in another tab');
+  });
+
   test('a refusal is said, and nothing opens', async () => {
     const ui = await mountApp({
       baseline: true,

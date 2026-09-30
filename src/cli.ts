@@ -71,6 +71,7 @@ import {
   waitingOn,
 } from './core/roadmap.ts';
 import { taskProgress } from './core/tasks.ts';
+import { implementingNow, openElsewhere, writeSessionScript } from './tui/tabs.ts';
 
 type Command =
   | 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation'
@@ -1077,6 +1078,8 @@ async function main(): Promise<number> {
       },
       dispatch: (change, artifact, feedback) => dispatch(args, adapter, change, artifact, feedback),
       implement: (change) => implementCommand(args, adapter, change),
+      launch: (change, command) => openElsewhere(writeSessionScript(args.cwd, change, command), args.cwd),
+      implementing: () => implementingNow(args.cwd),
       startNextSlice: () => startNextSlice(args, adapter),
       acceptDocument: (change, artifact, content) => {
         try {

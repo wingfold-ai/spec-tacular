@@ -100,6 +100,15 @@ export interface TuiInput {
    * The agent's own interactive session for implementing a change, behind
    * the same gates as a draft. Without it, implementing runs in the background.
    */
+  /**
+   * Opens an agent's session elsewhere — a new tab, or a window — so this one
+   * stays open. Without it, or when nothing can be opened, the session takes
+   * over this terminal until it exits.
+   */
+  launch?: (change: string, command: { command: string; args: string[]; env?: Record<string, string> }) =>
+    { ok: true; where: string } | { ok: false };
+  /** The changes being implemented in a session elsewhere right now. */
+  implementing?: () => string[];
   /** Opens the roadmap's next slice as a change, once the one before it is fully planned. */
   startNextSlice?: () => Promise<{ ok: true; change: string } | { ok: false; reason: string }>;
   implement?: (change: string) => Promise<
@@ -546,6 +555,31 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // While an agent runs, watch for it finishing: its artifact changes what
   // the next step is, and making you restart to find out defeats the point of
   // running it in the background.
+  // Sessions implementing elsewhere: refresh while they run, so ticked tasks
+  // show up here, and say so when one ends.
+  const [implementing, setImplementing] = createSignal<string[]>(props.input.implementing?.() ?? []);
+  const followSessions = setInterval(() => {
+    if (!props.input.implementing) return;
+    const before = implementing();
+    const now = props.input.implementing();
+    if (before.length === 0 && now.length === 0) return;
+    setImplementing(now);
+    const ended = before.filter((c) => !now.includes(c));
+    void reload().then(() => {
+      for (const change of ended) {
+        const tasks = pipelines().find((c) => c.name === change)?.apply.tasks;
+        setNotice(
+          !tasks
+            ? `The session implementing ${change} ended.`
+            : tasks.applied
+              ? `✓ ${change} is implemented — every task is ticked off`
+              : `The session implementing ${change} ended: ${tasks.done} of ${tasks.total} tasks ticked off — w continues`,
+        );
+      }
+    });
+  }, 4000);
+  onCleanup(() => clearInterval(followSessions));
+
   const poll = setInterval(() => {
     const before = jobs();
     if (!before.some((j) => j.status === 'running')) return;
@@ -942,8 +976,17 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
    * hand. spec-tacular steps aside until it exits, then reads the tasks.
    */
   const implementIn = async (change: string) => {
+    if (implementing().includes(change)) {
+      return setNotice(`${change} is already being implemented in another tab — switch to it there`);
+    }
     const handoff = await props.input.implement!(change);
     if (!handoff.ok) return setNotice(handoff.reason);
+    const elsewhere = props.input.launch?.(change, handoff.command);
+    if (elsewhere?.ok) {
+      setImplementing((now) => [...new Set([...now, change])]);
+      setNotice(`${handoff.label} is implementing ${change} in ${elsewhere.where}. This stays open and follows the tasks.`);
+      return;
+    }
     const ran = runInTerminal(renderer, handoff.command, props.input.root);
     await reload(change);
     if (!ran.ok) return setNotice(`${handoff.label} could not start: ${ran.reason}`);
@@ -1561,6 +1604,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                         <strong>Next</strong>
                       </text>
                       <text style={{ fg: THEME.text }}>{next()!.text}</text>
+                      <Show when={implementing().includes(selected()?.name ?? '')}>
+                        <text style={{ fg: THEME.accent }}>
+                          {(() => {
+                            const tasks = selected()?.apply.tasks;
+                            return `◉ Being implemented in another tab${tasks ? ` — ${tasks.done} of ${tasks.total} tasks ticked off so far` : ''}`;
+                          })()}
+                        </text>
+                      </Show>
                       <text>{' '}</text>
                       <box style={{ flexDirection: 'row' }}>
                         <For each={actionButtons()}>
