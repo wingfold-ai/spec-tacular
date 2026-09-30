@@ -49,7 +49,7 @@ import { DocumentView, type DocumentAction } from './document.tsx';
 import { VisionScreen } from './vision.tsx';
 import { FirstChangeGuide, HelpOverlay, Stepper } from './guide.tsx';
 import { HomeScreen, type HomeAction } from './home.tsx';
-import { editLine, isCancel, isEnter } from './input.ts';
+import { editLine, isCancel, isEditor, isEnter } from './input.ts';
 import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
 import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn } from '../core/refine.ts';
 import type { Requirement } from '../core/requirements.ts';
@@ -662,11 +662,22 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   );
 
   /** Prose artifacts written for the selected change: what can be read. */
+  /** Written artifacts of the selected change: what `v` reads — the specs, in their review. */
   const readable = createMemo(() => {
     const p = selected();
     if (!p || !props.input.readArtifact) return [];
-    return p.stages.filter((st) => st.state !== 'ready' && st.state !== 'blocked' && !st.review).map((st) => st.id);
+    return p.stages.filter((st) => st.state !== 'ready' && st.state !== 'blocked').map((st) => st.id);
   });
+
+  /** The specs: files of requirements, read in their review rather than as one document. */
+  const isSpecs = (artifact: string) =>
+    artifact === 'specs' || selected()?.stages.find((st) => st.id === artifact)?.review !== undefined;
+
+  /** Reads an artifact: a document on its own screen, the specs one requirement at a time. */
+  const view = (change: string, artifact: string) => {
+    if (isSpecs(artifact)) enterReview();
+    else void openDoc(change, artifact);
+  };
 
   const openDoc = async (change: string, artifact: string, justDrafted = false) => {
     if (!props.input.readArtifact) return;
@@ -703,7 +714,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           : then === 'apply'
             ? '✓ Accept — start implementing'
             : `✓ Accept — draft the ${then}`,
-        key: 'n',
+        key: 'a',
         run: () => {
           const accepted = props.input.acceptDocument!(d.change, d.artifact, d.content);
           if (!accepted.ok) return setNotice(accepted.reason);
@@ -719,15 +730,15 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         label: step.artifact === 'apply'
           ? '✓ Looks good — start implementing'
           : `✓ Looks good — draft the ${step.artifact}`,
-        key: 'n',
+        key: 'a',
         run: () => { closeDoc(); void draftNext(); },
       });
     } else {
-      out.push({ label: '✓ Looks good', key: 'n', run: closeDoc });
+      out.push({ label: '✓ Looks good', key: 'a', run: closeDoc });
     }
     out.push({
       label: '✎ Edit it',
-      key: 'e',
+      key: 'ctrl+e',
       run: () => {
         const opened = openInEditor(renderer, d.file, 1);
         if (!opened.ok) return setNotice(opened.reason ?? 'Could not open an editor');
@@ -1051,11 +1062,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         run: () => void draftNext(),
       });
     }
-    if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'e', run: () => void writeNext() });
+    if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'ctrl+e', run: () => void writeNext() });
     if (actions.includes('foundation')) out.push({ label: '▶ Ground rules', key: 'f', run: () => void openFoundation() });
     const latest = readable().at(-1);
     const p = selected();
-    if (latest && p && latest !== toRead) out.push({ label: `📄 Read the ${latest}`, key: 'v', run: () => void openDoc(p.name, latest) });
+    // Not when the next step already is reading or reviewing it.
+    if (latest && p && latest !== toRead && !actions.includes('review')) {
+      out.push({ label: `📄 ${isSpecs(latest) ? 'Review' : 'Read'} the ${latest}`, key: 'v', run: () => view(p.name, latest) });
+    }
     return out;
   });
 
@@ -1276,17 +1290,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       const button = buttons[Math.min(actionFocus(), buttons.length - 1)];
       if (button) button.run();
       else if (pipelines().length === 0 && foundationSettled()) startNewChange();
-    } else if (key.name === 'r') enterReview();
+    }
     else if (key.name === 'n') startNewChange();
     else if (key.name === 'w') void draftNext();
     else if (key.name === 's' && nextSlice() && specified(selected())) void startSlice();
-    else if (key.name === 'e') void writeNext();
+    // ctrl+e opens the editor on every screen; plain e, as it used to.
+    else if (isEditor(key) || (key.name === 'e' && !key.ctrl)) void writeNext();
     else if (key.name === 'f') void openFoundation();
     else if (key.name === 'h') setScreen('home');
     else if (key.name === 'v' && !key.ctrl) {
       const latest = readable().at(-1);
       const p = selected();
-      if (latest && p) void openDoc(p.name, latest);
+      if (latest && p) view(p.name, latest);
     }
     else if (key.sequence === '?') setHelp(true);
   });

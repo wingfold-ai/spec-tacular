@@ -352,11 +352,13 @@ describe('an agent’s draft', () => {
     expect(ui.frame()).toContain('book-rooms › proposal');
     expect(ui.frame()).toContain('Clinics double-book rooms.');
     expect(ui.frame()).toContain('• Add booking');
-    expect(ui.frame()).toContain('✓ Accept — draft the specs');
-    expect(ui.frame()).toContain('↻ Redraft with feedback');
+    // The same keys as everywhere: a accepts, r revises, ctrl+e edits.
+    expect(ui.frame()).toContain('✓ Accept — draft the specs  a');
+    expect(ui.frame()).toContain('↻ Redraft with feedback  r');
+    expect(ui.frame()).toContain('✎ Edit it  ctrl+e');
 
     // Feedback goes back to the agent.
-    await ui.press('f');
+    await ui.press('r');
     await ui.type('mention cancellations');
     await ui.press('return');
     await ui.settle(50);
@@ -377,7 +379,7 @@ describe('an agent’s draft', () => {
     ui.finishJob('book-rooms', 'proposal', '# Proposal\n\nBody.\n');
     await ui.settle(2300);
 
-    await ui.press('return'); // ✓ Accept — draft the specs
+    await ui.press('a'); // ✓ Accept — draft the specs
     await ui.settle(50);
     expect(ui.dispatched.at(-1)).toBe('book-rooms/specs');
     expect(ui.frame()).toContain('Claude Code is drafting the specs');

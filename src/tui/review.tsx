@@ -19,7 +19,7 @@ import { isRequirement, type Requirement, type ReviewItem } from '../core/requir
 import type { RefineTurn, Refinement } from '../core/refine.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
-import { isCancel, isPrintable } from './input.ts';
+import { isCancel, isEditor, isPrintable, isRevise } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { RevisePanel } from './revise.tsx';
 
@@ -197,15 +197,17 @@ export function ReviewScreen(props: ReviewScreenProps) {
 
     if (isCancel(key)) return props.onBack();
 
-    // `E` and ctrl+e are the editor, as ctrl+e is everywhere else.
-    if (key.name === 'e' && (key.shift || key.ctrl)) return props.onEdit();
+    // The same keys as on every screen (input.ts: KEYS).
+    if (isEditor(key)) return props.onEdit();
+    if (isRevise(key)) return openRevise();
     if (key.ctrl) return;
 
     switch (key.name) {
       case 'a': return props.onAccept();
-      case 'r': return setPrompt('reject');
+      case 'x': return setPrompt('reject');
       case 'd': return setPrompt('defer');
       case 's': return props.onSkip();
+      // What revising was, before `r` meant it everywhere.
       case 'e': return openRevise();
       case 'y': return copyCurrent();
       case 'm':
@@ -363,8 +365,8 @@ export function ReviewScreen(props: ReviewScreenProps) {
 
       <Show when={!revising() && !prompt() && !marking() && help()}>
         <box style={{ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 }}>
-          <text style={{ fg: THEME.text }}>a accept · r reject (asks why) · d defer (asks what would verify it)</text>
-          <text style={{ fg: THEME.text }}>e revise with AI: say what should change, see the diff, accept or ask again</text>
+          <text style={{ fg: THEME.text }}>a accept · x reject (asks why) · d defer (asks what would verify it)</text>
+          <text style={{ fg: THEME.text }}>r revise with AI: say what should change, see the diff, accept or ask again</text>
           <text style={{ fg: THEME.text }}>E or ctrl+e edit in $EDITOR · y copy it · s skip · n/p move · q back</text>
           <text style={{ fg: THEME.text }}>drag to select text, ctrl+c copies it · ctrl+v pastes into a prompt · any key closes</text>
         </box>
@@ -374,10 +376,10 @@ export function ReviewScreen(props: ReviewScreenProps) {
         <box style={{ paddingLeft: 1, paddingRight: 1 }}>
           <text style={{ fg: THEME.dim }}>
             {props.promotable
-              ? 'a accept · r reject · e revise with AI · E editor · p promote to ADR · s skip · ? help · q back'
+              ? 'a accept · r revise with AI · x reject · ctrl+e editor · p promote to ADR · s skip · ? help · q back'
               : findings().length > 0
-                ? 'a accept · r reject · e revise with AI · E editor · d defer · m mark example · s skip · ? help · q back'
-                : 'a accept · r reject · e revise with AI · E editor · d defer · s skip · n/p move · ? help · q back'}
+                ? 'a accept · r revise with AI · x reject · d defer · ctrl+e editor · m mark example · s skip · ? help · q back'
+                : 'a accept · r revise with AI · x reject · d defer · ctrl+e editor · s skip · n/p move · ? help · q back'}
           </text>
         </box>
       </Show>

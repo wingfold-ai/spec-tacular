@@ -14,7 +14,7 @@ pipeline that is always visible.
 | --- | --- |
 | Artifact is "complete" when its file exists | Artifact is complete when a human **accepted** it |
 | `design` only requires `proposal` — both can be written at once | `design` requires **accepted** specs; strict `proposal → specs → design → tasks` |
-| Review = reading N spec files in your editor | Review = one requirement at a time, `a`ccept / `r`eject / `d`efer, or revise it with AI (`e`) |
+| Review = reading N spec files in your editor | Review = one requirement at a time: `a` accept / `x` reject / `d` defer, or revise it with AI (`r`) |
 | Design decisions stay local to a change | Cross-cutting decisions are **promoted to global ADRs** |
 | No project ground rules before the first change | A **Foundation** phase: stack, architecture style, conventions, ADRs |
 | Greenfield = 15 changes proposed at once | A **Roadmap** layer that sequences an idea into reviewable slices |
@@ -186,8 +186,13 @@ next, proposed from the vision; its proposal is drafted once they are settled.
 
 Drafts are for reading. While an agent drafts, its progress streams into the
 change panel; when it lands, the draft opens: scroll through it, then
-*accept* (and draft the next artifact), *edit it*, or *redraft with feedback*
-— the agent revises it with what you typed. `v` reads it again later.
+accept it (`a`, which drafts the next artifact too), redraft it with feedback
+(`r`) — the agent revises it with what you typed — or edit it (ctrl+e). `v`
+reads it again later.
+
+The same interaction has the same key everywhere: `a` accepts, `r` revises
+with AI (ctrl+r on the screens where you type), ctrl+e opens `$EDITOR`, `y`
+copies and `q` goes back. `?` lists every key.
 
 The proposal, design and tasks are accepted as a whole, the specs
 requirement by requirement; either way the next artifact waits for it, and
@@ -195,19 +200,19 @@ the stage is ticked off only then. An acceptance holds for the text you read:
 edit or redraft the document and it is waiting to be read again (ticking
 tasks off while implementing does not count as a change).
 
-Requirements are reviewed one at a time: `a` accepts, `r` rejects (asking
-why), `d` defers (asking what would verify it). `e` revises the requirement
+Requirements are reviewed one at a time: `a` accepts, `x` rejects (asking
+why), `d` defers (asking what would verify it). `r` revises the requirement
 with AI, in conversation: say what should change ("make the timeout
 configurable", "split it into two scenarios") and the agent answers with the
 revised requirement, shown as a diff against the file. Then `a` writes it
 into the spec — replacing that requirement's block, every other byte of the
-file left as it was — `i` asks for more changes (as many rounds as you like;
-the agent sees every earlier request and proposal), and `d` discards it.
+file left as it was — `r` asks for more changes (as many rounds as you like;
+the agent sees every earlier request and proposal), and `q` discards it.
 Nothing is written before `a`, and ctrl+c while the agent works leaves the
 file untouched. A rejected requirement's prompt starts from why you rejected
 it. A revised requirement is pending again, cursor on it, for its new text to
 be accepted; the other requirements keep their decisions, a rename included.
-`E` (or ctrl+e) still opens it in `$EDITOR`, and `y` copies it.
+ctrl+e (or `E`) still opens it in `$EDITOR`, and `y` copies it.
 
 Copy and paste work like elsewhere, within what a terminal allows:
 
@@ -318,8 +323,8 @@ over a pipe and in CI.
 
 **M0–M8 done** (M1 mostly; M7 has one stated gap). Every structural problem
 from the original analysis is addressed. The review loop works: open a change, walk its
-requirements one at a time, and `a`ccept / `r`eject / `d`efer each one from the
-keyboard, or revise it with AI (`e`) or in your editor (`E`). Decisions persist immediately, drift is detected when a
+requirements one at a time, and accept (`a`), reject (`x`) or defer (`d`) each one from
+the keyboard, or revise it with AI (`r`) or in your editor (ctrl+e). Decisions persist immediately, drift is detected when a
 reviewed requirement is edited afterwards, and reopening resumes where you
 stopped.
 

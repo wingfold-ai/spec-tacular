@@ -130,9 +130,9 @@ describe('review screen', () => {
     expect(ui.frame()).toContain('requirement 2 of 2');
   });
 
-  test('r prompts for a reason and records it', async () => {
+  test('x prompts for a reason and records it', async () => {
     const ui = await mount();
-    await ui.press('r');
+    await ui.press('x');
     expect(ui.frame()).toContain('Why reject?');
 
     await ui.type('names an endpoint');
@@ -149,7 +149,7 @@ describe('review screen', () => {
     // Not escape: a lone ESC is the prefix of every escape sequence, so a
     // terminal parser cannot deliver it until it sees what follows.
     const ui = await mount();
-    await ui.press('r');
+    await ui.press('x');
     await ui.type('half a thought');
     await ui.cancel();
 
@@ -165,7 +165,7 @@ describe('review screen', () => {
 
   test('backspace edits the prompt draft', async () => {
     const ui = await mount();
-    await ui.press('r');
+    await ui.press('x');
     await ui.type('abc');
     await ui.press('BACKSPACE');
     expect(ui.frame()).toContain('ab');
@@ -194,7 +194,7 @@ describe('review screen', () => {
 
   test('keys that decide are inert while a prompt is open', async () => {
     const ui = await mount();
-    await ui.press('r');
+    await ui.press('x');
     await ui.press('a');            // must type an 'a', not accept
     expect(ui.session().items[0]!.state).toBe('pending');
     await ui.press('RETURN');
