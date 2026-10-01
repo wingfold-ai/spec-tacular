@@ -143,7 +143,7 @@ describe.if(available)('reviewing a real change end to end', () => {
     const ui = await mount(root, openSession(CHANGE, requirements, loadReview(root, CHANGE)));
 
     await ui.press('a');
-    await ui.press('r');
+    await ui.press('x');
     await ui.type('names an endpoint that is not decided');
     await ui.press('RETURN');
     await ui.press('d');
@@ -170,7 +170,7 @@ describe.if(available)('reviewing a real change end to end', () => {
 
     // Reject the first, accept every other one; the rejection is the only
     // thing left needing attention, so review must return to it.
-    await ui.press('r');
+    await ui.press('x');
     await ui.press('RETURN');
     for (let i = 1; i < requirements.length; i++) await ui.press('a');
 

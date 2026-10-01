@@ -45,3 +45,41 @@ export function editLine(draft: string, key: KeyEvent): string | null {
   if (isPrintable(key)) return draft + key.sequence;
   return null;
 }
+
+/**
+ * The same interaction has the same key on every screen. Where you are
+ * typing, a bare letter is text, so the same letter takes ctrl instead.
+ *
+ *   a        accept — a requirement, a document, a revision
+ *   r        revise with AI: say what should change (ctrl+r while typing)
+ *   x        reject a requirement, saying why
+ *   d        defer a requirement until it can be verified
+ *   ctrl+e   open it in $EDITOR (E where nothing is typed)
+ *   y        copy it
+ *   q        back (ctrl+c or escape too)
+ *   ?        help
+ */
+export const KEYS = {
+  accept: 'a',
+  revise: 'r',
+  reject: 'x',
+  defer: 'd',
+  editor: 'ctrl+e',
+  copy: 'y',
+  back: 'q',
+} as const;
+
+/** `a`, on a screen where nothing is typed. */
+export function isAccept(key: KeyEvent): boolean {
+  return key.name === 'a' && !key.ctrl && !key.shift;
+}
+
+/** `r`, or ctrl+r — the only form while typing. */
+export function isRevise(key: KeyEvent, typing = false): boolean {
+  return key.name === 'r' && !key.shift && (key.ctrl === true || (!typing && !key.meta));
+}
+
+/** ctrl+e, or `E` where nothing is typed. */
+export function isEditor(key: KeyEvent, typing = false): boolean {
+  return key.name === 'e' && (key.ctrl === true || (!typing && key.shift === true));
+}

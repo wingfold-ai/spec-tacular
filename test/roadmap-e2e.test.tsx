@@ -44,6 +44,40 @@ describe('implementing', () => {
     expect(ui.frame()).toContain('Back from Claude Code.');
   });
 
+  test('opens in another tab, and this one stays open and follows it', async () => {
+    const launched: string[] = [];
+    let running: string[] = [];
+    const ui = await mountApp({
+      baseline: true,
+      changes: [planned('book-rooms')],
+      implement: async () => ({ ok: true, label: 'Claude Code', command: { command: 'claude', args: ['apply it'] } }),
+      launch: (change, command) => {
+        launched.push(`${change}: ${command.command} ${command.args.join(' ')}`);
+        running = [change];
+        return { ok: true, where: 'a new GNOME Terminal tab' };
+      },
+      implementing: () => running,
+    });
+    mounted.push(ui);
+    await ui.press('return'); // Open project
+    await ui.press('w');
+    await ui.settle(50);
+
+    expect(launched).toEqual(['book-rooms: claude apply it']);
+    expect(ui.frame()).toContain('Claude Code is implementing book-rooms in a new GNOME Terminal tab.');
+    expect(ui.frame()).toContain('◉ Being implemented in another tab');
+    // Not twice at once.
+    await ui.press('w');
+    expect(launched).toHaveLength(1);
+    expect(ui.frame()).toContain('book-rooms is already being implemented in another tab');
+
+    // The session ends: said so, from the tasks as they are now.
+    running = [];
+    await ui.settle(4300);
+    expect(ui.frame()).toContain('The session implementing book-rooms ended.');
+    expect(ui.frame()).not.toContain('◉ Being implemented in another tab');
+  });
+
   test('a refusal is said, and nothing opens', async () => {
     const ui = await mountApp({
       baseline: true,
@@ -83,21 +117,21 @@ describe('the next slice', () => {
     return ui;
   };
 
-  test('waits while the current slice is still being planned', async () => {
+  test('waits while the current slice is still being specified', async () => {
     const started: string[] = [];
     const ui = await mountWith(changeWith('book-rooms', ['proposal'], []), started);
-    expect(ui.frame()).not.toContain('Next slice');
+    expect(ui.frame()).not.toContain('next slice');
     await ui.press('s');
     expect(started).toEqual([]);
   });
 
-  test('can be planned once the current one is planned through its tasks', async () => {
+  test('can be specified once the current one is — before it is designed, let alone applied', async () => {
     const started: string[] = [];
-    const ui = await mountWith(planned('book-rooms'), started);
-    expect(ui.frame()).toContain('▶ Next slice: see-the-week');
+    const ui = await mountWith(changeWith('book-rooms', ['proposal', 'specs'], ['proposal', 'specs']), started);
+    expect(ui.frame()).toContain('s  specify the next slice on the roadmap: see-the-week');
     await ui.press('s');
     await ui.settle(50);
     expect(started).toEqual(['see-the-week']);
-    expect(ui.frame()).toContain('Started see-the-week. Its implementing waits until the slices before it are applied.');
+    expect(ui.frame()).toContain('Started see-the-week: specify it now — its design waits until the slices before it are applied.');
   });
 });

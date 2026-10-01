@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject, openSpecToolsInstalled } from './adapter/openspec.ts';
 import {
   buildPipeline,
-  fullyPlanned,
+  specified,
   sortByProgress,
   type ChangePipeline,
   type ReviewByArtifact,
@@ -71,6 +71,7 @@ import {
   waitingOn,
 } from './core/roadmap.ts';
 import { taskProgress } from './core/tasks.ts';
+import { implementingNow, openElsewhere, writeSessionScript } from './tui/tabs.ts';
 
 type Command =
   | 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation'
@@ -705,7 +706,7 @@ async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number>
 async function runRoadmap(args: Args, adapter: OpenSpecAdapter): Promise<number> {
   // Loading the changes also marks the slices whose changes are applied done.
   const pipelines = isOpenSpecProject(args.cwd) ? (await loadPipelines(adapter, args.cwd)).pipelines : [];
-  const planned = (id: string) => fullyPlanned(pipelines.find((p) => p.name === id));
+  const isSpecified = (id: string) => specified(pipelines.find((p) => p.name === id));
   const roadmap = loadRoadmap(args.cwd);
   if (!roadmap) {
     if (scaffoldRoadmap(args.cwd)) {
@@ -722,7 +723,7 @@ async function runRoadmap(args: Args, adapter: OpenSpecAdapter): Promise<number>
   if (args.slice) {
     const result = args.done
       ? completeSlice(roadmap, args.slice)
-      : promoteSlice(roadmap, args.slice, planned);
+      : promoteSlice(roadmap, args.slice, isSpecified);
     if (!result.ok) {
       process.stderr.write(`${result.reason}\n`);
       return 1;
@@ -744,13 +745,13 @@ async function runRoadmap(args: Args, adapter: OpenSpecAdapter): Promise<number>
     process.stdout.write(`${MARK[slice.status]} ${slice.id}${blocked}\n    ${slice.summary}\n`);
   }
 
-  const next = nextPromotable(roadmap, planned);
-  const planning = roadmap.slices.find((s) => s.status === 'active' && !planned(s.id));
+  const next = nextPromotable(roadmap, isSpecified);
+  const planning = roadmap.slices.find((s) => s.status === 'active' && !isSpecified(s.id));
   process.stdout.write(
     next
       ? `\nNext: spectacular roadmap --promote ${next.id}\n`
       : planning
-        ? `\n'${planning.id}' is being planned. The next slice opens once its tasks are accepted.\n`
+        ? `\n'${planning.id}' is being specified. The next slice opens once its specs are accepted.\n`
         : '\nNothing left to promote.\n',
   );
   return 0;
@@ -826,7 +827,7 @@ async function dispatch(
 
 /**
  * Opens the next slice on the roadmap as a change: once the one before it is
- * fully planned, so it can be planned while that one is implemented.
+ * specified, so it can be specified while that one is designed and built.
  */
 async function startNextSlice(
   args: Args,
@@ -836,10 +837,10 @@ async function startNextSlice(
     const roadmap = loadRoadmap(args.cwd);
     if (!roadmap) return { ok: false, reason: 'There is no roadmap' };
     const { pipelines } = await loadPipelines(adapter, args.cwd);
-    const planned = (id: string) => fullyPlanned(pipelines.find((p) => p.name === id));
-    const next = nextPromotable(roadmap, planned);
-    if (!next) return { ok: false, reason: 'No slice can start yet — plan the current one through its tasks first' };
-    const promoted = promoteSlice(roadmap, next.id, planned);
+    const isSpecified = (id: string) => specified(pipelines.find((p) => p.name === id));
+    const next = nextPromotable(roadmap, isSpecified);
+    if (!next) return { ok: false, reason: 'No slice can start yet — accept the current one\'s specs first' };
+    const promoted = promoteSlice(roadmap, next.id, isSpecified);
     if (!promoted.ok) return { ok: false, reason: promoted.reason };
     await adapter.newChange(next.id, next.summary);
     saveRoadmap(args.cwd, promoted.roadmap);
@@ -1077,6 +1078,8 @@ async function main(): Promise<number> {
       },
       dispatch: (change, artifact, feedback) => dispatch(args, adapter, change, artifact, feedback),
       implement: (change) => implementCommand(args, adapter, change),
+      launch: (change, command) => openElsewhere(writeSessionScript(args.cwd, change, command), args.cwd),
+      implementing: () => implementingNow(args.cwd),
       startNextSlice: () => startNextSlice(args, adapter),
       acceptDocument: (change, artifact, content) => {
         try {
