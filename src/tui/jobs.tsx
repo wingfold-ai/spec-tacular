@@ -122,7 +122,7 @@ export function JobPane(props: JobPaneProps) {
         fallback={
           <box style={{ padding: 1, flexGrow: 1 }}>
             <text style={{ fg: THEME.dim }}>
-              Nothing has been dispatched yet. Run one with: spectacular run &lt;artifact&gt; -c &lt;change&gt;
+              Nothing has been dispatched yet. Run one with: spec-tacular run &lt;artifact&gt; -c &lt;change&gt;
             </text>
           </box>
         }

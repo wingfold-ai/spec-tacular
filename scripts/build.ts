@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Builds `spectacular` as a standalone executable: the Bun runtime, the
+ * Builds `spec-tacular` as a standalone executable: the Bun runtime, the
  * program and OpenTUI's native library in one file, so the machine it runs on
  * needs neither Bun nor node_modules.
  *
- *   bun run build                                  dist/spectacular for this machine
+ *   bun run build                                  dist/spec-tacular for this machine
  *   bun run build --target bun-darwin-arm64        another platform
- *   bun run build --outfile /tmp/spectacular
+ *   bun run build --outfile /tmp/spec-tacular
  *
  * bunfig.toml's preload does not apply to `bun build`, so the Solid JSX
  * transform is passed here as a plugin; without it the TUI renders once and
@@ -29,7 +29,7 @@ function option(name: string): string | undefined {
 }
 
 const target = option('--target');
-const outfile = option('--outfile') ?? join('dist', 'spectacular');
+const outfile = option('--outfile') ?? join('dist', 'spec-tacular');
 
 /** `bun-darwin-x64-baseline` → `darwin-x64`; no target means this machine. */
 function platformOf(target: string | undefined): string {

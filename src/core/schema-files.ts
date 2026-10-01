@@ -2,7 +2,7 @@
  * The spec-tacular schema's files, embedded in the program.
  *
  * Imported as text rather than read from `schemas/` at run time: a compiled
- * `spectacular` binary has no package directory next to it, so a path
+ * `spec-tacular` binary has no package directory next to it, so a path
  * relative to this module points nowhere. The bundler inlines these strings,
  * and `bun run` reads them from disk, so both behave the same.
  *
