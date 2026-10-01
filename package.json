@@ -1,11 +1,11 @@
 {
   "name": "spec-tacular",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A terminal UI for spec-driven development, built on OpenSpec",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "spectacular": "./src/cli.ts"
+    "spec-tacular": "./src/cli.ts"
   },
   "engines": {
     "node": ">=20.19.0"

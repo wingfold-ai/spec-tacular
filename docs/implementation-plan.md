@@ -13,9 +13,9 @@ exists would mean building them twice.
 
 ## M0 — Skeleton  ✅ done
 
-**Goal:** `spectacular` launches, reads a real OpenSpec project, exits cleanly.
+**Goal:** `spec-tacular` launches, reads a real OpenSpec project, exits cleanly.
 
-- Bun + TypeScript project; `spectacular` binary.
+- Bun + TypeScript project; `spec-tacular` binary.
 - OpenTUI + Solid shell: full-screen app, one pane, quit on `q`/`Ctrl-C`.
 - OpenSpec adapter v0: `openspec status --all --json` → typed model.
 - Project detection; a real error message when `openspec/` is absent.
@@ -138,13 +138,13 @@ is the same renderer, so this is not a mock of the UI.
 **Exit:** with pending spec requirements, generating `design` is refused and the
 UI says precisely why.
 
-**Result:** met, verified against a real project. `spectacular init` installs
+**Result:** met, verified against a real project. `spec-tacular init` installs
 the schema, OpenSpec itself validates it (`openspec schema validate
 spec-tacular` → valid), and a change created afterwards reports
 `design <- [specs]` where `spec-driven` reports `design <- [proposal]`.
 
 ```
-$ spectacular instructions design --change try-gating
+$ spec-tacular instructions design --change try-gating
 Refused: design is not ready to be written
   - specs: 2 pending of 2 requirements
 $ echo $?
@@ -191,14 +191,14 @@ terminal.
 
 **Result:** met. A 30-second job runs against change A while change B is
 reviewed to completion by keystroke in the same process, and the job is
-untouched by any of it. `spectacular run` returns in under two seconds —
+untouched by any of it. `spec-tacular run` returns in under two seconds —
 the wait is the OpenSpec call that composes the prompt, not the agent.
 
 ```
-$ spectacular run design -c job-demo
+$ spec-tacular run design -c job-demo
 Started opencode on job-demo/design
   job:  20260921T154150-job-demo-design-pe6o
-$ spectacular jobs
+$ spec-tacular jobs
 failed      job-demo/design  2026-09-21T15:41:52.357Z  ...
 ```
 
@@ -281,7 +281,7 @@ naming it is never flagged. That starts working when M7 writes the file.
 **Goal:** ground rules before the first change (§9), and decisions that outlive
 a change (§6).
 
-- `spectacular init`: guided Foundation — language, framework, architecture
+- `spec-tacular init`: guided Foundation — language, framework, architecture
   style, layering, testing strategy, conventions — written to
   `spec-tacular/foundation/` and reviewed through the same accept loop.
 - No change can be proposed until Foundation is accepted.
@@ -296,7 +296,7 @@ change B's design generation.
 **Result:** met, verified against a real project.
 
 ```
-$ spectacular instructions proposal -c m7-demo
+$ spec-tacular instructions proposal -c m7-demo
 Refused: the project's ground rules are not settled yet
   - foundation/architecture: Architecture style (layered, hexagonal, ...) and why.
   ...
@@ -327,7 +327,7 @@ drift apart. `Requirement` extends it with scenarios and a delta operation;
 that they were *accepted* through the review loop. The machinery is there —
 `loadFoundation` returns `ReviewItem`s that `openSession` accepts unchanged —
 but it is not yet reachable from the TUI, so there is no keystroke that accepts
-a ground rule. `spectacular foundation` shows what is outstanding. Wiring it
+a ground rule. `spec-tacular foundation` shows what is outstanding. Wiring it
 into the TUI's routing is small and worth doing before M8.
 
 Also unchanged from M4: `tasks` is still gated on a design *existing* rather

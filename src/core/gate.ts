@@ -150,7 +150,7 @@ export function foundationGate(projectRoot: string): GateDecision {
   if (!foundationExists(projectRoot)) {
     return {
       allowed: true,
-      warnings: ['no Foundation yet — run `spectacular init` to set the ground rules'],
+      warnings: ['no Foundation yet — run `spec-tacular init` to set the ground rules'],
     };
   }
 

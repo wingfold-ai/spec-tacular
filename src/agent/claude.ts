@@ -154,7 +154,7 @@ function mcpEnabled(): boolean {
 
 const ALLOW_MCP_HOOK = fileURLToPath(new URL('./allow-mcp.mjs', import.meta.url));
 
-/** The argument that makes `spectacular` run the allow hook (src/cli.ts). */
+/** The argument that makes `spec-tacular` run the allow hook (src/cli.ts). */
 export const ALLOW_MCP_HOOK_ARG = '__allow-mcp-hook';
 
 /**

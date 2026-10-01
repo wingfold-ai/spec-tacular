@@ -2,8 +2,8 @@
 /**
  * spec-tacular entry point.
  *
- * `spectacular`          launch the TUI
- * `spectacular --print`  render the overview as text and exit
+ * `spec-tacular`          launch the TUI
+ * `spec-tacular --print`  render the overview as text and exit
  *
  * `--print` is not a degraded mode: it is the same model rendered without a
  * terminal, which is what makes the overview usable in CI and over a pipe.
@@ -164,29 +164,29 @@ function parseArgs(argv: string[]): Args {
 const HELP = `spec-tacular — spec-driven development, reviewable
 
 Usage:
-  spectacular                              Launch the TUI
-  spectacular --print                      Print the overview as text
-  spectacular init                         Install the spec-tacular schema
-  spectacular instructions <artifact> -c <change>
-                                           Instructions for writing an artifact,
-                                           refused while its prerequisites are
-                                           not accepted
-  spectacular run <artifact> -c <change>   Dispatch an agent in the background
-                                           to write it. Returns immediately.
-  spectacular jobs                         List background jobs
-  spectacular jobs --job <id>              Tail one job's output
-  spectacular jobs --job <id> --cancel     Stop a running job
-  spectacular foundation                   Show the project's ground rules and
-                                           what is still unanswered
-  spectacular adr                          List architectural decision records
-  spectacular archive <change>             Merge accepted requirements, divert
-                                           deferred ones to the register
-  spectacular pending                      Requirements waiting on validation
-  spectacular verify <capability> --requirement <name>
-                                           Move one into the accepted baseline
-  spectacular roadmap                      Show the slices
-  spectacular roadmap --promote <slice>    Make a slice active
-  spectacular roadmap --done <slice>       Mark a slice finished
+  spec-tacular                              Launch the TUI
+  spec-tacular --print                      Print the overview as text
+  spec-tacular init                         Install the spec-tacular schema
+  spec-tacular instructions <artifact> -c <change>
+                                            Instructions for writing an artifact,
+                                            refused while its prerequisites are
+                                            not accepted
+  spec-tacular run <artifact> -c <change>   Dispatch an agent in the background
+                                            to write it. Returns immediately.
+  spec-tacular jobs                         List background jobs
+  spec-tacular jobs --job <id>              Tail one job's output
+  spec-tacular jobs --job <id> --cancel     Stop a running job
+  spec-tacular foundation                   Show the project's ground rules and
+                                            what is still unanswered
+  spec-tacular adr                          List architectural decision records
+  spec-tacular archive <change>             Merge accepted requirements, divert
+                                            deferred ones to the register
+  spec-tacular pending                      Requirements waiting on validation
+  spec-tacular verify <capability> --requirement <name>
+                                            Move one into the accepted baseline
+  spec-tacular roadmap                      Show the slices
+  spec-tacular roadmap --promote <slice>    Make a slice active
+  spec-tacular roadmap --done <slice>       Mark a slice finished
 
 Options:
   -p, --print            Print the overview as text and exit
@@ -291,7 +291,7 @@ function openSpecMissing(root: string, driver: string): string | null {
   return null;
 }
 
-/** `spectacular init` — install the schema that enforces the sequencing. */
+/** `spec-tacular init` — install the schema that enforces the sequencing. */
 function runInit(args: Args): number {
   const missing = openSpecMissing(args.cwd, args.driver);
   if (missing) {
@@ -335,7 +335,7 @@ async function checkGate(
   verb: string,
 ): Promise<{ ok: false; code: number } | { ok: true; artifact: string; change: string }> {
   if (!args.artifact || !args.change) {
-    process.stderr.write(`Usage: spectacular ${verb} <artifact> --change <name>\n`);
+    process.stderr.write(`Usage: spec-tacular ${verb} <artifact> --change <name>\n`);
     return { ok: false, code: 1 };
   }
 
@@ -357,7 +357,7 @@ async function checkGate(
       for (const blocker of foundation.blockers) process.stderr.write(`  - ${blocker}\n`);
       process.stderr.write(
         `\nAnswer them in ${args.cwd}/spec-tacular/foundation, then try again.\n` +
-          'See what is outstanding with: spectacular foundation\n',
+          'See what is outstanding with: spec-tacular foundation\n',
       );
       return { ok: false, code: 1 };
     }
@@ -374,7 +374,7 @@ async function checkGate(
     process.stderr.write(`Refused: ${gate.reason}\n`);
     for (const blocker of gate.blockers) process.stderr.write(`  - ${blocker}\n`);
     process.stderr.write(
-      `\nReview it first: spectacular --cwd ${args.cwd}, select ${args.change}, press enter.\n`,
+      `\nReview it first: spec-tacular --cwd ${args.cwd}, select ${args.change}, press enter.\n`,
     );
     return { ok: false, code: 1 };
   }
@@ -382,7 +382,7 @@ async function checkGate(
 }
 
 /**
- * `spectacular instructions <artifact> -c <change>` — the gate, plus the
+ * `spec-tacular instructions <artifact> -c <change>` — the gate, plus the
  * prompt an agent would receive. Useful on its own for piping into a tool
  * spec-tacular has no driver for.
  */
@@ -429,7 +429,7 @@ function changeDescription(changeRoot: string): string {
 }
 
 /**
- * `spectacular run <artifact> -c <change>` — dispatch and return.
+ * `spec-tacular run <artifact> -c <change>` — dispatch and return.
  *
  * Returning immediately is the point: this is what lets you review one change
  * while another is being implemented, in one terminal.
@@ -461,7 +461,7 @@ async function runAgent(args: Args, adapter: OpenSpecAdapter): Promise<number> {
       `Started ${driver.label} on ${gate.change}/${gate.artifact}\n` +
         `  job:  ${job.id}\n` +
         `  log:  ${job.logPath}\n\n` +
-        `Follow it with: spectacular jobs --job ${job.id}\n`,
+        `Follow it with: spec-tacular jobs --job ${job.id}\n`,
     );
     return 0;
   } catch (err) {
@@ -473,7 +473,7 @@ async function runAgent(args: Args, adapter: OpenSpecAdapter): Promise<number> {
   }
 }
 
-/** `spectacular jobs` — list, tail, or cancel. */
+/** `spec-tacular jobs` — list, tail, or cancel. */
 function runJobs(args: Args): number {
   const driver = defaultRegistry();
 
@@ -523,7 +523,7 @@ function runJobs(args: Args): number {
   return 0;
 }
 
-/** `spectacular adr` — the project's durable decisions. */
+/** `spec-tacular adr` — the project's durable decisions. */
 function runAdrs(args: Args): number {
   const adrs = listAdrs(args.cwd);
   if (adrs.length === 0) {
@@ -544,13 +544,13 @@ function runAdrs(args: Args): number {
   return 0;
 }
 
-/** `spectacular foundation` — the ground rules, and what is still TBD. */
+/** `spec-tacular foundation` — the ground rules, and what is still TBD. */
 function runFoundation(args: Args): number {
   const items = loadFoundation(args.cwd);
   if (items.length === 0) {
     process.stderr.write(
       `No Foundation at ${foundationDir(args.cwd)}.\n` +
-        'Run `spectacular init` to scaffold it.\n',
+        'Run `spec-tacular init` to scaffold it.\n',
     );
     return 1;
   }
@@ -581,7 +581,7 @@ function runFoundation(args: Args): number {
   return 0;
 }
 
-/** `spectacular pending` — what is waiting on validation. */
+/** `spec-tacular pending` — what is waiting on validation. */
 function runPending(args: Args): number {
   const entries = loadRegister(args.cwd);
   if (entries.length === 0) {
@@ -606,11 +606,11 @@ function runPending(args: Args): number {
   return 0;
 }
 
-/** `spectacular verify <capability> --requirement <name>`. */
+/** `spec-tacular verify <capability> --requirement <name>`. */
 async function runVerify(args: Args, adapter: OpenSpecAdapter): Promise<number> {
   if (!args.artifact || !args.requirement) {
     process.stderr.write(
-      'Usage: spectacular verify <capability> --requirement "<name>"\n',
+      'Usage: spec-tacular verify <capability> --requirement "<name>"\n',
     );
     return 1;
   }
@@ -640,10 +640,10 @@ async function runVerify(args: Args, adapter: OpenSpecAdapter): Promise<number> 
   return 0;
 }
 
-/** `spectacular archive <change>` — the split. */
+/** `spec-tacular archive <change>` — the split. */
 async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number> {
   if (!args.change) {
-    process.stderr.write('Usage: spectacular archive <change>\n');
+    process.stderr.write('Usage: spec-tacular archive <change>\n');
     return 1;
   }
 
@@ -702,7 +702,7 @@ async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number>
   return 0;
 }
 
-/** `spectacular roadmap` — show, promote, or complete a slice. */
+/** `spec-tacular roadmap` — show, promote, or complete a slice. */
 async function runRoadmap(args: Args, adapter: OpenSpecAdapter): Promise<number> {
   // Loading the changes also marks the slices whose changes are applied done.
   const pipelines = isOpenSpecProject(args.cwd) ? (await loadPipelines(adapter, args.cwd)).pipelines : [];
@@ -749,7 +749,7 @@ async function runRoadmap(args: Args, adapter: OpenSpecAdapter): Promise<number>
   const planning = roadmap.slices.find((s) => s.status === 'active' && !isSpecified(s.id));
   process.stdout.write(
     next
-      ? `\nNext: spectacular roadmap --promote ${next.id}\n`
+      ? `\nNext: spec-tacular roadmap --promote ${next.id}\n`
       : planning
         ? `\n'${planning.id}' is being specified. The next slice opens once its specs are accepted.\n`
         : '\nNothing left to promote.\n',
@@ -783,7 +783,7 @@ async function setUpProject(
   }
 }
 
-/** `w` in the TUI: the same gates as `spectacular run`, reported as a line. */
+/** `w` in the TUI: the same gates as `spec-tacular run`, reported as a line. */
 async function dispatch(
   args: Args,
   adapter: OpenSpecAdapter,
@@ -922,7 +922,7 @@ async function main(): Promise<number> {
     return 0;
   }
   if (args.version) {
-    process.stdout.write(`spectacular ${VERSION}\n`);
+    process.stdout.write(`spec-tacular ${VERSION}\n`);
     return 0;
   }
 
@@ -932,7 +932,7 @@ async function main(): Promise<number> {
   if (!isOpenSpecProject(args.cwd) && !tui) {
     process.stderr.write(
       `No openspec/ directory in ${args.cwd}.\n` +
-        `spec-tacular works on an OpenSpec project — run \`spectacular\` in a terminal\n` +
+        `spec-tacular works on an OpenSpec project — run \`spec-tacular\` in a terminal\n` +
         `to be guided through setting one up, or point at one with --cwd.\n`,
     );
     return 1;

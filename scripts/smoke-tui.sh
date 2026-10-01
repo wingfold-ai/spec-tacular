@@ -1,8 +1,8 @@
 #!/bin/sh
-# Starts a built spectacular's TUI in a pseudo-terminal, in an empty folder,
+# Starts a built spec-tacular's TUI in a pseudo-terminal, in an empty folder,
 # checks that it draws its start screen, and quits it with `q`.
 #
-#   scripts/smoke-tui.sh dist/spectacular
+#   scripts/smoke-tui.sh dist/spec-tacular
 #
 # `--version` never loads the terminal renderer, so this is what shows the
 # binary carries a native library that loads on this platform. Linux and
