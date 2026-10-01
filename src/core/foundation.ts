@@ -48,7 +48,7 @@ export interface FoundationDoc {
 }
 
 /**
- * The documents `spectacular init` scaffolds, and what each must answer.
+ * The documents `spec-tacular init` scaffolds, and what each must answer.
  *
  * Ordered as the guided setup asks them: what it is about first — the one
  * thing only the developer knows — then what it is built with, how it is

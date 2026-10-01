@@ -165,7 +165,7 @@ describe('surviving a restart', () => {
   });
 
   test('an outcome recorded with no parent watching is recovered', () => {
-    // `spectacular run` dispatches and exits, so by the time the agent
+    // `spec-tacular run` dispatches and exits, so by the time the agent
     // finishes there is no spec-tacular process left to see it. The job writes
     // its own exit code; without that every background job would read as
     // `interrupted`.

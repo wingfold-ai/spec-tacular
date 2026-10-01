@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs spectacular from a GitHub release of mhoegger/spec-tacular.
+# Installs spec-tacular from a GitHub release of mhoegger/spec-tacular.
 #
 #   gh api repos/mhoegger/spec-tacular/contents/install.sh \
 #     -H 'Accept: application/vnd.github.raw' | sh
@@ -24,13 +24,13 @@ die() { say "error: $*"; exit 1; }
 case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
-  *) die "no spectacular build for $(uname -s); build from source instead (see the README)" ;;
+  *) die "no spec-tacular build for $(uname -s); build from source instead (see the README)" ;;
 esac
 
 case "$(uname -m)" in
   x86_64 | amd64) arch=x64 ;;
   aarch64 | arm64) arch=arm64 ;;
-  *) die "no spectacular build for $(uname -m); build from source instead (see the README)" ;;
+  *) die "no spec-tacular build for $(uname -m); build from source instead (see the README)" ;;
 esac
 
 # A shell running under Rosetta reports x86_64 on Apple silicon.
@@ -51,10 +51,16 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 </dev/null; t
   else
     tag=$version
   fi
-  asset="spectacular-$tag-$os-$arch.tar.gz"
-  say "Downloading $asset with gh"
-  gh release download "$tag" -R "$REPO" -D "$tmp" -p "$asset" -p SHA256SUMS </dev/null ||
-    die "could not download $asset from release $tag"
+  # Releases up to v0.3.0 named the command, and their archives, `spectacular`.
+  for name in spec-tacular spectacular; do
+    asset="$name-$tag-$os-$arch.tar.gz"
+    # gh succeeds when any pattern matches, so the archive must be there.
+    gh release download "$tag" -R "$REPO" -D "$tmp" -p "$asset" -p SHA256SUMS --clobber </dev/null 2>/dev/null &&
+      [ -f "$tmp/$asset" ] && break
+    asset=
+  done
+  [ -n "$asset" ] || die "could not download a build for $os-$arch from release $tag"
+  say "Downloaded $asset with gh"
 elif command -v curl >/dev/null 2>&1; then
   if [ "$version" = latest ]; then
     # github.com redirects /releases/latest to /releases/tag/<tag>.
@@ -64,13 +70,17 @@ elif command -v curl >/dev/null 2>&1; then
   else
     tag=$version
   fi
-  asset="spectacular-$tag-$os-$arch.tar.gz"
   base="https://github.com/$REPO/releases/download/$tag"
-  say "Downloading $asset"
-  for file in "$asset" SHA256SUMS; do
-    curl -fsSL -o "$tmp/$file" "$base/$file" </dev/null ||
-      die "could not download $file from release $tag (a private repository needs gh, signed in)"
+  # Releases up to v0.3.0 named the command, and their archives, `spectacular`.
+  for name in spec-tacular spectacular; do
+    asset="$name-$tag-$os-$arch.tar.gz"
+    curl -fsSL -o "$tmp/$asset" "$base/$asset" </dev/null 2>/dev/null && break
+    asset=
   done
+  [ -n "$asset" ] || die "could not download a build for $os-$arch from release $tag (a private repository needs gh, signed in)"
+  say "Downloaded $asset"
+  curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" </dev/null ||
+    die "could not download SHA256SUMS from release $tag"
 else
   die "neither gh nor curl is installed"
 fi
@@ -86,24 +96,31 @@ fi
 [ "$actual" = "$expected" ] || die "checksum mismatch for $asset (expected $expected, got $actual)"
 
 tar -xzf "$tmp/$asset" -C "$tmp"
-bin="$tmp/${asset%.tar.gz}/spectacular"
-[ -f "$bin" ] || die "$asset does not contain spectacular"
+bin="$tmp/${asset%.tar.gz}/$name"
+[ -f "$bin" ] || die "$asset does not contain $name"
 
 mkdir -p "$install_dir"
-# Written beside the target and renamed over it, so a running spectacular is
+# Written beside the target and renamed over it, so a running spec-tacular is
 # never overwritten in place.
-cp "$bin" "$install_dir/.spectacular.new"
-chmod 755 "$install_dir/.spectacular.new"
-mv -f "$install_dir/.spectacular.new" "$install_dir/spectacular"
+cp "$bin" "$install_dir/.spec-tacular.new"
+chmod 755 "$install_dir/.spec-tacular.new"
+mv -f "$install_dir/.spec-tacular.new" "$install_dir/spec-tacular"
 
-say "Installed $("$install_dir/spectacular" --version) to $install_dir/spectacular"
+say "Installed $("$install_dir/spec-tacular" --version) to $install_dir/spec-tacular"
+
+# Until 0.3.0 the command was `spectacular`: a copy left under that name would
+# be a stale version answering to the old name.
+if [ -f "$install_dir/spectacular" ]; then
+  rm -f "$install_dir/spectacular"
+  say "Removed the old \`spectacular\` command: it is \`spec-tacular\` now."
+fi
 
 case ":$PATH:" in
   *":$install_dir:"*) ;;
-  *) say "note: $install_dir is not on your PATH; add it to run \`spectacular\` by name." ;;
+  *) say "note: $install_dir is not on your PATH; add it to run \`spec-tacular\` by name." ;;
 esac
 
 if ! command -v openspec >/dev/null 2>&1; then
-  say "note: spectacular needs the OpenSpec CLI, which is not on your PATH. Install it with:"
+  say "note: spec-tacular needs the OpenSpec CLI, which is not on your PATH. Install it with:"
   say "  npm i -g @fission-ai/openspec"
 fi

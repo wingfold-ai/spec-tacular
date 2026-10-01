@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag `vX.Y.Z` matching package.json's version to publish a release:
-# standalone `spectacular` binaries (Bun runtime, program and OpenTUI's native
+# standalone `spec-tacular` binaries (Bun runtime, program and OpenTUI's native
 # library in one file) for Linux and macOS, x64 and arm64, each as a tar.gz
 # with the README and the licence, and a SHA256SUMS file. A tag with a hyphen
 # (`v1.0.0-rc.1`) makes a pre-release.
@@ -88,22 +88,22 @@ jobs:
       - name: Check the binary
         shell: bash
         run: |
-          bin=dist/spectacular
+          bin=dist/spec-tacular
           file "$bin"
           ls -l "$bin"
           version=$(bun -e 'console.log(require("./package.json").version)')
           out=$("$bin" --version)
           echo "$out"
-          [ "$out" = "spectacular $version" ] || { echo "::error::unexpected --version output: $out"; exit 1; }
+          [ "$out" = "spec-tacular $version" ] || { echo "::error::unexpected --version output: $out"; exit 1; }
           "$bin" --help > /dev/null
           scripts/smoke-tui.sh "$bin"
 
       - name: Package
         shell: bash
         run: |
-          name="spectacular-$TAG-${{ matrix.platform }}"
+          name="spec-tacular-$TAG-${{ matrix.platform }}"
           mkdir -p "pkg/$name"
-          cp dist/spectacular README.md LICENSE "pkg/$name/"
+          cp dist/spec-tacular README.md LICENSE "pkg/$name/"
           tar -C pkg -czf "pkg/$name.tar.gz" "$name"
           cd pkg
           if command -v sha256sum >/dev/null; then

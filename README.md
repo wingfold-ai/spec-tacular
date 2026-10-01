@@ -39,26 +39,27 @@ gh api repos/mhoegger/spec-tacular/contents/install.sh -H 'Accept: application/v
 ```
 
 The script picks the build for your OS and CPU, checks it against the
-release's `SHA256SUMS`, and installs `spectacular` to `~/.local/bin`. Set
+release's `SHA256SUMS`, and installs `spec-tacular` to `~/.local/bin`. Set
 `SPECTACULAR_VERSION=v0.1.0` for a particular release and
 `SPECTACULAR_INSTALL_DIR` for another directory. Without `gh` it downloads with
 `curl` from github.com, which works once the repository is public. Run it again
-to update.
+to update. Until 0.3.0 the command was called `spectacular`; the script removes
+that old copy when it installs `spec-tacular`.
 
-**By hand** — download `spectacular-<version>-<os>-<arch>.tar.gz` and
+**By hand** — download `spec-tacular-<version>-<os>-<arch>.tar.gz` and
 `SHA256SUMS` from a release, then:
 
 ```bash
-gh release download -R mhoegger/spec-tacular -p 'spectacular-*-linux-x64.tar.gz' -p SHA256SUMS
+gh release download -R mhoegger/spec-tacular -p 'spec-tacular-*-linux-x64.tar.gz' -p SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS   # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
-tar -xzf spectacular-*-linux-x64.tar.gz
-install spectacular-*-linux-x64/spectacular ~/.local/bin/
+tar -xzf spec-tacular-*-linux-x64.tar.gz
+install spec-tacular-*-linux-x64/spec-tacular ~/.local/bin/
 ```
 
 **From source** — needs [Bun](https://bun.sh):
 
 ```bash
-bun install && bun run build   # writes dist/spectacular
+bun install && bun run build   # writes dist/spec-tacular
 ```
 
 ### Releasing
@@ -328,12 +329,12 @@ the keyboard, or revise it with AI (`r`) or in your editor (ctrl+e). Decisions p
 reviewed requirement is edited afterwards, and reopening resumes where you
 stopped.
 
-Sequencing is enforced. `spectacular init` installs a schema where `design`
+Sequencing is enforced. `spec-tacular init` installs a schema where `design`
 requires `specs` (OpenSpec's own has it require only `proposal`), and
-`spectacular instructions design -c <change>` is refused — exit 1 — while any
+`spec-tacular instructions design -c <change>` is refused — exit 1 — while any
 spec requirement is unreviewed.
 
-Drafting agents run in the background. `spectacular run <artifact> -c <change>`
+Drafting agents run in the background. `spec-tacular run <artifact> -c <change>`
 dispatches Claude Code or opencode and returns immediately, so you keep
 reviewing while it works. `ctrl+j` pulls up the job pane mid-review without
 losing your place: what each agent read, ran and wrote, and every tool call it
@@ -366,7 +367,7 @@ only: it never blocks a stage.
    3. names a class or symbol: ExportController
 ```
 
-Ground rules come first. `spectacular init` scaffolds a Foundation — domain,
+Ground rules come first. `spec-tacular init` scaffolds a Foundation — domain,
 stack, architecture, conventions — with every question left as `TBD` on
 purpose (on a new project, those nobody can answer yet say *Decide later*
 instead), and refuses to start a change until the `TBD`s are answered. Once
@@ -377,7 +378,7 @@ design and `p` promotes it to a numbered ADR under `spec-tacular/decisions/`,
 leaving a reference behind. Later changes get it as a rule:
 
 ```
-$ spectacular adr
+$ spec-tacular adr
 ADR-0001  accepted   Errors are values
 ```
 
@@ -387,12 +388,12 @@ requirements merge into `openspec/specs/`, the deferred one waits in
 `spec-tacular/pending-validation.md` with what would verify it.
 
 ```
-$ spectacular archive add-export
+$ spec-tacular archive add-export
 1 requirement(s) merge into the baseline
 1 divert to pending validation
   data-export: Export completes against a deployment — a deployed instance to run against
 
-$ spectacular verify data-export --requirement "Export completes against a deployment"
+$ spec-tacular verify data-export --requirement "Export completes against a deployment"
 Verified into openspec/specs/data-export/spec.md
 Specification 'data-export' is valid
 ```

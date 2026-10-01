@@ -51,7 +51,7 @@ const HEADER = [
   'one and it moves there:',
   '',
   '```',
-  'spectacular verify "<capability>" --requirement "<name>"',
+  'spec-tacular verify "<capability>" --requirement "<name>"',
   '```',
   '',
 ];

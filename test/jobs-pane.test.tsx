@@ -128,7 +128,7 @@ describe('job pane', () => {
   });
 
   test('says how to start one when there are none', async () => {
-    expect((await mount([])).frame()).toContain('spectacular run');
+    expect((await mount([])).frame()).toContain('spec-tacular run');
   });
 
   test('a job with no output yet says so rather than rendering blank', async () => {
