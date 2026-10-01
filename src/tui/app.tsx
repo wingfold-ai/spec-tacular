@@ -13,7 +13,7 @@ import { createCliRenderer } from '@opentui/core';
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { staleArtifacts } from '../core/gate.ts';
-import { fullyPlanned, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
+import { specified, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
 import {
   decide,
   move as moveCursor,
@@ -49,7 +49,7 @@ import { DocumentView, type DocumentAction } from './document.tsx';
 import { VisionScreen } from './vision.tsx';
 import { FirstChangeGuide, HelpOverlay, Stepper } from './guide.tsx';
 import { HomeScreen, type HomeAction } from './home.tsx';
-import { editLine, isCancel, isEnter } from './input.ts';
+import { editLine, isCancel, isEditor, isEnter } from './input.ts';
 import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
 import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn } from '../core/refine.ts';
 import type { Requirement } from '../core/requirements.ts';
@@ -100,6 +100,15 @@ export interface TuiInput {
    * The agent's own interactive session for implementing a change, behind
    * the same gates as a draft. Without it, implementing runs in the background.
    */
+  /**
+   * Opens an agent's session elsewhere — a new tab, or a window — so this one
+   * stays open. Without it, or when nothing can be opened, the session takes
+   * over this terminal until it exits.
+   */
+  launch?: (change: string, command: { command: string; args: string[]; env?: Record<string, string> }) =>
+    { ok: true; where: string } | { ok: false };
+  /** The changes being implemented in a session elsewhere right now. */
+  implementing?: () => string[];
   /** Opens the roadmap's next slice as a change, once the one before it is fully planned. */
   startNextSlice?: () => Promise<{ ok: true; change: string } | { ok: false; reason: string }>;
   implement?: (change: string) => Promise<
@@ -546,6 +555,31 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // While an agent runs, watch for it finishing: its artifact changes what
   // the next step is, and making you restart to find out defeats the point of
   // running it in the background.
+  // Sessions implementing elsewhere: refresh while they run, so ticked tasks
+  // show up here, and say so when one ends.
+  const [implementing, setImplementing] = createSignal<string[]>(props.input.implementing?.() ?? []);
+  const followSessions = setInterval(() => {
+    if (!props.input.implementing) return;
+    const before = implementing();
+    const now = props.input.implementing();
+    if (before.length === 0 && now.length === 0) return;
+    setImplementing(now);
+    const ended = before.filter((c) => !now.includes(c));
+    void reload().then(() => {
+      for (const change of ended) {
+        const tasks = pipelines().find((c) => c.name === change)?.apply.tasks;
+        setNotice(
+          !tasks
+            ? `The session implementing ${change} ended.`
+            : tasks.applied
+              ? `✓ ${change} is implemented — every task is ticked off`
+              : `The session implementing ${change} ended: ${tasks.done} of ${tasks.total} tasks ticked off — w continues`,
+        );
+      }
+    });
+  }, 4000);
+  onCleanup(() => clearInterval(followSessions));
+
   const poll = setInterval(() => {
     const before = jobs();
     if (!before.some((j) => j.status === 'running')) return;
@@ -628,11 +662,22 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   );
 
   /** Prose artifacts written for the selected change: what can be read. */
+  /** Written artifacts of the selected change: what `v` reads — the specs, in their review. */
   const readable = createMemo(() => {
     const p = selected();
     if (!p || !props.input.readArtifact) return [];
-    return p.stages.filter((st) => st.state !== 'ready' && st.state !== 'blocked' && !st.review).map((st) => st.id);
+    return p.stages.filter((st) => st.state !== 'ready' && st.state !== 'blocked').map((st) => st.id);
   });
+
+  /** The specs: files of requirements, read in their review rather than as one document. */
+  const isSpecs = (artifact: string) =>
+    artifact === 'specs' || selected()?.stages.find((st) => st.id === artifact)?.review !== undefined;
+
+  /** Reads an artifact: a document on its own screen, the specs one requirement at a time. */
+  const view = (change: string, artifact: string) => {
+    if (isSpecs(artifact)) enterReview();
+    else void openDoc(change, artifact);
+  };
 
   const openDoc = async (change: string, artifact: string, justDrafted = false) => {
     if (!props.input.readArtifact) return;
@@ -669,7 +714,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           : then === 'apply'
             ? '✓ Accept — start implementing'
             : `✓ Accept — draft the ${then}`,
-        key: 'n',
+        key: 'a',
         run: () => {
           const accepted = props.input.acceptDocument!(d.change, d.artifact, d.content);
           if (!accepted.ok) return setNotice(accepted.reason);
@@ -685,15 +730,15 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         label: step.artifact === 'apply'
           ? '✓ Looks good — start implementing'
           : `✓ Looks good — draft the ${step.artifact}`,
-        key: 'n',
+        key: 'a',
         run: () => { closeDoc(); void draftNext(); },
       });
     } else {
-      out.push({ label: '✓ Looks good', key: 'n', run: closeDoc });
+      out.push({ label: '✓ Looks good', key: 'a', run: closeDoc });
     }
     out.push({
       label: '✎ Edit it',
-      key: 'e',
+      key: 'ctrl+e',
       run: () => {
         const opened = openInEditor(renderer, d.file, 1);
         if (!opened.ok) return setNotice(opened.reason ?? 'Could not open an editor');
@@ -942,8 +987,17 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
    * hand. spec-tacular steps aside until it exits, then reads the tasks.
    */
   const implementIn = async (change: string) => {
+    if (implementing().includes(change)) {
+      return setNotice(`${change} is already being implemented in another tab — switch to it there`);
+    }
     const handoff = await props.input.implement!(change);
     if (!handoff.ok) return setNotice(handoff.reason);
+    const elsewhere = props.input.launch?.(change, handoff.command);
+    if (elsewhere?.ok) {
+      setImplementing((now) => [...new Set([...now, change])]);
+      setNotice(`${handoff.label} is implementing ${change} in ${elsewhere.where}. This stays open and follows the tasks.`);
+      return;
+    }
     const ran = runInTerminal(renderer, handoff.command, props.input.root);
     await reload(change);
     if (!ran.ok) return setNotice(`${handoff.label} could not start: ${ran.reason}`);
@@ -973,20 +1027,20 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   };
 
   /**
-   * The roadmap's next slice, once the ones before it are fully planned: it
-   * can be planned while they are implemented.
+   * The roadmap's next slice, once the ones before it are specified: it can
+   * be specified while they are designed and built.
    */
   const nextSlice = createMemo(() => {
     const r = roadmap();
     if (!r || !props.input.startNextSlice) return null;
-    return nextPromotable(r, (id) => fullyPlanned(pipelines().find((p) => p.name === id)));
+    return nextPromotable(r, (id) => specified(pipelines().find((p) => p.name === id)));
   });
 
   const startSlice = async () => {
     const result = await props.input.startNextSlice!();
     if (!result.ok) return setNotice(result.reason);
     await reload(result.change);
-    setNotice(`Started ${result.change}. Its implementing waits until the slices before it are applied.`);
+    setNotice(`Started ${result.change}: specify it now — its design waits until the slices before it are applied.`);
   };
 
   /** The selected change's next step, as buttons. */
@@ -1008,15 +1062,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         run: () => void draftNext(),
       });
     }
-    if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'e', run: () => void writeNext() });
+    if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'ctrl+e', run: () => void writeNext() });
     if (actions.includes('foundation')) out.push({ label: '▶ Ground rules', key: 'f', run: () => void openFoundation() });
-    const slice = nextSlice();
-    if (slice && fullyPlanned(selected())) {
-      out.push({ label: `▶ Next slice: ${slice.id}`, key: 's', run: () => void startSlice() });
-    }
     const latest = readable().at(-1);
     const p = selected();
-    if (latest && p && latest !== toRead) out.push({ label: `📄 Read the ${latest}`, key: 'v', run: () => void openDoc(p.name, latest) });
+    // Not when the next step already is reading or reviewing it.
+    if (latest && p && latest !== toRead && !actions.includes('review')) {
+      out.push({ label: `📄 ${isSpecs(latest) ? 'Review' : 'Read'} the ${latest}`, key: 'v', run: () => view(p.name, latest) });
+    }
     return out;
   });
 
@@ -1237,17 +1290,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       const button = buttons[Math.min(actionFocus(), buttons.length - 1)];
       if (button) button.run();
       else if (pipelines().length === 0 && foundationSettled()) startNewChange();
-    } else if (key.name === 'r') enterReview();
+    }
     else if (key.name === 'n') startNewChange();
     else if (key.name === 'w') void draftNext();
-    else if (key.name === 's' && nextSlice() && fullyPlanned(selected())) void startSlice();
-    else if (key.name === 'e') void writeNext();
+    else if (key.name === 's' && nextSlice() && specified(selected())) void startSlice();
+    // ctrl+e opens the editor on every screen; plain e, as it used to.
+    else if (isEditor(key) || (key.name === 'e' && !key.ctrl)) void writeNext();
     else if (key.name === 'f') void openFoundation();
     else if (key.name === 'h') setScreen('home');
     else if (key.name === 'v' && !key.ctrl) {
       const latest = readable().at(-1);
       const p = selected();
-      if (latest && p) void openDoc(p.name, latest);
+      if (latest && p) view(p.name, latest);
     }
     else if (key.sequence === '?') setHelp(true);
   });
@@ -1565,6 +1619,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                         <strong>Next</strong>
                       </text>
                       <text style={{ fg: THEME.text }}>{next()!.text}</text>
+                      <Show when={implementing().includes(selected()?.name ?? '')}>
+                        <text style={{ fg: THEME.accent }}>
+                          {(() => {
+                            const tasks = selected()?.apply.tasks;
+                            return `◉ Being implemented in another tab${tasks ? ` — ${tasks.done} of ${tasks.total} tasks ticked off so far` : ''}`;
+                          })()}
+                        </text>
+                      </Show>
                       <text>{' '}</text>
                       <box style={{ flexDirection: 'row' }}>
                         <For each={actionButtons()}>
@@ -1578,6 +1640,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                           )}
                         </For>
                       </box>
+                      {/* Not a button: it is not this change's next step, and a
+                          fourth button would not fit the row. */}
+                      <Show when={nextSlice() && specified(selected())}>
+                        <text>{' '}</text>
+                        <text style={{ fg: THEME.dim }}>
+                          {`s  specify the next slice on the roadmap: ${nextSlice()!.id}`}
+                        </text>
+                      </Show>
                     </Show>
                   </Panel>
                 </Show>

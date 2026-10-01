@@ -61,6 +61,10 @@ export function runInTerminal(
   command: { command: string; args: string[]; env?: Record<string, string> },
   cwd: string,
 ): { ok: boolean; reason?: string } {
+  // ctrl+c there reaches every process in this terminal: meant for the agent,
+  // it must not end spec-tacular too.
+  const ignore = () => {};
+  process.on('SIGINT', ignore);
   renderer?.suspend();
   try {
     const result = spawnSync(command.command, command.args, {
@@ -72,5 +76,6 @@ export function runInTerminal(
     return { ok: true };
   } finally {
     renderer?.resume();
+    process.off('SIGINT', ignore);
   }
 }

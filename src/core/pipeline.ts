@@ -75,7 +75,10 @@ export interface ChangePipeline {
    * `apply.requires`. `accepted` once every task is ticked or deferred.
    */
   apply: Stage;
-  /** Changes before this one on the roadmap that must be applied first. */
+  /**
+   * Changes before this one on the roadmap that must be applied before it
+   * writes anything that builds on their code (`buildsOnCode`).
+   */
   waitingOn: string[];
   gaps: PrerequisiteGap[];
   /** The stage a human should look at next, or null when planning is finished. */
@@ -181,9 +184,24 @@ export function sortByProgress(pipelines: ChangePipeline[]): ChangePipeline[] {
 }
 
 /**
- * Every artifact up to the tasks accepted: all that is left is implementing,
- * which needs no review — so the next slice may be planned meanwhile.
+ * Every artifact up to and including the specs accepted: what the slice is
+ * meant to do is settled, so the next slice may be specified meanwhile. How
+ * it is built — design, tasks — waits for the code before it (`buildsOnCode`).
  */
-export function fullyPlanned(pipeline: ChangePipeline | undefined): boolean {
-  return !!pipeline && pipeline.stages.length > 0 && pipeline.stages.every((s) => s.state === 'accepted');
+export function specified(pipeline: ChangePipeline | undefined): boolean {
+  if (!pipeline || pipeline.stages.length === 0) return false;
+  const specs = pipeline.stages.findIndex((s) => s.id === 'specs');
+  const upTo = specs < 0 ? pipeline.stages : pipeline.stages.slice(0, specs + 1);
+  return upTo.every((s) => s.state === 'accepted');
+}
+
+/**
+ * Whether an artifact depends on the code that exists when it is written:
+ * the design, the tasks and implementing, everything after the specs. A slice
+ * writes those only once the slices before it are applied.
+ */
+export function buildsOnCode(pipeline: ChangePipeline, artifactId: string): boolean {
+  if (artifactId === 'apply') return true;
+  const specs = pipeline.stages.findIndex((s) => s.id === 'specs');
+  return specs >= 0 && pipeline.stages.findIndex((s) => s.id === artifactId) > specs;
 }

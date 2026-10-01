@@ -120,14 +120,14 @@ describe('revising a requirement from the review', () => {
     file = join(dir, 'spec.md');
     writeFileSync(file, SPEC);
 
-    await ui.press('r');
+    await ui.press('v'); // the specs, reviewed
     expect(ui.frame()).toContain('Requirement: Session timeout');
-    expect(ui.frame()).toContain('e revise with AI');
+    expect(ui.frame()).toContain('r revise with AI');
     expect(ui.warmed).toContain('review');
 
     await ui.press('n');
     await ui.press('a'); // accept "Remember me"
-    await ui.press('e'); // back on the first, the one still open
+    await ui.press('r'); // back on the first, the one still open: revise it
     await ui.type('make the timeout configurable');
     await ui.press('return');
     expect(ui.frame()).toContain('+ The system SHALL end an idle session after a configurable timeout.');

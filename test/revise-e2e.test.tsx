@@ -380,7 +380,7 @@ describe('copy and paste on the review screen', () => {
 
   test('ctrl+v in the reject prompt joins the lines into its one line', async () => {
     const ui = await mount({ clipboard: 'too vague,\nsay which timeout' });
-    await ui.press('r');
+    await ui.press('x');
     await ui.press('v', { ctrl: true });
     await ui.press('RETURN');
     expect(ui.session().items[0]!.review.note).toBe('too vague, say which timeout');

@@ -78,6 +78,8 @@ export async function mountApp(
     reviseAnswer?: TuiInput['reviseAnswer'];
     reviseVisionAnswer?: TuiInput['reviseVisionAnswer'];
     implement?: TuiInput['implement'];
+    launch?: TuiInput['launch'];
+    implementing?: TuiInput['implementing'];
     /** Prepares the folder before the app opens it: a roadmap, say. */
     prepare?: (root: string) => void;
     startNextSlice?: TuiInput['startNextSlice'];
@@ -125,6 +127,8 @@ export async function mountApp(
     reviseAnswer: options.reviseAnswer,
     reviseVisionAnswer: options.reviseVisionAnswer,
     implement: options.implement,
+    launch: options.launch,
+    implementing: options.implementing,
     startNextSlice: options.startNextSlice,
     clipboard: options.clipboard ?? {
       read: async () => ({ ok: false, reason: 'no clipboard in this test' }),

@@ -14,7 +14,7 @@ import type { RefineTurn, Refinement } from '../core/refine.ts';
 import { lineDiff, type DiffLine } from '../render/diff.ts';
 import { wrap } from '../render/requirement.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
-import { editLine, isCancel, isEnter } from './input.ts';
+import { editLine, isAccept, isCancel, isEnter, isRevise } from './input.ts';
 import { useContentWidth } from './layout.ts';
 import { THEME } from './theme.ts';
 import { KeyBar, Spinner } from './widgets.tsx';
@@ -209,7 +209,7 @@ export function RevisePanel(props: RevisePanelProps) {
       case 'error':
         if (isCancel(key)) return back(`Revision cancelled — the ${noun()} is unchanged`);
         if (isEnter(key)) return send(asked());
-        if (key.name === 'e' || key.name === 'i') {
+        if (isRevise(key) || key.name === 'e' || key.name === 'i') {
           setDraft(asked());
           setPhase('prompt');
         }
@@ -220,8 +220,9 @@ export function RevisePanel(props: RevisePanelProps) {
           generation++;
           return props.onClose(`Revision discarded — the ${noun()} is unchanged`);
         }
-        if (key.name === 'a' || isEnter(key)) return accept();
-        if (key.name === 'i' || key.name === 'e') {
+        if (isAccept(key) || isEnter(key)) return accept();
+        // r asks for more, as it revises everywhere; i and e, as they used to.
+        if (isRevise(key) || key.name === 'i' || key.name === 'e') {
           setDraft('');
           setPhase('prompt');
           return;
@@ -250,13 +251,13 @@ export function RevisePanel(props: RevisePanelProps) {
       case 'proposal':
         return [
           ['a', 'accept — write it'],
-          ['i', 'ask for more changes'],
-          ['d', 'discard'],
+          ['r', 'ask for more changes'],
+          ['q', 'discard'],
           ...(diff().length > height() ? [['↑↓', 'scroll'] as [string, string]] : []),
           ['y', 'copy'],
         ];
       case 'error':
-        return [['enter', 'try again'], ['e', 'edit the request'], ['ctrl+c', 'back']];
+        return [['enter', 'try again'], ['r', 'edit the request'], ['ctrl+c', 'back']];
       default:
         return [['any key', 'back']];
     }

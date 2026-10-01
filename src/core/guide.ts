@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { isOpenSpecProject, openSpecToolsInstalled } from '../adapter/openspec.ts';
 import { foundationExists, isDeferred, isUnanswered, loadFoundation } from './foundation.ts';
 import { gateFor } from './gate.ts';
-import type { ChangePipeline, Stage } from './pipeline.ts';
+import { buildsOnCode, type ChangePipeline, type Stage } from './pipeline.ts';
 import { loadRoadmap } from './roadmap.ts';
 import { isGreenfield, loadSession } from './vision.ts';
 
@@ -191,6 +191,13 @@ export function nextStep(pipeline: ChangePipeline, foundationSettled: boolean): 
     return {
       text: `Set the ground rules before writing the ${stage.id}.`,
       actions: ['foundation'],
+    };
+  }
+
+  if (pipeline.waitingOn.length > 0 && buildsOnCode(pipeline, stage.id)) {
+    return {
+      text: `Specified. The ${stage.id} waits until ${pipeline.waitingOn.join(', ')} is applied — it builds on that code.`,
+      actions: [],
     };
   }
 

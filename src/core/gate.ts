@@ -13,7 +13,7 @@
  */
 
 import { foundationExists, isDeferred, isUnanswered, loadFoundation } from './foundation.ts';
-import type { ChangePipeline, Stage } from './pipeline.ts';
+import { buildsOnCode, type ChangePipeline, type Stage } from './pipeline.ts';
 
 export type GateDecision =
   | { allowed: true; warnings: string[] }
@@ -87,9 +87,9 @@ export function gateFor(pipeline: ChangePipeline, artifactId: string): GateDecis
     if (stale) warnings.push(stale);
   }
 
-  // A slice builds on the ones before it: planning it may run ahead, but
-  // implementing it waits until they are implemented.
-  if (artifactId === 'apply') {
+  // A slice builds on the ones before it: what it does may be specified
+  // ahead, but how it is built waits until their code exists.
+  if (buildsOnCode(pipeline, artifactId)) {
     for (const change of pipeline.waitingOn) blockers.push(`${change} is not applied yet`);
   }
 

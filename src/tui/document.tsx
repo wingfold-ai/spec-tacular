@@ -12,7 +12,7 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
-import { editLine, isCancel, isEnter } from './input.ts';
+import { editLine, isCancel, isEditor, isEnter, isRevise } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { Button, KeyBar, Panel } from './widgets.tsx';
 
@@ -98,7 +98,7 @@ export function DocumentView(props: DocumentViewProps) {
   const buttons = createMemo(() => [
     ...props.actions,
     ...(props.onRedraft
-      ? [{ label: '↻ Redraft with feedback', key: 'f', run: () => setFeedback('') }]
+      ? [{ label: '↻ Redraft with feedback', key: 'r', run: () => setFeedback('') }]
       : []),
     { label: '← Back', key: 'q', run: props.onClose },
   ]);
@@ -129,7 +129,9 @@ export function DocumentView(props: DocumentViewProps) {
     if (key.name === 'right' || key.name === 'tab') return setFocus((f) => (f + 1) % buttons().length);
     if (key.name === 'left') return setFocus((f) => (f - 1 + buttons().length) % buttons().length);
     if (isEnter(key)) return buttons()[focus()]?.run();
-    const byKey = buttons().find((b) => b.key === key.name);
+    // Keys as on every screen (input.ts: KEYS); `f`, as redrafting used to be.
+    const pressed = isEditor(key) ? 'ctrl+e' : isRevise(key) || key.name === 'f' ? 'r' : key.ctrl ? null : key.name;
+    const byKey = buttons().find((b) => b.key === pressed);
     if (byKey) byKey.run();
   });
 
