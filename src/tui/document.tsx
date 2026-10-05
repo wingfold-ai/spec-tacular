@@ -5,6 +5,9 @@
  * walked item by item — but it still has to be *read* before the next stage
  * is built on it. This shows it in full, scrollable, with the three things
  * worth doing next: move on, edit it, or have it redrafted with feedback.
+ *
+ * It also shows what an agent said when it stopped without writing one: the
+ * same reading, with actions that answer it instead.
  */
 
 import { useKeyboard, useTerminalDimensions } from '@opentui/solid';
@@ -19,7 +22,22 @@ import { Button, KeyBar, Panel } from './widgets.tsx';
 export interface DocumentAction {
   label: string;
   key: string;
-  run: () => void;
+  /**
+   * Asks for a line of text first, with this question, and runs with what
+   * was typed — which may be nothing: the answer is optional.
+   */
+  ask?: string;
+  run: (answer?: string) => void;
+}
+
+/** The line being typed, and what it is for. */
+interface Asking {
+  question: string;
+  /** Whether enter on an empty line is refused. */
+  required: boolean;
+  submit: (text: string) => void;
+  /** What enter does, for the key bar. */
+  verb: string;
 }
 
 export interface DocumentViewProps {
@@ -85,7 +103,13 @@ export function DocumentView(props: DocumentViewProps) {
   const [top, setTop] = createSignal(0);
   const [focus, setFocus] = createSignal(0);
   const [feedback, setFeedback] = createSignal<string | null>(null);
+  const [asking, setAsking] = createSignal<Asking | null>(null);
   const copy = useCopy();
+
+  const ask = (next: Asking) => {
+    setAsking(next);
+    setFeedback('');
+  };
 
   usePasteInto(() => (feedback() !== null ? (text: string) => setFeedback((f) => (f ?? '') + text) : null));
 
@@ -96,9 +120,24 @@ export function DocumentView(props: DocumentViewProps) {
   const scroll = (delta: number) => setTop((t) => Math.min(Math.max(t + delta, 0), maxTop()));
 
   const buttons = createMemo(() => [
-    ...props.actions,
+    ...props.actions.map((a) => ({
+      label: a.label,
+      key: a.key,
+      run: a.ask
+        ? () => ask({ question: a.ask!, required: false, submit: (text) => a.run(text), verb: 'go' })
+        : () => a.run(),
+    })),
     ...(props.onRedraft
-      ? [{ label: '↻ Redraft with feedback', key: 'r', run: () => setFeedback('') }]
+      ? [{
+          label: '↻ Redraft with feedback',
+          key: 'r',
+          run: () => ask({
+            question: 'What should change? The agent redrafts it with this.',
+            required: true,
+            submit: (text) => props.onRedraft?.(text),
+            verb: 'redraft',
+          }),
+        }]
       : []),
     { label: '← Back', key: 'q', run: props.onClose },
   ]);
@@ -106,11 +145,12 @@ export function DocumentView(props: DocumentViewProps) {
   useKeyboard((key) => {
     const draft = feedback();
     if (draft !== null) {
+      const current = asking();
       if (isCancel(key)) setFeedback(null);
       else if (isEnter(key)) {
-        if (draft.trim()) {
+        if (current && (draft.trim() || !current.required)) {
           setFeedback(null);
-          props.onRedraft?.(draft.trim());
+          current.submit(draft.trim());
         }
       } else {
         const next = editLine(draft, key);
@@ -156,7 +196,7 @@ export function DocumentView(props: DocumentViewProps) {
           </For>
         </box>
         <Show when={feedback() !== null}>
-          <text style={{ fg: THEME.warn }}>What should change? The agent redrafts it with this.</text>
+          <text style={{ fg: THEME.warn }}>{asking()?.question ?? ''}</text>
           <box style={{ border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1 }}>
             <text style={{ fg: THEME.text }}>{`› ${feedback()}▏`}</text>
           </box>
@@ -177,7 +217,7 @@ export function DocumentView(props: DocumentViewProps) {
       <KeyBar
         keys={
           feedback() !== null
-            ? [['enter', 'redraft'], ['ctrl+v', 'paste'], ['ctrl+c', 'cancel']]
+            ? [['enter', asking()?.verb ?? 'go'], ['ctrl+v', 'paste'], ['ctrl+c', 'cancel']]
             : [['↑↓', 'scroll'], ['space', 'page'], ['←→', 'action'], ['enter', 'go'], ['y', 'copy'], ['q', 'back']]
         }
       />

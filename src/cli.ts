@@ -33,6 +33,7 @@ import {
   cancelJob,
   JobConflictError,
   listJobs,
+  readJobLog,
   startJob,
   tailJob,
 } from './core/jobs.ts';
@@ -402,11 +403,16 @@ async function composePrompt(
   feedback?: string,
 ): Promise<string> {
   const base = await adapter.instructions(artifact, change);
-  // A redraft: the developer read the draft and said what to change.
-  const instructions = feedback
-    ? `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n> ${feedback.replace(/\n/g, '\n> ')}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`
-    : base;
   const status = (await adapter.statusAll()).changes.find((c) => c.changeName === change);
+  const written = status?.artifacts.find((a) => a.id === artifact)?.status === 'done';
+  const quoted = feedback?.replace(/\n/g, '\n> ');
+  // A redraft: the developer read the draft and said what to change. Or a
+  // retry: an earlier attempt stopped without writing it, and they answered.
+  const instructions = !feedback
+    ? base
+    : written
+      ? `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n> ${quoted}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`
+      : `${base}\n\n# Before you start\n\nAn earlier attempt at this artifact stopped without writing it. The developer\nread why and answered:\n\n> ${quoted}\n\nTake that as settled and write the artifact.\n`;
   const reviewed = status ? loadChangeReview(args.cwd, status).requirements : [];
   // What the developer said the change is for, when they created it. OpenSpec
   // keeps it in the change's README but does not put it in the instructions.
@@ -1037,6 +1043,15 @@ async function main(): Promise<number> {
           if (usage) out.push(usage);
         }
         return out;
+      },
+      jobReport: (job) => {
+        let read: ((log: string) => string | null) | undefined;
+        try {
+          read = defaultRegistry().get(job.driver).finalMessage;
+        } catch {
+          return null;
+        }
+        return read ? read(readJobLog(job)) : null;
       },
       tailJob: (job) => {
         let format: (line: string) => string | null;

@@ -122,6 +122,33 @@ export function usageFromResult(event: StreamEvent): Usage | null {
   };
 }
 
+/**
+ * What the agent said last in a `stream-json` log: the final `result`, which
+ * is its closing message, or — when it never got that far — the text of its
+ * last reply.
+ */
+export function finalMessageFromLog(log: string): string | null {
+  let last: string | null = null;
+  for (const line of log.split('\n')) {
+    let event: StreamEvent;
+    try {
+      event = JSON.parse(line.trim()) as StreamEvent;
+    } catch {
+      continue;
+    }
+    if (event.type === 'result' && typeof event.result === 'string' && event.result.trim()) {
+      last = event.result.trim();
+    } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+      const text = event.message.content
+        .filter((p) => p.type === 'text' && p.text?.trim())
+        .map((p) => p.text!.trim())
+        .join('\n\n');
+      if (text) last = text;
+    }
+  }
+  return last;
+}
+
 /** Extra flags from the environment, split on whitespace. */
 function extraArgs(): string[] {
   return (process.env['SPECTACULAR_CLAUDE_ARGS'] ?? '').split(/\s+/).filter(Boolean);
@@ -473,6 +500,8 @@ export const claudeDriver: AgentDriver = {
     // System init, user echoes, partial chunks: protocol noise.
     return null;
   },
+
+  finalMessage: finalMessageFromLog,
 
   parseUsage(line: string): Usage | null {
     try {

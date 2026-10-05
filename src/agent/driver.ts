@@ -49,6 +49,12 @@ export interface AgentDriver {
    */
   parseUsage?(line: string): Usage | null;
   /**
+   * What the agent said last, from a finished job's whole log, or null. An
+   * agent that stops without writing the artifact explains why there — and
+   * the developer should read that without digging through the log.
+   */
+  finalMessage?(log: string): string | null;
+  /**
    * The model this driver uses for a kind of request, when one is configured.
    * `undefined` means the agent's own default, which only it knows.
    */
