@@ -12,10 +12,14 @@ import {
   jobsDir,
   listJobs,
   pruneJobs,
+  readJobLog,
   startJob,
+  stoppedDraft,
   tailJob,
   type Job,
 } from '../src/core/jobs.ts';
+import { buildPipeline } from '../src/core/pipeline.ts';
+import type { OpenSpecChangeStatus } from '../src/adapter/types.ts';
 
 const dirs: string[] = [];
 const root = () => {
@@ -275,5 +279,58 @@ describe('listing and pruning', () => {
     const job = await settle(r, start(r, 'true').id);
     rmSync(job.logPath);
     expect(tailJob(job)).toEqual([]);
+  });
+});
+
+describe('a draft that stopped short', () => {
+  const pipeline = (design: 'ready' | 'done') => {
+    const status: OpenSpecChangeStatus = {
+      changeName: 'c',
+      schemaName: 'spec-tacular',
+      changeRoot: '/tmp/c',
+      artifactPaths: {},
+      isPlanningComplete: false,
+      applyRequires: ['tasks'],
+      nextSteps: [],
+      artifacts: [
+        { id: 'specs', status: 'done', requires: [], outputPath: 'specs/**/*.md' },
+        { id: 'design', status: design, requires: ['specs'], outputPath: 'design.md' },
+      ],
+    };
+    return buildPipeline(status);
+  };
+  const job = (over: Partial<Job>): Job => ({
+    id: 'x', change: 'c', artifact: 'design', driver: 'claude', command: 'claude', args: [], cwd: '/tmp',
+    status: 'succeeded', startedAt: '2026-10-05T09:00:00Z', logPath: '/nonexistent', ...over,
+  });
+
+  test('is the latest job, when it succeeded without writing its artifact', () => {
+    const stop = job({ id: 'design' });
+    expect(stoppedDraft([stop], pipeline('ready'))).toBe(stop);
+  });
+
+  test('is not one once the artifact is written, or the job failed', () => {
+    expect(stoppedDraft([job({})], pipeline('done'))).toBeNull();
+    expect(stoppedDraft([job({ status: 'failed' })], pipeline('ready'))).toBeNull();
+    expect(stoppedDraft([job({ status: 'running' })], pipeline('ready'))).toBeNull();
+  });
+
+  test('is dealt with once anything else ran on the change — the specs redrafted with it', () => {
+    const jobs = [
+      job({ id: 'design', startedAt: '2026-10-05T09:00:00Z' }),
+      job({ id: 'specs', artifact: 'specs', startedAt: '2026-10-05T10:00:00Z' }),
+    ];
+    expect(stoppedDraft(jobs, pipeline('ready'))).toBeNull();
+    // Other changes' jobs do not count.
+    expect(stoppedDraft([jobs[0]!, job({ change: 'other', startedAt: '2026-10-05T11:00:00Z' })], pipeline('ready'))?.id)
+      .toBe('design');
+  });
+
+  test('its log reads whole, and as empty when it is gone', async () => {
+    const r = root();
+    const done = await settle(r, start(r, 'echo one; echo two').id);
+    expect(readJobLog(done)).toBe('one\ntwo\n');
+    rmSync(done.logPath);
+    expect(readJobLog(done)).toBe('');
   });
 });

@@ -108,6 +108,8 @@ export async function mountApp(
   const dispatched: string[] = [];
   const jobs: Job[] = [];
   const docs = new Map<string, string>();
+  /** What each job's agent said last, by job id. */
+  const reports = new Map<string, string>();
   /** Documents accepted, per change: `acceptDocument` adds, a redraft removes. */
   const accepted = new Map<string, Set<string>>();
   const acceptedIn = (change: string) => accepted.get(change) ?? accepted.set(change, new Set()).get(change)!;
@@ -138,6 +140,7 @@ export async function mountApp(
     reloadPipelines: async () => [...changes],
     listJobs: () => jobs.map((j) => ({ ...j })),
     tailJob: (job) => [`working on ${job.artifact}…`, 'reading the ground rules'],
+    jobReport: (job) => reports.get(job.id) ?? null,
     cancelJob: () => {},
     promote: () => ({ ok: false, reason: 'n/a' }),
     stage: () => projectStage(root, changes.length, 'claude'),
@@ -228,6 +231,13 @@ export async function mountApp(
       // A new draft is new text: whatever was accepted before no longer holds.
       acceptedIn(change).delete(artifact);
       if (i >= 0) changes[i] = changeWith(change, done, [...acceptedIn(change)]);
+    },
+    /** Pretends an agent finished without writing `artifact`, saying `message` last. */
+    stopJob: (change: string, artifact: string, message: string) => {
+      const job = jobs.find((j) => j.change === change && j.artifact === artifact && j.status === 'running');
+      if (!job) throw new Error(`no running job for ${change}/${artifact}`);
+      job.status = 'succeeded';
+      reports.set(job.id, message);
     },
     /** Answers every ground-rule question, as if the setup were done. */
     settleGroundRules: () => {
