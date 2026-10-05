@@ -27,7 +27,7 @@ import { openInEditor, runInTerminal } from './editor.ts';
 import { JobPane, summarizeJobs } from './jobs.tsx';
 import { ReviewScreen } from './review.tsx';
 import { THEME } from './theme.ts';
-import type { Job } from '../core/jobs.ts';
+import { stoppedDraft, type Job } from '../core/jobs.ts';
 import { lintRequirement, type LintConfig } from '../core/concreteness.ts';
 import { markExampleInFile } from '../core/mark.ts';
 import type { Decision } from '../core/decisions.ts';
@@ -78,6 +78,8 @@ export interface TuiInput {
   listJobs: () => Job[];
   /** Rendered log lines for one job. */
   tailJob: (job: Job) => string[];
+  /** What a finished job's agent said last — why it stopped, when it wrote nothing. */
+  jobReport?: (job: Job) => string | null;
   cancelJob: (job: Job) => void;
   /** Lifts a global design decision to a project-wide ADR. */
   promote: (change: string, decision: Decision) => { ok: true; adr: string } | { ok: false; reason: string };
@@ -193,7 +195,7 @@ export interface Advisor {
 
 type Result = { ok: true } | { ok: false; reason: string };
 
-type Screen = 'home' | 'foundation' | 'vision' | 'overview' | 'document';
+type Screen = 'home' | 'foundation' | 'vision' | 'overview' | 'document' | 'report';
 
 /** An artifact open for reading. */
 interface OpenDocument {
@@ -201,6 +203,14 @@ interface OpenDocument {
   artifact: string;
   file: string;
   content: string;
+}
+
+/** Why a draft stopped without writing its artifact, open for reading. */
+interface OpenReport {
+  change: string;
+  artifact: string;
+  /** What the agent said last, or null when it said nothing. */
+  message: string | null;
 }
 
 const STAGE_COLOR: Record<StageState, string> = {
@@ -321,6 +331,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   /** Focused action button in the change panel. */
   const [actionFocus, setActionFocus] = createSignal(0);
   const [doc, setDoc] = createSignal<OpenDocument | null>(null);
+  const [report, setReport] = createSignal<OpenReport | null>(null);
   const vision = props.input.vision ?? null;
   const [visionSession, setVisionSession] = createSignal<VisionSession | null>(vision?.session() ?? null);
   const [visionBusy, setVisionBusy] = createSignal<string | null>(null);
@@ -373,9 +384,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // Not the stage alone: a new project's vision comes before its ground
   // rules, so on the vision they are still open.
   const foundationSettled = createMemo(() => stage().kind !== 'foundation' && questions().every((q) => q.answered));
+  /** The selected change's last draft, when it stopped without writing anything. */
+  const stopped = createMemo(() => {
+    const p = selected();
+    return p ? stoppedDraft(jobs(), p) : null;
+  });
   const next = createMemo<NextStep | null>(() => {
     const p = selected();
-    return p ? nextStep(p, foundationSettled()) : null;
+    return p ? nextStep(p, foundationSettled(), stopped()?.artifact) : null;
   });
 
   const selectedJob = createMemo(() => jobs()[jobIndex()]);
@@ -599,14 +615,20 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       // Exit 0 is not proof of work: an agent can finish without writing the
       // file (denied, confused, out of turns). Say so rather than showing the
       // same next step again as if nothing had happened.
+      // What was drafted — or why nothing was — is what you want to see
+      // next, unless you are busy with something else: then it waits behind
+      // its button.
+      const idle = screen() === 'overview' && session() === null && !jobsOpen() && asking() === null;
       const stage = pipelines().find((p) => p.name === last.change)?.stages.find((s) => s.id === last.artifact);
       if (last.status === 'succeeded' && stage && (stage.state === 'ready' || stage.state === 'blocked')) {
-        setNotice(`The agent finished but did not write the ${last.artifact} — ctrl+j shows what it did`);
+        if (idle && selected()?.name === last.change) {
+          setNotice(`The agent stopped before writing the ${last.artifact} of ${last.change}`);
+          openReport(last);
+        } else {
+          setNotice(`The agent stopped before writing the ${last.artifact} of ${last.change} — select it, enter reads why`);
+        }
         return;
       }
-      // What was drafted is what you want to see next — unless you are busy
-      // with something else, in which case it waits behind its button.
-      const idle = screen() === 'overview' && session() === null && !jobsOpen() && asking() === null;
       if (last.status === 'succeeded' && idle && selected()?.name === last.change) {
         void openDoc(last.change, last.artifact, true);
       }
@@ -694,6 +716,81 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setDoc(null);
     setScreen('overview');
   };
+
+  const openReport = (job: Job) => {
+    setReport({ change: job.change, artifact: job.artifact, message: props.input.jobReport?.(job) ?? null });
+    setScreen('report');
+  };
+
+  const closeReport = () => {
+    setReport(null);
+    setScreen('overview');
+  };
+
+  /** Dispatches from the report, which it then leaves: the answer is on its way. */
+  const dispatchFromReport = async (change: string, artifact: string, feedback?: string) => {
+    closeReport();
+    const result = await props.input.dispatch(change, artifact, feedback);
+    setJobs(props.input.listJobs());
+    setNotice(result.message);
+  };
+
+  /**
+   * What answering a stopped draft offers. An agent stops on purpose when
+   * what it builds on is wrong or ambiguous (the schema tells the design to),
+   * and the fix belongs there — so that comes first. Answering it here and
+   * drafting again is for when it is the developer's call, not the spec's.
+   */
+  const reportActions = createMemo((): DocumentAction[] => {
+    const r = report();
+    if (!r) return [];
+    const said = r.message ?? '(it said nothing at the end — ctrl+j shows its log)';
+    const p = pipelines().find((c) => c.name === r.change);
+    const stage = p?.stages.find((s) => s.id === r.artifact);
+    // The nearest prerequisite: what it was drafted against.
+    const back = [...(stage?.requires ?? [])]
+      .reverse()
+      .map((id) => p?.stages.find((s) => s.id === id))
+      .find((s) => s && (s.state === 'written' || s.state === 'accepted'));
+    const out: DocumentAction[] = [];
+    if (back) {
+      out.push({
+        label: `↩ Fix the ${back.id}`,
+        key: 'b',
+        ask: `Your answer to what it raised, if you have one. The agent redrafts the ${back.id} with its report and this; you review the result.`,
+        run: (answer) =>
+          void dispatchFromReport(
+            r.change,
+            back.id,
+            `The ${r.artifact} could not be written against the ${back.id}. The agent drafting it stopped and reported:\n\n` +
+              `${said}\n\n` +
+              (answer
+                ? `The developer's decision: ${answer}`
+                : `Resolve what it raised in the ${back.id}, and nothing else.`),
+          ),
+      });
+    }
+    out.push({
+      label: `↻ Draft the ${r.artifact} again`,
+      key: 'w',
+      ask: 'What should it go with — your answer to what it raised? Leave it empty to try again as it is.',
+      run: (answer) =>
+        void dispatchFromReport(
+          r.change,
+          r.artifact,
+          answer ? `${answer}\n\nWhat the earlier attempt reported:\n\n${said}` : undefined,
+        ),
+    });
+    out.push({
+      label: '✎ Write it myself',
+      key: 'ctrl+e',
+      run: () => {
+        closeReport();
+        void writeNext();
+      },
+    });
+    return out;
+  });
 
   /** What reading a document offers: move on first, then change it. */
   const docActions = createMemo((): DocumentAction[] => {
@@ -1053,7 +1150,11 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       const change = selected()!.name;
       out.push({ label: `▶ Read the ${toRead}`, key: 'enter', run: () => void openDoc(change, toRead) });
     }
-    if (actions.includes('draft')) {
+    const halted = actions.includes('stopped') ? stopped() : null;
+    if (halted) out.push({ label: '▶ Why it stopped', key: 'enter', run: () => openReport(halted) });
+    // Drafting it again is offered with what it stopped on, where it can be
+    // answered; w still does it as it is.
+    if (actions.includes('draft') && !halted) {
       out.push({
         label: next()?.artifact === 'apply'
           ? props.input.implement ? `▶ Implement it in ${driverLabel(props.input.driver ?? 'claude')}` : '▶ Start implementing'
@@ -1333,7 +1434,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             <strong>spec-tacular</strong>
           </text>
           <text style={{ fg: THEME.dim }}>
-            {`  ${shortPath(props.input.root, 50)}${inReview() ? ` › ${session()!.change} › specs` : ''}${screen() === 'foundation' ? ' › ground rules' : ''}${screen() === 'vision' ? ' › vision' : ''}${screen() === 'document' && doc() ? ` › ${doc()!.change} › ${doc()!.artifact}` : ''}`}
+            {`  ${shortPath(props.input.root, 50)}${inReview() ? ` › ${session()!.change} › specs` : ''}${screen() === 'foundation' ? ' › ground rules' : ''}${screen() === 'vision' ? ' › vision' : ''}${screen() === 'document' && doc() ? ` › ${doc()!.change} › ${doc()!.artifact}` : ''}${screen() === 'report' && report() ? ` › ${report()!.change} › ${report()!.artifact}` : ''}`}
           </text>
           <box style={{ flexGrow: 1 }} />
           <Show when={summarizeJobs(jobs()) !== ''}>
@@ -1473,6 +1574,15 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           actions={docActions()}
           onRedraft={(feedback) => void redraft(feedback)}
           onClose={closeDoc}
+        />
+      </Show>
+
+      <Show when={screen() === 'report' && report()}>
+        <DocumentView
+          title={`The agent stopped before writing the ${report()!.artifact}`}
+          content={report()!.message ?? 'It said nothing at the end. ctrl+j on the overview shows its whole log.'}
+          actions={reportActions()}
+          onClose={closeReport}
         />
       </Show>
 

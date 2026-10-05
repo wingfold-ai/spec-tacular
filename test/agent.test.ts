@@ -113,6 +113,28 @@ describe('claude driver', () => {
       claudeDriver.formatLine(JSON.stringify({ type: 'assistant', message: { content: [] } })),
     ).toBeNull();
   });
+
+  test('what it said last is its closing result — why it stopped, when it wrote nothing', () => {
+    const log = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Reading the specs.' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } }),
+      'not json',
+      JSON.stringify({ type: 'result', result: '## The ambiguity\n\nTell me A or B. ' }),
+      '',
+    ].join('\n');
+    expect(claudeDriver.finalMessage!(log)).toBe('## The ambiguity\n\nTell me A or B.');
+  });
+
+  test('without a result, what it said last is its last reply', () => {
+    const log = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'First.' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Last.' }, { type: 'tool_use', name: 'Read' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }),
+    ].join('\n');
+    expect(claudeDriver.finalMessage!(log)).toBe('Last.');
+    expect(claudeDriver.finalMessage!('')).toBeNull();
+  });
 });
 
 describe('opencode driver', () => {
@@ -156,6 +178,18 @@ describe('opencode driver', () => {
       cacheWriteTokens: 0,
     });
     expect(opencodeDriver.parseUsage!('not json')).toBeNull();
+  });
+
+  test('what it said last is the text after its last tool call, in one piece', () => {
+    const log = [
+      JSON.stringify({ type: 'text', part: { text: 'Looking around.' } }),
+      JSON.stringify({ type: 'tool', part: { tool: 'read' } }),
+      JSON.stringify({ type: 'text', part: { text: 'The specs disagree.' } }),
+      JSON.stringify({ type: 'text', part: { text: 'Tell me A or B.' } }),
+      JSON.stringify({ type: 'step_finish', part: { cost: 0.01 } }),
+    ].join('\n');
+    expect(opencodeDriver.finalMessage!(log)).toBe('The specs disagree.\n\nTell me A or B.');
+    expect(opencodeDriver.finalMessage!(JSON.stringify({ type: 'tool', part: { tool: 'write' } }))).toBeNull();
   });
 });
 
