@@ -12,7 +12,17 @@
 import { createCliRenderer } from '@opentui/core';
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
-import { staleArtifacts } from '../core/gate.ts';
+import {
+  classWarnings,
+  defectLabel,
+  defectWarnings,
+  evidenceWarnings,
+  formalWarnings,
+  riskWarnings,
+  staleArtifacts,
+} from '../core/gate.ts';
+import { reviewView } from '../core/formal/view.ts';
+import type { Glossary } from '../core/formal/glossary.ts';
 import { specified, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
 import {
   decide,
@@ -22,7 +32,8 @@ import {
   type ReviewSession,
 } from '../core/session.ts';
 import { isRequirement, type ReviewItem } from '../core/requirements.ts';
-import { currentItem } from '../core/session.ts';
+import { currentItem, moveTo } from '../core/session.ts';
+import { renderStop, type StopReport } from '../core/stops.ts';
 import { openInEditor, runInTerminal } from './editor.ts';
 import { JobPane, summarizeJobs } from './jobs.tsx';
 import { ReviewScreen } from './review.tsx';
@@ -43,15 +54,16 @@ import {
 import type { FollowUp, QuestionMeta } from '../core/advisor.ts';
 import { FoundationScreen, type AnswerResult } from './foundation.tsx';
 import { nameFromDescription } from '../core/naming.ts';
-import { nextPromotable, type Roadmap, type Slice } from '../core/roadmap.ts';
+import { nextPromotable, promoteSlice, type PromoteSliceResult, type Roadmap, type Slice } from '../core/roadmap.ts';
 import { renderVision, sliceDescription, type ProposedSlice, type VisionSession } from '../core/vision.ts';
 import { DocumentView, type DocumentAction } from './document.tsx';
 import { VisionScreen } from './vision.tsx';
 import { FirstChangeGuide, HelpOverlay, Stepper } from './guide.tsx';
 import { HomeScreen, type HomeAction } from './home.tsx';
-import { editLine, isCancel, isEditor, isEnter } from './input.ts';
+import { createLine, isCancel, isEditor, isEnter } from './input.ts';
 import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
-import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn } from '../core/refine.ts';
+import { wrap } from '../render/requirement.ts';
+import { acceptRefinement, readRequirementBlock, type Refinement, type RefineTurn, type Revisable } from '../core/refine.ts';
 import type { Requirement } from '../core/requirements.ts';
 import type { RefinePort } from './review.tsx';
 import { osc52, SystemClipboard, type ClipboardPort } from './clipboard.ts';
@@ -72,6 +84,8 @@ export interface TuiInput {
   reparse: (change: string) => ReviewItem[];
   /** Per-project linter tuning. */
   lintConfig: LintConfig;
+  /** The project's glossary, read fresh: what formal forms are checked against. */
+  glossary?: () => Glossary | null;
   /** Recomputes the overview after review changed something. */
   reloadPipelines: () => Promise<ChangePipeline[]>;
   /** Background jobs, re-read each time the pane opens. */
@@ -88,9 +102,15 @@ export interface TuiInput {
   /** The Foundation questions in the order the setup asks them. */
   questions: () => GuidedQuestion[];
   answer: (question: GuidedQuestion, text: string) => Result;
-  createChange: (name: string, description: string) => Promise<Result>;
+  /** `defect` creates it with the defect schema: report first, reproducer before the fix. */
+  createChange: (name: string, description: string, kind?: 'change' | 'defect') => Promise<Result>;
   /** Starts an agent on one artifact in the background, behind the gate. */
   dispatch: (change: string, artifact: string, feedback?: string) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * Why the agent stopped instead of writing `artifact`, if it did: its
+   * report, or — given the `job` that just finished — its final message.
+   */
+  stopReport?: (change: string, artifact: string, job?: Job) => StopReport | null;
   /**
    * Records that a human read a prose artifact — proposal, design, tasks —
    * and accepted it as shown: `content` is the text they saw.
@@ -109,8 +129,13 @@ export interface TuiInput {
     { ok: true; where: string } | { ok: false };
   /** The changes being implemented in a session elsewhere right now. */
   implementing?: () => string[];
+  /**
+   * Archives a change — or, with `dryRun`, says what archiving it would do,
+   * or why it may not be archived yet. `text` is the command's own report.
+   */
+  archive?: (change: string, dryRun: boolean) => Promise<{ ok: boolean; text: string }>;
   /** Opens the roadmap's next slice as a change, once the one before it is fully planned. */
-  startNextSlice?: () => Promise<{ ok: true; change: string } | { ok: false; reason: string }>;
+  startNextSlice?: (id?: string) => Promise<{ ok: true; change: string } | { ok: false; reason: string }>;
   implement?: (change: string) => Promise<
     { ok: true; command: { command: string; args: string[]; env?: Record<string, string> }; label: string } | { ok: false; reason: string }
   >;
@@ -149,7 +174,7 @@ export interface TuiInput {
   refine?: {
     /** Why there is no agent to revise with, or null when there is one. */
     unavailable: string | null;
-    propose: (change: string, item: Requirement, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+    propose: (change: string, item: Revisable, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
   };
   /** The system clipboard; tests pass their own so they never touch the real one. */
   clipboard?: ClipboardPort;
@@ -159,6 +184,10 @@ export interface TuiInput {
   modelFor?: (driver: string) => string | undefined;
   /** Subscribes to what the AI sessions cost, as each turn reports it. */
   onUsage?: (listener: (usage: Usage) => void) => () => void;
+  /** What the TUI's own sessions cost in earlier runs: the total starts from it. */
+  pastUsage?: Usage[];
+  /** What the implementing sessions used, read from their transcripts: tokens, no cost. */
+  implementingUsage?: () => Usage[];
   /** Usage parsed from a job's log, for the jobs that report it. */
   jobUsage?: (job: Job) => Usage[];
 }
@@ -193,7 +222,28 @@ export interface Advisor {
 
 type Result = { ok: true } | { ok: false; reason: string };
 
-type Screen = 'home' | 'foundation' | 'vision' | 'overview' | 'document';
+type Screen = 'home' | 'foundation' | 'vision' | 'overview' | 'document' | 'stopped';
+
+/** The roadmap's slices that no change exists for yet, in roadmap order. */
+function slicesWithoutChange(roadmap: Roadmap | null, pipelines: ChangePipeline[]): Slice[] {
+  const open = new Set(pipelines.map((p) => p.name));
+  return (roadmap?.slices ?? []).filter((s) => !open.has(s.id));
+}
+
+/** A stop report in one line: what it found, counted, else its first words. */
+function stopHeadline(report: StopReport): string {
+  const counts = new Map<string, number>();
+  for (const issue of report.issues) counts.set(issue.kind, (counts.get(issue.kind) ?? 0) + 1);
+  if (counts.size > 0) {
+    const parts = [...counts].map(([kind, n]) => `${n} ${kind}${n === 1 ? '' : kind.endsWith('s') ? 'es' : 's'}`);
+    return `${parts.join(', ')} in the requirements`;
+  }
+  if (report.named.length > 0) {
+    const n = report.named.length;
+    return `it names ${n} requirement${n === 1 ? '' : 's'} that need${n === 1 ? 's' : ''} revising`;
+  }
+  return clip(report.summary || 'see why', 80);
+}
 
 /** An artifact open for reading. */
 interface OpenDocument {
@@ -244,11 +294,93 @@ function PipelineBar(props: { pipeline: ChangePipeline | undefined }) {
   );
 }
 
+/**
+ * A roadmap slice no change exists for yet: what it is, what it waits for,
+ * and whether it can start — and if not, why not.
+ */
+function SlicePanel(props: {
+  slice: Slice;
+  roadmap: Roadmap;
+  pipelines: ChangePipeline[];
+  check: PromoteSliceResult | null;
+  width: number;
+  buttons: { label: string; key: string; run: () => void }[];
+  focus: number;
+}) {
+  const position = () => props.roadmap.slices.findIndex((s) => s.id === props.slice.id) + 1;
+  const dependency = (id: string) => {
+    const other = props.roadmap.slices.find((s) => s.id === id);
+    if (!other) return `? ${id} — not on the roadmap`;
+    if (other.status === 'done') return `✓ ${id} — done`;
+    if (other.status === 'active') {
+      return specified(props.pipelines.find((p) => p.name === id))
+        ? `◉ ${id} — specified, being built`
+        : `◉ ${id} — still being specified`;
+    }
+    return `○ ${id} — not started`;
+  };
+  return (
+    <Panel title={`${props.slice.id} · roadmap slice ${position()} of ${props.roadmap.slices.length}`} grow focused>
+      <text>{' '}</text>
+      <text style={{ fg: props.slice.status === 'done' ? THEME.ok : THEME.dim }}>
+        {props.slice.status === 'done' ? '✓ done' : '○ planned — no change opened for it yet'}
+      </text>
+      <text>{' '}</text>
+      <For each={wrap(props.slice.summary, Math.max(props.width, 30))}>
+        {(line) => <text style={{ fg: THEME.text }}>{line}</text>}
+      </For>
+      <Show when={props.slice.dependsOn.length > 0}>
+        <text>{' '}</text>
+        <text style={{ fg: THEME.accent2 }}>
+          <strong>Depends on</strong>
+        </text>
+        <For each={props.slice.dependsOn}>{(id) => <text style={{ fg: THEME.text }}>{dependency(id)}</text>}</For>
+      </Show>
+      <Show when={props.slice.status !== 'done' && props.check}>
+        <text>{' '}</text>
+        <text style={{ fg: THEME.accent2 }}>
+          <strong>Next</strong>
+        </text>
+        <Show
+          when={props.check!.ok}
+          fallback={
+            <For each={wrap(`Not yet: ${props.check!.ok ? '' : props.check!.reason}`, Math.max(props.width, 30))}>
+              {(line) => <text style={{ fg: THEME.warn }}>{line}</text>}
+            </For>
+          }
+        >
+          <For each={wrap('It can start now: its proposal and specs are written while the slices before it are designed and built; its design waits for their code.', Math.max(props.width, 30))}>
+            {(line) => <text style={{ fg: THEME.text }}>{line}</text>}
+          </For>
+        </Show>
+        <text>{' '}</text>
+        <box style={{ flexDirection: 'row' }}>
+          <For each={props.buttons}>
+            {(b, i) => (
+              <Button
+                label={`${b.label}  ${b.key}`}
+                primary={i() === 0}
+                focused={i() === Math.min(props.focus, props.buttons.length - 1)}
+                onPress={b.run}
+              />
+            )}
+          </For>
+        </box>
+      </Show>
+    </Panel>
+  );
+}
+
 function ChangeRow(props: { id?: string; pipeline: ChangePipeline; selected: boolean; onPick: () => void }) {
   const specs = () => props.pipeline.stages.find((s) => s.review)?.review;
   const warn = () =>
     (specs()?.drifted ?? 0) > 0 ||
     staleArtifacts(props.pipeline).length > 0 ||
+    riskWarnings(props.pipeline).length > 0 ||
+    classWarnings(props.pipeline).length > 0 ||
+    evidenceWarnings(props.pipeline).length > 0 ||
+    defectWarnings(props.pipeline).length > 0 ||
+    formalWarnings(props.pipeline).length > 0 ||
     props.pipeline.gaps.length > 0;
   const counter = () =>
     specs() ? `${specs()!.accepted}/${specs()!.total}` : `${props.pipeline.written}/${props.pipeline.total}`;
@@ -284,6 +416,10 @@ function changeWarnings(p: ChangePipeline): string[] {
   const stale = staleArtifacts(p);
   if (stale.length > 0) out.push(`${stale.map((s) => s.artifact).join(', ')} may be stale`);
   if (p.gaps.length > 0) out.push(`${p.gaps.length} artifact(s) written before their prerequisite`);
+  if (p.consequence?.class) out.push(`a ${p.consequence.class} change${p.consequence.rules.length > 0 ? `: ${p.consequence.rules.join(', ')}` : ''}`);
+  const label = defectLabel(p);
+  if (label) out.push(label);
+  out.push(...riskWarnings(p), ...classWarnings(p), ...evidenceWarnings(p), ...defectWarnings(p), ...formalWarnings(p));
   return out;
 }
 
@@ -295,11 +431,13 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const [index, setIndex] = createSignal(0);
   const [session, setSession] = createSignal<ReviewSession | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
+  /** An archive asked for: what it would do (or why not), waiting for a yes. */
+  const [archiving, setArchiving] = createSignal<{ change: string; ok: boolean; text: string; busy?: boolean } | null>(null);
   const [jobs, setJobs] = createSignal<Job[]>(props.input.listJobs());
   const [jobIndex, setJobIndex] = createSignal(0);
   const [jobsOpen, setJobsOpen] = createSignal(false);
   /** What the AI has cost, and what it is doing, for the persistent sidebar. */
-  const [usageTotals, setUsageTotals] = createSignal<UsageTotals>(emptyUsage());
+  const [usageTotals, setUsageTotals] = createSignal<UsageTotals>((props.input.pastUsage ?? []).reduce(addUsage, emptyUsage()));
   const [lastUsage, setLastUsage] = createSignal<Usage | null>(null);
   const [usageOpen, setUsageOpen] = createSignal(false);
   const [stage, setStage] = createSignal<ProjectStage>(props.input.stage());
@@ -311,7 +449,11 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
    * that — the name is the least important question, so it comes last.
    */
   const [asking, setAsking] = createSignal<'describe' | 'name' | null>(null);
-  const [draft, setDraft] = createSignal('');
+  /** What the prompt creates: a change, or a defect change (`b`). */
+  const [changeKind, setChangeKind] = createSignal<'change' | 'defect'>('change');
+  const line = createLine();
+  const draft = line.text;
+  const setDraft = line.set;
   const [description, setDescription] = createSignal('');
   const [names, setNames] = createSignal<string[]>([]);
   const [nameEdited, setNameEdited] = createSignal(false);
@@ -364,6 +506,20 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   useSelectionCopy(clipboard);
 
   const selected = () => pipelines()[index()];
+  /**
+   * The roadmap's slices that have no change yet. They follow the changes in
+   * the list, so the cursor walks on into them to pick one to start.
+   */
+  const openSlices = createMemo(() => slicesWithoutChange(roadmap(), pipelines()));
+  const selectedSlice = (): Slice | null =>
+    index() >= pipelines().length ? openSlices()[index() - pipelines().length] ?? null : null;
+  /** Whether the selected slice can start now, and if not, why not. */
+  const sliceCheck = createMemo(() => {
+    const slice = selectedSlice();
+    const r = roadmap();
+    if (!slice || !r) return null;
+    return promoteSlice(r, slice.id, (id) => specified(pipelines().find((p) => p.name === id)));
+  });
   const inReview = createMemo(() => session() !== null && !jobsOpen());
   const greenfield = createMemo(() => {
     stage(); // re-derived whenever the stage moves
@@ -377,6 +533,20 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const p = selected();
     return p ? nextStep(p, foundationSettled()) : null;
   });
+
+  /**
+   * Why the agent last stopped instead of drafting the next step, while that
+   * step is still to draft. Re-read when the jobs or the pipelines change.
+   */
+  const stopped = createMemo<StopReport | null>(() => {
+    const p = selected();
+    const step = next();
+    jobs();
+    if (!p || !step?.actions.includes('draft') || !step.artifact || step.artifact === 'apply') return null;
+    return props.input.stopReport?.(p.name, step.artifact) ?? null;
+  });
+  /** The report on screen, when reading one. */
+  const [stopView, setStopView] = createSignal<StopReport | null>(null);
 
   const selectedJob = createMemo(() => jobs()[jobIndex()]);
   const jobLines = createMemo(() => {
@@ -401,10 +571,19 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     return jobs().map((job) => ({ job, usages: read(job) }));
   });
 
-  /** Everything the AI has cost this run: the sessions plus the jobs. */
+  /** Everything the AI has cost: the sessions plus the jobs. */
   const combinedUsage = createMemo(() =>
     jobUsage().reduce((totals, entry) => entry.usages.reduce(addUsage, totals), usageTotals()),
   );
+
+  // The implementing sessions run elsewhere and report no cost: their
+  // tokens, read from their transcripts while they run and once after.
+  const readImplementing = () => (props.input.implementingUsage?.() ?? []).reduce(addUsage, emptyUsage());
+  const [implementingTotals, setImplementingTotals] = createSignal<UsageTotals>(readImplementing());
+  const followImplementingUsage = setInterval(() => {
+    if (implementing().length > 0 || implementingTotals().requests === 0) setImplementingTotals(readImplementing());
+  }, 15000);
+  onCleanup(() => clearInterval(followImplementingUsage));
 
   // The sidebar shows on every screen — the setup's questions are where the
   // advisor answers most — but only where it has room to spare, never so
@@ -430,7 +609,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         const i = fresh.findIndex((p) => p.name === select);
         if (i >= 0) setIndex(i);
       } else {
-        setIndex((i) => Math.min(i, Math.max(fresh.length - 1, 0)));
+        const rows = fresh.length + slicesWithoutChange(roadmap(), fresh).length;
+        setIndex((i) => Math.min(i, Math.max(rows - 1, 0)));
       }
     } catch (err) {
       setNotice((err as Error).message);
@@ -601,7 +781,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       // same next step again as if nothing had happened.
       const stage = pipelines().find((p) => p.name === last.change)?.stages.find((s) => s.id === last.artifact);
       if (last.status === 'succeeded' && stage && (stage.state === 'ready' || stage.state === 'blocked')) {
-        setNotice(`The agent finished but did not write the ${last.artifact} — ctrl+j shows what it did`);
+        const report = props.input.stopReport?.(last.change, last.artifact, last) ?? null;
+        if (!report) {
+          setNotice(`The agent finished but did not write the ${last.artifact} — ctrl+j shows what it did`);
+          return;
+        }
+        setNotice(`⚠ The agent stopped instead of writing the ${last.artifact}: ${stopHeadline(report)}`);
+        const idle = screen() === 'overview' && session() === null && !jobsOpen() && asking() === null;
+        if (idle && selected()?.name === last.change) openStop(report);
         return;
       }
       // What was drafted is what you want to see next — unless you are busy
@@ -703,26 +890,29 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const step = next();
     const p = pipelines().find((c) => c.name === d.change);
     const at = p?.stages.findIndex((s) => s.id === d.artifact) ?? -1;
-    const stage = p?.stages[at];
+    // The implementation diff is accepted on the apply stage, after every artifact.
+    const isDiff = d.artifact === 'implementation';
+    const stage = isDiff ? p?.apply : p?.stages[at];
     if (p && stage?.signoff && !stage.signoff.accepted && props.input.acceptDocument) {
-      // Accepting is what lets the next stage be drafted — so it does both.
-      const after = p.stages[at + 1] ?? p.apply;
-      const then = after.state === 'ready' ? after.id : null;
+      // Accepting lets the next stage be drafted, but does not start it: that
+      // stays the developer's call, one key away on the overview.
+      const after = isDiff ? null : (p.stages[at + 1] ?? p.apply);
+      const then = after?.state === 'ready' ? after.id : null;
       out.push({
-        label: then === null
-          ? '✓ Accept it'
-          : then === 'apply'
-            ? '✓ Accept — start implementing'
-            : `✓ Accept — draft the ${then}`,
+        label: '✓ Accept it',
         key: 'a',
         run: () => {
           const accepted = props.input.acceptDocument!(d.change, d.artifact, d.content);
           if (!accepted.ok) return setNotice(accepted.reason);
           closeDoc();
-          setNotice(`✓ The ${d.artifact} of ${d.change} is accepted`);
-          void reload(d.change).then(() => {
-            if (then !== null) void draftNext();
-          });
+          setNotice(
+            then === null
+              ? `✓ The ${d.artifact} of ${d.change} is accepted`
+              : then === 'apply'
+                ? `✓ The ${d.artifact} of ${d.change} is accepted — w starts implementing`
+                : `✓ The ${d.artifact} of ${d.change} is accepted — w drafts the ${then}`,
+          );
+          void reload(d.change);
         },
       });
     } else if (step?.actions.includes('draft') && step.artifact && step.artifact !== d.artifact) {
@@ -736,6 +926,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     } else {
       out.push({ label: '✓ Looks good', key: 'a', run: closeDoc });
     }
+    // A diff is read, not edited: changing it means changing the code.
+    if (isDiff) return out;
     out.push({
       label: '✎ Edit it',
       key: 'ctrl+e',
@@ -752,8 +944,61 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   const redraft = async (feedback: string) => {
     const d = doc();
     if (!d) return;
+    // No agent drafts a diff: the code is changed by implementing.
+    if (d.artifact === 'implementation') return setNotice('The diff is not drafted — change the code, then read it again');
     closeDoc();
     const result = await props.input.dispatch(d.change, d.artifact, feedback);
+    setJobs(props.input.listJobs());
+    setNotice(result.message);
+  };
+
+  // --- when the agent stops -------------------------------------------------
+
+  const openStop = (report: StopReport) => {
+    setStopView(report);
+    setScreen('stopped');
+  };
+
+  const closeStop = () => {
+    setStopView(null);
+    setScreen('overview');
+  };
+
+  /** Revise the requirements first — the agent was right to stop — or try again. */
+  const stopActions = createMemo((): DocumentAction[] => {
+    const report = stopView();
+    if (!report) return [];
+    const out: DocumentAction[] = [];
+    const first = report.named[0];
+    if (first) {
+      out.push({
+        label: `▶ Revise them in the review`,
+        key: 's',
+        run: () => {
+          closeStop();
+          enterReview(first.id, report.change);
+        },
+      });
+    }
+    out.push({
+      label: '✦ Draft it again',
+      key: 'w',
+      run: () => {
+        closeStop();
+        void props.input.dispatch(report.change, report.artifact).then((result) => {
+          setJobs(props.input.listJobs());
+          setNotice(result.message);
+        });
+      },
+    });
+    return out;
+  });
+
+  const answerStop = async (answer: string) => {
+    const report = stopView();
+    if (!report) return;
+    closeStop();
+    const result = await props.input.dispatch(report.change, report.artifact, answer);
     setJobs(props.input.listJobs());
     setNotice(result.message);
   };
@@ -862,7 +1107,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // --- overview actions ---------------------------------------------------
 
   const move = (delta: number) => {
-    const n = pipelines().length;
+    const n = pipelines().length + openSlices().length;
     if (n === 0) return;
     // Clamped, not wrapping: at a list boundary, jumping to the far end loses
     // your place in a way that is disorienting in a review tool.
@@ -870,16 +1115,17 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setActionFocus(0);
   };
 
-  const enterReview = () => {
-    const change = selected()?.name;
+  /** Opens the review — at the requirement `focus` names, when given. */
+  const enterReview = (focus?: string, change = selected()?.name) => {
     if (!change) return;
     const opened = props.input.openReview(change);
     if (!opened) {
       setNotice(`${change} has no specs to review yet`);
       return;
     }
+    const at = focus ? opened.items.findIndex((i) => i.item.id === focus) : -1;
     setNotice(null);
-    setSession(opened);
+    setSession(at === -1 ? opened : moveTo(opened, at));
     // The agent that revises a requirement starts while you read the first.
     if (props.input.refine && !props.input.refine.unavailable) props.input.warm?.('review');
   };
@@ -911,13 +1157,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setScreen('foundation');
   };
 
-  const startNewChange = () => {
+  const startNewChange = (kind: 'change' | 'defect' = 'change') => {
     if (!foundationSettled()) {
       setNotice('Settle the ground rules first — f continues them');
       return;
     }
     setNotice(null);
     setDraft('');
+    setChangeKind(kind);
     setAsking('describe');
   };
 
@@ -958,10 +1205,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setAsking(null);
     setDraft('');
     setNotice(null);
-    const result = await props.input.createChange(text, description());
+    const result = await props.input.createChange(text, description(), changeKind());
     if (!result.ok) return setNotice(result.reason);
     await reload(text);
-    setNotice(`Created ${text}.`);
+    setNotice(changeKind() === 'defect' ? `Created ${text}, a defect change — its report decides whose bug it is.` : `Created ${text}.`);
   };
 
   const draftNext = async () => {
@@ -1036,18 +1283,46 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     return nextPromotable(r, (id) => specified(pipelines().find((p) => p.name === id)));
   });
 
-  const startSlice = async () => {
-    const result = await props.input.startNextSlice!();
+  /** Starts `id` — or, without one, the next slice the roadmap allows. */
+  const startSlice = async (id?: string) => {
+    const result = await props.input.startNextSlice!(id);
     if (!result.ok) return setNotice(result.reason);
     await reload(result.change);
     setNotice(`Started ${result.change}: specify it now — its design waits until the slices before it are applied.`);
   };
 
+  /** Asks what archiving `change` would do; the developer confirms it. */
+  const checkArchive = async (change: string) => {
+    if (!props.input.archive) return;
+    setArchiving({ change, ok: false, text: '', busy: true });
+    const result = await props.input.archive(change, true);
+    setArchiving({ change, ...result });
+  };
+
+  const confirmArchive = async () => {
+    const a = archiving();
+    if (!a || !a.ok || a.busy || !props.input.archive) return;
+    setArchiving({ ...a, busy: true });
+    const result = await props.input.archive(a.change, false);
+    if (!result.ok) return setArchiving({ change: a.change, ...result });
+    setArchiving(null);
+    await reload();
+    setNotice(`Archived ${a.change}: its requirements are now the baseline.`);
+  };
+
   /** The selected change's next step, as buttons. */
   const actionButtons = createMemo((): { label: string; key: string; run: () => void }[] => {
+    const slice = selectedSlice();
+    if (slice) {
+      return sliceCheck()?.ok && props.input.startNextSlice
+        ? [{ label: '▶ Start this slice', key: 's', run: () => void startSlice(slice.id) }]
+        : [];
+    }
     const actions = next()?.actions ?? [];
     const out: { label: string; key: string; run: () => void }[] = [];
-    if (actions.includes('review')) out.push({ label: '▶ Review', key: 'enter', run: enterReview });
+    const report = stopped();
+    if (report) out.push({ label: '⚠ Why the agent stopped', key: 'o', run: () => openStop(report) });
+    if (actions.includes('review')) out.push({ label: '▶ Review', key: 'enter', run: () => enterReview() });
     const toRead = actions.includes('read') ? next()?.artifact : undefined;
     if (toRead && selected()) {
       const change = selected()!.name;
@@ -1064,6 +1339,10 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
     if (actions.includes('write')) out.push({ label: '✎ Write it myself', key: 'ctrl+e', run: () => void writeNext() });
     if (actions.includes('foundation')) out.push({ label: '▶ Ground rules', key: 'f', run: () => void openFoundation() });
+    if (actions.includes('archive') && props.input.archive && selected()) {
+      const change = selected()!.name;
+      out.push({ label: '▶ Archive it', key: 'A', run: () => void checkArchive(change) });
+    }
     const latest = readable().at(-1);
     const p = selected();
     // Not when the next step already is reading or reviewing it.
@@ -1166,6 +1445,14 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       : [];
   });
 
+  // Read from disk for each item: the glossary may have been edited since
+  // the review opened, and a stale one would report the wrong variables.
+  const formal = createMemo(() => {
+    const current = session();
+    const item = current ? currentItem(current) : null;
+    return item ? reviewView(item.item, props.input.glossary?.() ?? null) : null;
+  });
+
   /** A global-scope design decision is the only promotable item. */
   const promotable = createMemo(() => {
     const current = session();
@@ -1227,7 +1514,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     () =>
       screen() === 'overview' && !jobsOpen() && !inReview() && asking()
         ? (text: string) => {
-            setDraft((d) => d + text);
+            line.insert(text);
             if (asking() === 'name') setNameEdited(true);
           }
         : null,
@@ -1265,10 +1552,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         setDraft(names()[(i + 1) % names().length]!);
         setNameEdited(false);
       } else {
-        const edited = editLine(draft(), key);
-        if (edited !== null) {
-          setDraft(edited);
-          if (asking() === 'name') setNameEdited(true);
+        const before = draft();
+        if (line.edit(key)) {
+          if (asking() === 'name' && draft() !== before) setNameEdited(true);
         }
       }
       return;
@@ -1276,6 +1562,12 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
 
     // Help is a transient overlay: any key closes it rather than acting.
     if (help()) return setHelp(false);
+
+    if (archiving()) {
+      if (isCancel(key) || key.name === 'q') setArchiving(null);
+      else if (isEnter(key) || key.sequence === 'A') void confirmArchive();
+      return;
+    }
 
     const buttons = actionButtons();
     if (key.name === 'q' || (key.ctrl && key.name === 'c')) props.onQuit();
@@ -1292,7 +1584,15 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       else if (pipelines().length === 0 && foundationSettled()) startNewChange();
     }
     else if (key.name === 'n') startNewChange();
+    else if (key.name === 'b' && !key.ctrl) startNewChange('defect');
     else if (key.name === 'w') void draftNext();
+    else if (key.sequence === 'A' && next()?.actions.includes('archive') && selected()) void checkArchive(selected()!.name);
+    else if (key.name === 'o' && stopped()) openStop(stopped()!);
+    else if (key.name === 's' && selectedSlice()) {
+      const check = sliceCheck();
+      if (check?.ok) void startSlice(check.slice.id);
+      else if (check) setNotice(`Not yet: ${check.reason}`);
+    }
     else if (key.name === 's' && nextSlice() && specified(selected())) void startSlice();
     // ctrl+e opens the editor on every screen; plain e, as it used to.
     else if (isEditor(key) || (key.name === 'e' && !key.ctrl)) void writeNext();
@@ -1307,15 +1607,17 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   });
 
   const overviewKeys = createMemo((): [string, string][] => {
+    const a = archiving();
+    if (a) return a.busy ? [] : a.ok ? [['enter', 'archive it'], ['esc', 'not now']] : [['esc', 'close']];
     if (asking() === 'describe') return [['enter', 'next: name it'], ['ctrl+c', 'cancel']];
     if (asking() === 'name') {
       return [['enter', 'create'], ...(names().length > 1 ? [['tab', 'next suggestion'] as [string, string]] : []), ['ctrl+u', 'clear'], ['ctrl+c', 'cancel']];
     }
     const k: [string, string][] = [];
-    if (pipelines().length > 1) k.push(['↑↓', 'change']);
+    if (pipelines().length + openSlices().length > 1) k.push(['↑↓', openSlices().length > 0 ? 'change or slice' : 'change']);
     if (actionButtons().length > 1) k.push(['←→', 'action']);
     if (actionButtons().length > 0) k.push(['enter', 'go']);
-    k.push(['n', 'new change'], ['f', 'ground rules'], ['ctrl+j', 'jobs'], ['?', 'help'], ['q', 'quit']);
+    k.push(['n', 'new change'], ['b', 'report a defect'], ['f', 'ground rules'], ['ctrl+j', 'jobs'], ['?', 'help'], ['q', 'quit']);
     return k;
   });
 
@@ -1333,7 +1635,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             <strong>spec-tacular</strong>
           </text>
           <text style={{ fg: THEME.dim }}>
-            {`  ${shortPath(props.input.root, 50)}${inReview() ? ` › ${session()!.change} › specs` : ''}${screen() === 'foundation' ? ' › ground rules' : ''}${screen() === 'vision' ? ' › vision' : ''}${screen() === 'document' && doc() ? ` › ${doc()!.change} › ${doc()!.artifact}` : ''}`}
+            {`  ${shortPath(props.input.root, 50)}${inReview() ? ` › ${session()!.change} › specs` : ''}${screen() === 'foundation' ? ' › ground rules' : ''}${screen() === 'vision' ? ' › vision' : ''}${screen() === 'document' && doc() ? ` › ${doc()!.change} › ${doc()!.artifact}` : ''}${screen() === 'stopped' && stopView() ? ` › ${stopView()!.change} › ${stopView()!.artifact}` : ''}`}
           </text>
           <box style={{ flexGrow: 1 }} />
           <Show when={summarizeJobs(jobs()) !== ''}>
@@ -1359,6 +1661,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                   model={modelInUse()}
                   active={activeAI()}
                   jobs={jobUsage()}
+                  implementing={implementingTotals()}
                 />
               </Panel>
             }
@@ -1417,7 +1720,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           session={visionSession()}
           busy={visionBusy()}
           error={visionError()}
-          unavailable={vision?.unavailable ?? 'no vision support'}
+          unavailable={vision ? vision.unavailable : 'no vision support'}
           seed={
             // The Domain section asked what it is for already: start from that.
             questions().find((q) => q.title === 'Domain' && q.answered && /what the system is for/i.test(q.item.name))
@@ -1473,6 +1776,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           actions={docActions()}
           onRedraft={(feedback) => void redraft(feedback)}
           onClose={closeDoc}
+        />
+      </Show>
+
+      <Show when={screen() === 'stopped' && stopView()}>
+        <DocumentView
+          title={`${stopView()!.change} › ${stopView()!.artifact} › why the agent stopped`}
+          content={renderStop(stopView()!)}
+          actions={stopActions()}
+          redraftLabel="↻ Answer it and draft again"
+          redraftPrompt={`What should the agent go with? It drafts the ${stopView()!.artifact} again with this.`}
+          onRedraft={(answer) => void answerStop(answer)}
+          onClose={closeStop}
         />
       </Show>
 
@@ -1539,21 +1854,45 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                     <text>{' '}</text>
                     <text style={{ fg: THEME.accent2 }}>Roadmap</text>
                     <For each={roadmap()!.slices}>
-                      {(slice) => (
-                        <text
-                          style={{
-                            fg: slice.status === 'active' ? THEME.accent : slice.status === 'done' ? THEME.ok : THEME.dim,
-                          }}
-                        >
-                          {clip(`${slice.status === 'active' ? '◉' : slice.status === 'done' ? '✓' : '○'} ${slice.id}`, 30)}
-                        </text>
-                      )}
+                      {(slice) => {
+                        // A slice with a change picks that change; one without
+                        // is picked itself, to read it and start it.
+                        const row = () => {
+                          const change = pipelines().findIndex((p) => p.name === slice.id);
+                          if (change >= 0) return change;
+                          const open = openSlices().findIndex((s) => s.id === slice.id);
+                          return open >= 0 ? pipelines().length + open : -1;
+                        };
+                        const picked = () => selectedSlice()?.id === slice.id;
+                        return (
+                          <box
+                            id={row() >= pipelines().length ? `change-${row()}` : undefined}
+                            onMouseDown={() => {
+                              if (row() < 0) return;
+                              setIndex(row());
+                              setActionFocus(0);
+                            }}
+                            style={{ flexShrink: 0, backgroundColor: picked() ? THEME.highlight : THEME.panel }}
+                          >
+                            <text
+                              style={{
+                                fg: picked() || slice.status === 'active' ? THEME.accent : slice.status === 'done' ? THEME.ok : THEME.dim,
+                              }}
+                            >
+                              {clip(`${picked() ? '▸' : ' '} ${slice.status === 'active' ? '◉' : slice.status === 'done' ? '✓' : '○'} ${slice.id}`, 30)}
+                            </text>
+                          </box>
+                        );
+                      }}
                     </For>
                   </Show>
                   </ScrollArea>
                   <Show when={foundationSettled()}>
                     <box style={{ flexDirection: 'row', flexShrink: 0 }}>
-                      <Button label="+ New change" primary={pipelines().length === 0} onPress={startNewChange} />
+                      <Button label="+ New change" primary={pipelines().length === 0} onPress={() => startNewChange()} />
+                      <Show when={pipelines().length > 0}>
+                        <Button label="! Report a defect" onPress={() => startNewChange('defect')} />
+                      </Show>
                     </box>
                   </Show>
                 </Panel>
@@ -1562,14 +1901,29 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                 <Show
                   when={selected()}
                   fallback={
-                    <Panel title="Getting started" grow>
-                      <Show
-                        when={stage().kind === 'no-changes'}
-                        fallback={<text style={{ fg: THEME.dim }}>Settle the ground rules first — f.</text>}
-                      >
-                        <FirstChangeGuide />
-                      </Show>
-                    </Panel>
+                    <Show
+                      when={selectedSlice()}
+                      fallback={
+                        <Panel title="Getting started" grow>
+                          <Show
+                            when={stage().kind === 'no-changes'}
+                            fallback={<text style={{ fg: THEME.dim }}>Settle the ground rules first — f.</text>}
+                          >
+                            <FirstChangeGuide />
+                          </Show>
+                        </Panel>
+                      }
+                    >
+                      <SlicePanel
+                        slice={selectedSlice()!}
+                        roadmap={roadmap()!}
+                        pipelines={pipelines()}
+                        check={sliceCheck()}
+                        width={contentWidth() - 44}
+                        buttons={actionButtons()}
+                        focus={actionFocus()}
+                      />
+                    </Show>
                   }
                 >
                   <Panel title={selected()!.name} grow focused>
@@ -1618,8 +1972,13 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                       <text style={{ fg: THEME.accent2 }}>
                         <strong>Next</strong>
                       </text>
+                      <Show when={stopped()}>
+                        <text style={{ fg: THEME.warn }}>
+                          {`⚠ The agent stopped instead of writing the ${stopped()!.artifact}: ${stopHeadline(stopped()!)}`}
+                        </text>
+                      </Show>
                       <text style={{ fg: THEME.text }}>{next()!.text}</text>
-                      <Show when={implementing().includes(selected()?.name ?? '')}>
+                      <Show when={implementing().includes(selected()?.name ?? '') && !selected()?.apply.tasks?.applied}>
                         <text style={{ fg: THEME.accent }}>
                           {(() => {
                             const tasks = selected()?.apply.tasks;
@@ -1640,6 +1999,24 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                           )}
                         </For>
                       </box>
+                      <Show when={archiving()}>
+                        <text>{' '}</text>
+                        <box style={{ border: true, borderStyle: 'rounded', borderColor: archiving()!.ok ? THEME.accent : THEME.warn, paddingLeft: 1, paddingRight: 1, flexDirection: 'column' }}
+                          title={archiving()!.busy ? ' archiving… ' : archiving()!.ok ? ' archive it? ' : ' not yet '}
+                        >
+                          <Show when={!archiving()!.busy} fallback={<Spinner label={archiving()!.ok ? 'Archiving…' : 'Checking what archiving it does…'} />}>
+                            <For each={archiving()!.text.trimEnd().split('\n').filter((l) => !/^Dry run/.test(l))}>
+                              {(l) => <text style={{ fg: THEME.text }}>{l || ' '}</text>}
+                            </For>
+                            <text>{' '}</text>
+                            <text style={{ fg: archiving()!.ok ? THEME.accent : THEME.dim }}>
+                              {archiving()!.ok
+                                ? 'enter archives it: the accepted requirements become the baseline, its risks join the hazard register.'
+                                : 'Nothing was archived. esc closes this.'}
+                            </text>
+                          </Show>
+                        </box>
+                      </Show>
                       {/* Not a button: it is not this change's next step, and a
                           fourth button would not fit the row. */}
                       <Show when={nextSlice() && specified(selected())}>
@@ -1656,13 +2033,24 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
 
             {/* The new-change prompt: describe it, then name it */}
             <Show when={asking()}>
-              <Panel title={asking() === 'describe' ? 'New change · 1 of 2 · what' : 'New change · 2 of 2 · name'} focused>
-                <Show when={asking() === 'describe'}>
+              <Panel
+                title={`${changeKind() === 'defect' ? 'Defect' : 'New change'} · ${asking() === 'describe' ? '1 of 2 · what' : '2 of 2 · name'}`}
+                focused
+              >
+                <Show when={asking() === 'describe' && changeKind() === 'change'}>
                   <text style={{ fg: THEME.text }}>
                     What do you want to change, and why? A sentence or two — the agent drafting the proposal starts from this.
                   </text>
                   <text style={{ fg: THEME.dim }}>
                     e.g. "Let users sign in with email and password so their data follows them across devices"
+                  </text>
+                </Show>
+                <Show when={asking() === 'describe' && changeKind() === 'defect'}>
+                  <text style={{ fg: THEME.text }}>
+                    What went wrong? What you saw, what you expected, and how to make it happen — the defect report starts from this.
+                  </text>
+                  <text style={{ fg: THEME.dim }}>
+                    e.g. "Exporting while another user exports sometimes includes their rows; expected only mine; two browsers, export at once"
                   </text>
                 </Show>
                 <Show when={asking() === 'name'}>
@@ -1673,7 +2061,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
                 </Show>
                 <box style={{ border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1, paddingRight: 1 }}>
                   {/* Inside a panel and this box: two borders and two paddings a side. */}
-                  <DraftText draft={draft()} width={contentWidth() - 8} />
+                  <DraftText draft={draft()} cursor={line.cursor()} width={contentWidth() - 8} />
                 </box>
                 <Show when={asking() === 'name'}>
                   <Show
@@ -1703,6 +2091,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             refine={refinePort()}
             onMove={(d) => commit(moveCursor(session()!, d))}
             findings={findings()}
+            formal={formal()}
             promotable={promotable()}
             onPromote={onPromote}
             onMarkExample={(finding) => {
@@ -1733,6 +2122,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             driver={driverInUse()}
             model={modelInUse()}
             active={activeAI()}
+            implementing={implementingTotals()}
             onExpand={() => setUsageOpen(true)}
           />
         </Show>

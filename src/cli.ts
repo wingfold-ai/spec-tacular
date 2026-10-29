@@ -9,7 +9,9 @@
  * terminal, which is what makes the overview usable in CI and over a pipe.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject, openSpecToolsInstalled } from './adapter/openspec.ts';
 import {
@@ -18,15 +20,131 @@ import {
   sortByProgress,
   type ChangePipeline,
   type ReviewByArtifact,
+  type RiskCheck,
 } from './core/pipeline.ts';
-import { loadChangeReview, specFilesOf, specsArtifactId } from './core/change-review.ts';
+import {
+  loadChangeReview,
+  risksArtifactId,
+  risksWritten,
+  specFilesOf,
+  specsArtifactId,
+} from './core/change-review.ts';
+import { changedFiles, implementationDiff, outsideBoundary, parseBoundary } from './core/boundary.ts';
+import { classesPath, classOfChange, loadClasses, renderClasses } from './core/classes.ts';
+import { isRequirement, parseSpecFile, slugify, type ReviewItem } from './core/requirements.ts';
+import {
+  crossCheck,
+  exportFiles,
+  fretCli,
+  fretFormula,
+  monitorability,
+  monitorDecision,
+  monitorFret,
+  readTrace,
+} from './core/formal/fret.ts';
+import type { Env } from './core/formal/expr.ts';
+import { checkDefect, isDefectSchema, parseReport } from './core/defects.ts';
+import { changeFormal, checkFormal, formalOf } from './core/formal/formal.ts';
+import { fretVariables } from './core/formal/fretish.ts';
+import { variablesOf } from './core/formal/expr.ts';
+import { glossaryPath, loadGlossary } from './core/formal/glossary.ts';
+import {
+  changeMatrices,
+  removeOrphanMatrices,
+  staleMatrices,
+  testFileFor,
+  writeMatrices,
+  writeTests,
+  type MatrixEntry,
+} from './core/formal/files.ts';
+import { matricesFor, matrixLines, requiredRows } from './core/formal/matrix.ts';
+import { allowSurvivors, componentHarness, connection, loadAllowed, loadCheck, runHarnessCheck, saveCheck } from './core/formal/harness.ts';
+import { matrixConfig } from './core/formal/config.ts';
+import type { ReviewedItem } from './core/review.ts';
+
+/**
+ * Which components' harnesses are not shown to reach the code, and so which
+ * items' matrix results cannot count: each component's harness, its review
+ * items' states, and its last check.
+ */
+function unconnectedItems(
+  projectRoot: string,
+  entries: MatrixEntry[],
+  reviewed: ReviewedItem[],
+): { items: Map<string, string>; components: { component: string; because: string[] }[] } {
+  const items = new Map<string, string>();
+  const components: { component: string; because: string[] }[] = [];
+  const byComponent = new Map<string, MatrixEntry[]>();
+  for (const e of entries) {
+    const c = slugify(e.matrix.component);
+    byComponent.set(c, [...(byComponent.get(c) ?? []), e]);
+  }
+  const config = matrixConfig(projectRoot);
+  for (const [component, group] of byComponent) {
+    const h = componentHarness(projectRoot, component, config);
+    const states = reviewed
+      .filter((r) => r.item.capability === `harness/${component}`)
+      .map((r) => ({ accepted: r.state === 'accepted' }));
+    const matrices = group.map((g) => g.matrix);
+    const c = connection(projectRoot, h, matrices, states, undefined, config);
+    if (!c.connected) components.push({ component, because: c.because });
+    // Each item by its own tests: one matrix's weak harness is not another's.
+    const byItem = new Map<string, MatrixEntry[]>();
+    for (const g of group) byItem.set(g.item.id, [...(byItem.get(g.item.id) ?? []), g]);
+    for (const [id, mine] of byItem) {
+      const tests = mine.map((g) => testFileFor(projectRoot, g, config).path);
+      const own = connection(projectRoot, h, matrices, states, tests, config);
+      if (!own.connected) items.set(id, `harness for ${component} not connected: ${own.because.join('; ')}`);
+    }
+  }
+  return { items, components };
+}
+
+/** Per item, why its matrix would show nothing even when every row passes. */
+function vacuousItems(entries: MatrixEntry[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const e of entries) if (e.matrix.vacuous) out.set(e.item.id, `its matrix tests nothing: ${e.matrix.vacuous}`);
+  return out;
+}
+
+/** Per item, the matrix rows its class requires to have run. */
+function rowsRequired(entries: MatrixEntry[], cls: string | null): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const e of entries) out.set(e.item.id, [...(out.get(e.item.id) ?? []), ...requiredRows(e.matrix, cls)]);
+  return out;
+}
+import {
+  HAZARD_EVIDENCE,
+  hazardRecordsForRun,
+  hazardsDir,
+  listHazards,
+  markReviewed,
+  promoteRisks,
+  registerStates,
+} from './core/hazards.ts';
+import {
+  appendEvidence,
+  changeEvidence,
+  loadVerification,
+  METHODS,
+  orphanTags,
+  recordsForRun,
+  runTests,
+  summarizeEvidence,
+  tagFor,
+  verificationPath,
+  type EvidenceRecord,
+  type Method,
+} from './core/evidence.ts';
+import { isRisk, unansweredRisks, unguardedRisks, unprovenGuards, type Risk } from './core/risks.ts';
 import { openSession, type ReviewSession } from './core/session.ts';
+import { clearStopReport, parseStop, readStopReport, saveStopReport, stopInstructions, type StopReport } from './core/stops.ts';
 import { loadReview, saveReview } from './core/review.ts';
 import { acceptDocument, loadSignoff, type Signoff } from './core/signoff.ts';
 import type { OpenSpecChangeStatus } from './adapter/types.ts';
 import { renderOverview } from './render/text.ts';
 import { foundationGate, gateFor } from './core/gate.ts';
-import { initProject, SCHEMA_NAME } from './core/init.ts';
+import { DEFECT_SCHEMA_NAME, initProject, SCHEMA_NAME } from './core/init.ts';
 import { buildContext, buildPrompt } from './core/context.ts';
 import {
   activeJobForChange,
@@ -41,7 +159,7 @@ import { ALLOW_MCP_HOOK_ARG } from './agent/claude.ts';
 import type { AgentCommand } from './agent/driver.ts';
 import { version as VERSION } from '../package.json';
 import { createAssistants, type Assistants } from './assistants.ts';
-import type { Usage } from './core/usage.ts';
+import { appendUsageLog, claudeSessionUsage, claudeTranscriptPath, loadUsageLog, type Usage } from './core/usage.ts';
 import { isGreenfield } from './core/vision.ts';
 import { loadLintConfig } from './core/concreteness.ts';
 import { listAdrs, promoteDecision, replaceDecisionBody } from './core/decisions.ts';
@@ -54,7 +172,7 @@ import {
   loadFoundation,
   scaffoldFoundation,
 } from './core/foundation.ts';
-import { projectStage, schemaInstalled } from './core/guide.ts';
+import { projectStage, schemaInstalled, validateChangeName } from './core/guide.ts';
 import { ArchiveBlockedError, planArchive, prepareArchive } from './core/archive.ts';
 import { loadRegister, registerPath } from './core/pending.ts';
 import { verifyRequirement } from './core/verify.ts';
@@ -75,7 +193,8 @@ import { implementingNow, openElsewhere, writeSessionScript } from './tui/tabs.t
 
 type Command =
   | 'overview' | 'init' | 'instructions' | 'run' | 'jobs' | 'adr' | 'foundation'
-  | 'archive' | 'pending' | 'verify' | 'roadmap';
+  | 'archive' | 'pending' | 'verify' | 'roadmap' | 'classes' | 'diff' | 'evidence' | 'hazards' | 'defect'
+  | 'glossary' | 'matrix' | 'harness' | 'fret' | 'monitor';
 
 interface Args {
   command: Command;
@@ -98,6 +217,32 @@ interface Args {
   slice: string | undefined;
   done: boolean;
   dryRun: boolean;
+  /** For `diff`: record that the diff shown was read and accepted. */
+  accept: boolean;
+  /** For `evidence`: run the tests first. */
+  run: boolean;
+  /** For `evidence`: an item to sign off (`--sign`) or waive (`--waive`). */
+  sign: string | undefined;
+  waive: string | undefined;
+  method: string | undefined;
+  /** What was checked, for a sign-off; why, for a waiver. */
+  note: string | undefined;
+  /** For `hazards`: the hazard a person just looked at again. */
+  reviewed: string | undefined;
+  /** For `defect`: what went wrong, in a sentence or two. */
+  description: string | undefined;
+  /** For `matrix`: also write the runner and the test files. */
+  write: boolean;
+  /** For `harness`: run the coverage and mutation check. */
+  check: boolean;
+  /** For `harness`: allow the last check's surviving mutants, saying why. */
+  allowSurvivors: string | undefined;
+  /** For `fret`: check, export or realizability. */
+  sub: string | undefined;
+  /** For `monitor`: the recorded run; for `fret realizability`: the component. */
+  target: string | undefined;
+  /** For `fret export`: where the files go. */
+  out: string | undefined;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -118,6 +263,20 @@ function parseArgs(argv: string[]): Args {
     slice: undefined,
     done: false,
     dryRun: false,
+    accept: false,
+    run: false,
+    sign: undefined,
+    waive: undefined,
+    method: undefined,
+    note: undefined,
+    reviewed: undefined,
+    description: undefined,
+    write: false,
+    check: false,
+    allowSurvivors: undefined,
+    sub: undefined,
+    target: undefined,
+    out: undefined,
   };
 
   const positional: string[] = [];
@@ -137,17 +296,62 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--promote') args.slice = argv[++i];
     else if (a === '--done') { args.done = true; args.slice = argv[++i]; }
     else if (a === '--dry-run') args.dryRun = true;
+    else if (a === '--accept') args.accept = true;
+    else if (a === '--run') args.run = true;
+    else if (a === '--sign') args.sign = argv[++i];
+    else if (a === '--waive') args.waive = argv[++i];
+    else if (a === '--method') args.method = argv[++i];
+    else if (a === '--note' || a === '--reason') args.note = argv[++i];
+    else if (a === '--reviewed') args.reviewed = argv[++i];
+    else if (a === '--description') args.description = argv[++i];
+    else if (a === '--write') args.write = true;
+    else if (a === '--check') args.check = true;
+    else if (a === '--allow-survivors') args.allowSurvivors = argv[++i];
+    else if (a === '--out') args.out = argv[++i];
     else if (a !== undefined && !a.startsWith('-')) positional.push(a);
   }
 
-  const [first, second] = positional;
+  const [first, second, third] = positional;
   if (first === 'init') args.command = 'init';
   else if (first === 'jobs') args.command = 'jobs';
   else if (first === 'adr') args.command = 'adr';
   else if (first === 'foundation') args.command = 'foundation';
   else if (first === 'pending') args.command = 'pending';
   else if (first === 'roadmap') args.command = 'roadmap';
-  else if (first === 'archive') {
+  else if (first === 'classes') args.command = 'classes';
+  else if (first === 'hazards') args.command = 'hazards';
+  else if (first === 'glossary') args.command = 'glossary';
+  else if (first === 'matrix') {
+    args.command = 'matrix';
+    if (second && !args.change) args.change = second;
+  } else if (first === 'harness') {
+    args.command = 'harness';
+    if (second && !args.change) args.change = second;
+  } else if (first === 'fret') {
+    args.command = 'fret';
+    args.sub = second;
+    // `fret check <change>`, `fret export <change>`, `fret realizability <project> <component>`
+    if (second === 'realizability') {
+      args.target = positional[3];
+      if (third) args.change = third;
+    } else if (third && !args.change) args.change = third;
+  } else if (first === 'monitor') {
+    args.command = 'monitor';
+    args.target = second;
+    if (third && !args.change) args.change = third;
+  }
+  else if (first === 'defect') {
+    args.command = 'defect';
+    if (second && !args.change) args.change = second;
+  }
+  else if (first === 'evidence') {
+    args.command = 'evidence';
+    if (second && !args.change) args.change = second;
+  }
+  else if (first === 'diff') {
+    args.command = 'diff';
+    if (second && !args.change) args.change = second;
+  } else if (first === 'archive') {
     args.command = 'archive';
     if (second && !args.change) args.change = second;
   } else if (first === 'verify') {
@@ -187,6 +391,41 @@ Usage:
   spec-tacular roadmap                      Show the slices
   spec-tacular roadmap --promote <slice>    Make a slice active
   spec-tacular roadmap --done <slice>       Mark a slice finished
+  spec-tacular classes                      Consequence classes, their rules,
+                                            and the class of each change
+  spec-tacular diff <change> [--accept]     Read the code the agent wrote, and
+                                            accept it (required for P0)
+  spec-tacular evidence [<change>] [--run]  The verification matrix: each item,
+                                            its method, tests and status
+  spec-tacular evidence -c <change> --sign <item> --method <m> --note <what>
+                                            Record an analysis, inspection or
+                                            demonstration
+  spec-tacular evidence -c <change> --waive <item> --reason <why>
+                                            Waive an item, with justification
+  spec-tacular hazards                      The hazard register, each hazard's
+                                            status by its guards' results
+  spec-tacular hazards --reviewed <HAZ-n>   Record a look at one
+  spec-tacular defect <name> [--description <text>]
+                                            Start a change that fixes a defect
+  spec-tacular glossary                     The variables formal requirements
+                                            use, and what is missing
+  spec-tacular matrix [<change>] [--write]  Generate the test matrix of each
+                                            formal requirement; --write also
+                                            writes the runner and the tests
+  spec-tacular harness [<change>] [--check] Whether each matrix's harness
+                                            reaches the real code; --check
+                                            runs coverage and mutants;
+                                            --allow-survivors "<why>" allows
+                                            the changes no matrix caught
+  spec-tacular fret check [<change>]        Compare spec-tacular's reading of
+                                            each FRETish requirement with FRET's
+  spec-tacular fret export [<change>] [--out <dir>]
+                                            Requirements and glossary for FRET
+  spec-tacular fret realizability <project> <component>
+                                            FRET's realizability check
+  spec-tacular monitor <trace.jsonl> [<change>]
+                                            Check a recorded run against the
+                                            formal requirements
 
 Options:
   -p, --print            Print the overview as text and exit
@@ -209,6 +448,17 @@ async function loadPipelines(
 }> {
   const { changes, failed } = await adapter.statusAll();
   const statuses = new Map(changes.map((c) => [c.changeName, c]));
+  // Asked of git once, and only if some change needs it.
+  let changedCache: string[] | null | undefined;
+  const changed = () => (changedCache === undefined ? (changedCache = changedFiles(projectRoot)) : changedCache);
+  let diffCache: string | null | undefined;
+  const diff = () => (diffCache === undefined ? (diffCache = implementationDiff(projectRoot)) : diffCache);
+  const classes = loadClasses(projectRoot);
+  // Evidence is collected, and required, only where the project says how to
+  // run its tests.
+  const verification = loadVerification(projectRoot);
+  const verifying = verification !== null && !('problem' in verification);
+  const glossary = loadGlossary(projectRoot);
 
   const parts = changes.map((status) => {
     const reviews: Record<string, ReviewByArtifact[string]> = {};
@@ -216,19 +466,79 @@ async function loadPipelines(
     // Attaching an empty summary elsewhere would read as "reviewed, zero
     // requirements" and wrongly mark the stage accepted.
     const specsId = specsArtifactId(status);
-    if (specsId && specFilesOf(status).length > 0) {
-      reviews[specsId] = loadChangeReview(projectRoot, status).summary;
-    }
+    const risksId = risksArtifactId(status);
+    const queue =
+      specFilesOf(status).length > 0 || risksWritten(status) ? loadChangeReview(projectRoot, status) : null;
+    if (specsId && queue && specFilesOf(status).length > 0) reviews[specsId] = queue.summary;
+    // The risks are reviewed one at a time too, not read as one document.
+    if (risksId && queue?.risks) reviews[risksId] = queue.risks;
     // Every other written artifact that is one document is accepted as a whole.
     const signoffs: Record<string, Signoff> = {};
     for (const artifact of status.artifacts) {
-      if (artifact.id === specsId || artifact.status !== 'done') continue;
+      if (artifact.id === specsId || artifact.id === risksId || artifact.status !== 'done') continue;
       const content = singleDocument(status, artifact.id);
       if (content !== null) signoffs[artifact.id] = loadSignoff(projectRoot, status.changeName, artifact.id, content);
     }
     const tasksFile = singleDocument(status, 'tasks');
     const tasks = tasksFile === null ? undefined : taskProgress(tasksFile);
-    return { status, reviews, signoffs, tasks };
+
+    // Followed through: the accepted risks against the design and the tasks,
+    // and — once implementing started — the code against the boundary.
+    const accepted = (queue?.requirements ?? [])
+      .filter((r) => r.state === 'accepted' && isRisk(r.item))
+      .map((r) => r.item as Risk);
+    const design = singleDocument(status, 'design');
+    const proposal = singleDocument(status, 'proposal');
+    const boundary = proposal === null ? null : parseBoundary(proposal);
+    // Changed files are asked of git once implementing started, and only when
+    // something needs them: a boundary to check, or classes to apply.
+    const changedNow = (boundary || classes) && tasks && tasks.done > 0 ? changed() : null;
+    const risks: RiskCheck | undefined =
+      risksId || boundary
+        ? {
+            unanswered: design === null ? [] : unansweredRisks(accepted, design).map((r) => r.name),
+            unguarded: tasksFile === null ? [] : unguardedRisks(accepted, tasksFile).map((r) => r.name),
+            unproven: tasksFile === null ? [] : unprovenGuards(tasksFile).map((g) => g.risk),
+            outsideBoundary: boundary && changedNow ? outsideBoundary(changedNow, boundary) : [],
+            unmitigatedHigh: accepted
+              .filter((r) => r.unmitigated && /^\s*(high|critical|catastrophic)\b/i.test(r.severity))
+              .map((r) => r.name),
+          }
+        : undefined;
+
+    // The class, and — where it asks for one — whether a person accepted
+    // the diff the agent wrote.
+    const consequence = classes ? classOfChange(classes, boundary, changedNow) : undefined;
+    const diffText = consequence?.rules.includes('diff-review') && tasks?.applied ? diff() : null;
+    const diffSignoff =
+      diffText === null ? undefined : loadSignoff(projectRoot, status.changeName, 'implementation', diffText);
+    // Formal forms, where any requirement or risk has one, and the matrices
+    // they give: which rows must pass, by the change's class.
+    const items = (queue?.requirements ?? []).map((r) => r.item);
+    const formalState = items.some((i) => formalOf(i)) ? changeFormal(items, glossary) : undefined;
+    const matrices = formalState ? changeMatrices(projectRoot, status.changeName, items, glossary) : [];
+    if (formalState && matrices.length > 0) {
+      formalState.staleMatrices = [...new Set(staleMatrices(projectRoot, matrices).map((e) => e.item.name))];
+    }
+    const rows = rowsRequired(matrices, consequence?.class ?? null);
+    // A matrix proves something only through a harness shown to reach the code.
+    const unconnected = unconnectedItems(projectRoot, matrices, queue?.requirements ?? []);
+    if (formalState && unconnected.components.length > 0) formalState.unconnected = unconnected.components;
+    const evidence =
+      verifying && queue
+        ? summarizeEvidence(changeEvidence(projectRoot, status.changeName, queue.requirements, rows, unconnected.items, vacuousItems(matrices)))
+        : undefined;
+    // A defect change is checked against its own report: whose bug it is.
+    const defect =
+      isDefectSchema(status.schemaName) && proposal !== null
+        ? checkDefect(
+            projectRoot,
+            parseReport(proposal),
+            (queue?.requirements ?? []).map((r) => r.item).filter(isRequirement),
+            tasksFile,
+          )
+        : undefined;
+    return { status, reviews, signoffs, tasks, risks, consequence, diff: diffSignoff, evidence, defect, formal: formalState };
   });
 
   // A slice is done once its change is applied — or archived, which it
@@ -236,7 +546,10 @@ async function loadPipelines(
   let roadmap = loadRoadmap(projectRoot);
   if (roadmap) {
     const archived = archivedChanges(projectRoot);
-    const applied = new Set(parts.filter((p) => p.tasks?.applied).map((p) => p.status.changeName));
+    // Where the class asks a person to accept the diff, that is part of done.
+    const implemented = (p: (typeof parts)[number]) =>
+      p.tasks?.applied === true && (!p.consequence?.rules.includes('diff-review') || p.diff?.accepted === true);
+    const applied = new Set(parts.filter(implemented).map((p) => p.status.changeName));
     const updated = markApplied(roadmap, (id) => applied.has(id) || archived.has(id));
     if (updated) {
       saveRoadmap(projectRoot, updated);
@@ -244,9 +557,15 @@ async function loadPipelines(
     }
   }
 
-  const pipelines = parts.map(({ status, reviews, signoffs, tasks }) =>
+  const pipelines = parts.map(({ status, reviews, signoffs, tasks, risks, consequence, diff, evidence, defect, formal }) =>
     buildPipeline(status, reviews, signoffs, {
       ...(tasks ? { tasks } : {}),
+      ...(risks ? { risks } : {}),
+      ...(consequence ? { consequence } : {}),
+      ...(diff ? { diff } : {}),
+      ...(evidence ? { evidence } : {}),
+      ...(defect ? { defect } : {}),
+      ...(formal ? { formal } : {}),
       waitingOn: waitingOn(roadmap, status.changeName),
     }),
   );
@@ -319,8 +638,9 @@ function runInit(args: Args): number {
   }
   for (const note of result.notes) process.stdout.write(`\n${note}\n`);
   process.stdout.write(
-    '\ndesign now requires specs, so a design cannot be written against\n' +
-      'requirements nobody has agreed to yet.\n',
+    '\ndesign now requires accepted specs and risks, so a design cannot be\n' +
+      'written against requirements nobody has agreed to, or ignore what they\n' +
+      'could break.\n',
   );
   return 0;
 }
@@ -402,18 +722,26 @@ async function composePrompt(
   feedback?: string,
 ): Promise<string> {
   const base = await adapter.instructions(artifact, change);
-  // A redraft: the developer read the draft and said what to change.
-  const instructions = feedback
-    ? `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n> ${feedback.replace(/\n/g, '\n> ')}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`
-    : base;
   const status = (await adapter.statusAll()).changes.find((c) => c.changeName === change);
+  const output = status?.artifactPaths[artifact]?.resolvedOutputPath;
+  const stopped = readStopReport(args.cwd, change, artifact);
+  const quoted = (text: string) => `> ${text.trim().replace(/\n/g, '\n> ')}`;
+  const instructions = !feedback
+    ? base
+    : stopped !== null && !(output && !output.includes('*') && existsSync(output))
+      // An answer: the last attempt stopped, and the developer replied to it.
+      ? `${base}\n\n# Your last attempt stopped\n\nIt stopped instead of writing this artifact, with this report:\n\n${quoted(stopped)}\n\nThe developer read it and answered:\n\n${quoted(feedback)}\n\nGo with their answer. If the requirements still cannot be reconciled with it, stop again the same way.\n`
+      // A redraft: the developer read the draft and said what to change.
+      : `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n${quoted(feedback)}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`;
   const reviewed = status ? loadChangeReview(args.cwd, status).requirements : [];
   // What the developer said the change is for, when they created it. OpenSpec
   // keeps it in the change's README but does not put it in the instructions.
   const intent = status ? changeDescription(status.changeRoot) : '';
-  const task = intent
+  const described = intent
     ? `The developer described this change as:\n\n> ${intent.replace(/\n/g, '\n> ')}\n\n${instructions}`
     : instructions;
+  // Implementing is interactive: a stop there is said in the session itself.
+  const task = artifact === 'apply' ? described : `${described}\n\n${stopInstructions(args.cwd, change, artifact)}`;
   return buildPrompt(buildContext(args.cwd, reviewed), task);
 }
 
@@ -641,65 +969,715 @@ async function runVerify(args: Args, adapter: OpenSpecAdapter): Promise<number> 
 }
 
 /** `spec-tacular archive <change>` — the split. */
+/** `spec-tacular classes` — the class map, its rules, and the class of each change. */
+async function runClasses(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const map = loadClasses(args.cwd);
+  if (!map) {
+    process.stdout.write(
+      'No consequence classes yet, so no change has a class and no class rule applies.\n' +
+        `Write ${classesPath(args.cwd)}, for example:\n\n` +
+        'default: P2\n' +
+        'classes:\n' +
+        '  P0:\n' +
+        '    why: a wrong decision here lets unreviewed work through\n' +
+        '    paths: [src/auth/, src/billing/**/*.ts]\n' +
+        'tailoring:\n' +
+        '  - class: P0\n' +
+        '    rule: diff-review\n' +
+        '    reason: why this project does without it\n',
+    );
+    return 0;
+  }
+  process.stdout.write(`${renderClasses(map)}\n`);
+  for (const problem of map.problems) process.stderr.write(`Warning: ${problem}\n`);
+
+  const { pipelines } = await loadPipelines(adapter, args.cwd);
+  if (pipelines.length > 0) process.stdout.write('\n');
+  for (const p of pipelines) {
+    const c = p.consequence;
+    const raised = c && c.raisedBy.length > 0 ? ` (declared ${c.declared ?? 'unclassified'})` : '';
+    process.stdout.write(`${p.name}  ${c?.class ?? 'unclassified'}${raised}\n`);
+  }
+  return map.problems.length > 0 ? 1 : 0;
+}
+
+/**
+ * `spec-tacular diff <change> [--accept]` — the code the agent wrote, and
+ * accepting it. `--accept` records the diff as it is now, so it is only
+ * meaningful after reading this same output.
+ */
+async function runDiff(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  if (!args.change) {
+    process.stderr.write('Usage: spec-tacular diff <change> [--accept]\n');
+    return 1;
+  }
+  const text = implementationDiff(args.cwd);
+  if (text === null) {
+    process.stderr.write('Not a git repository — there is no diff to read.\n');
+    return 1;
+  }
+  const pipeline = (await loadPipelines(adapter, args.cwd)).pipelines.find((p) => p.name === args.change);
+  if (!pipeline) {
+    process.stderr.write(`No change called '${args.change}'.\n`);
+    return 1;
+  }
+  if (!args.accept) {
+    process.stdout.write(text ? `${text}\n` : '(no changes to the code yet)\n');
+    return 0;
+  }
+  acceptDocument(args.cwd, args.change, 'implementation', text);
+  process.stdout.write(`Accepted the implementation diff of ${args.change}. A later change to the code sends it back.\n`);
+  return 0;
+}
+
+/**
+ * `spec-tacular evidence` — the verification matrix (RVTM): each requirement
+ * and risk, how it is verified, by which tests, and where it stands. With
+ * `--run` the tests run first and their results are appended to the record.
+ * Exits non-zero while anything is missing, failing or stale, so it can gate
+ * CI the way the archive gate does.
+ */
+async function runEvidence(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const config = loadVerification(args.cwd);
+  if (config === null || 'problem' in config) {
+    process.stderr.write(
+      (config ? `${config.problem}\n` : 'No verification set up yet, so no evidence is collected or required.\n') +
+        `Write ${verificationPath(args.cwd)} with the command that runs your tests and the JUnit report it writes:\n\n` +
+        'command: bun test --reporter=junit --reporter-outfile=.spec-tacular/junit.xml\n' +
+        'report: .spec-tacular/junit.xml\n\n' +
+        '(vitest: --reporter=junit --outputFile=…; pytest: --junitxml=…)\n',
+    );
+    return config === null ? 0 : 1;
+  }
+
+  const { changes } = await adapter.statusAll();
+  const queues = changes.map((status) => ({ status, queue: loadChangeReview(args.cwd, status) }));
+  const target = args.change ? queues.filter((q) => q.status.changeName === args.change) : queues;
+  if (args.change && target.length === 0) {
+    process.stderr.write(`No change called '${args.change}'.\n`);
+    return 1;
+  }
+
+  // A sign-off or a waiver: one record, bound to the item's text now.
+  if (args.sign || args.waive) {
+    const one = target.length === 1 ? target[0] : undefined;
+    if (!one) {
+      process.stderr.write('Name the change with -c <change>.\n');
+      return 1;
+    }
+    const id = (args.sign ?? args.waive)!;
+    const item = one.queue.requirements.find((r) => r.item.id === id)?.item;
+    if (!item) {
+      process.stderr.write(`${one.status.changeName} has no item '${id}'. Ids are shown by \`spec-tacular evidence ${one.status.changeName}\`.\n`);
+      return 1;
+    }
+    if (!args.note?.trim()) {
+      process.stderr.write(args.sign ? 'Say what was checked: --note "…"\n' : 'Say why: --reason "…"\n');
+      return 1;
+    }
+    const at = new Date().toISOString();
+    let record: EvidenceRecord;
+    if (args.sign) {
+      const method = (args.method ?? '').toLowerCase() as Method;
+      if (!METHODS.includes(method) || method === 'test') {
+        process.stderr.write('A sign-off is for --method analysis, inspection or demonstration; tests are recorded by --run.\n');
+        return 1;
+      }
+      record = { kind: 'sign', at, item: item.id, hash: item.hash, method, note: args.note.trim() };
+    } else {
+      record = { kind: 'waive', at, item: item.id, hash: item.hash, reason: args.note.trim() };
+    }
+    appendEvidence(args.cwd, one.status.changeName, [record]);
+    process.stdout.write(`Recorded: ${record.kind === 'sign' ? `${record.method} of` : 'waiver for'} ${item.id}. An edit to it makes this stale.\n`);
+    return 0;
+  }
+
+  if (args.run) {
+    const ran = runTests(args.cwd, config);
+    if (!ran.ok) {
+      process.stderr.write(`Could not collect evidence: ${ran.reason}\n`);
+      return 1;
+    }
+    const at = new Date().toISOString();
+    for (const { status, queue } of queues) {
+      appendEvidence(args.cwd, status.changeName, recordsForRun(args.cwd, status.changeName, queue.requirements.map((r) => r.item), ran.results, at));
+    }
+    // The register's guards keep being recorded after their change is gone.
+    appendEvidence(args.cwd, HAZARD_EVIDENCE, hazardRecordsForRun(listHazards(args.cwd), ran.results, at));
+    // Backward traceability: a test naming nothing that exists.
+    const active = new Set(queues.flatMap(({ queue }) => queue.requirements.map((r) => r.item.id)));
+    const changeNames = new Set([...queues.map((q) => q.status.changeName), ...archivedChanges(args.cwd)]);
+    const baseline = baselineRequirementIds(args.cwd);
+    const orphans = orphanTags(ran.results, (t) =>
+      t.kind === 'req' ? active.has(t.ref) || baseline.has(t.ref) : changeNames.has(t.ref.split('#')[0] ?? ''),
+    );
+    process.stdout.write(`Ran ${ran.results.length} tests.\n`);
+    for (const o of orphans) process.stdout.write(`  orphan: ${o.tag} in "${o.test}" names nothing that exists\n`);
+    process.stdout.write('\n');
+  }
+
+  // Which matrix rows each item must have run depends on its change's class.
+  const classOf = new Map((await loadPipelines(adapter, args.cwd)).pipelines.map((p) => [p.name, p.consequence?.class ?? null]));
+  const glossary = loadGlossary(args.cwd);
+  let open = 0;
+  for (const { status, queue } of target) {
+    const matrices = changeMatrices(args.cwd, status.changeName, queue.requirements.map((r) => r.item), glossary);
+    const rows = rowsRequired(matrices, classOf.get(status.changeName) ?? null);
+    const unconnected = unconnectedItems(args.cwd, matrices, queue.requirements).items;
+    const items = changeEvidence(args.cwd, status.changeName, queue.requirements, rows, unconnected, vacuousItems(matrices));
+    if (items.length === 0) continue;
+    const s = summarizeEvidence(items);
+    if (!s.complete) open++;
+    process.stdout.write(`${status.changeName}  ${s.passing}/${s.total} verified${s.excepted ? `, ${s.excepted} excepted` : ''}\n`);
+    for (const e of items) {
+      const state = e.state === 'excepted' ? 'waived' : e.state;
+      process.stdout.write(`  ${state.padEnd(8)} ${e.method.padEnd(13)} ${e.item.id}  ${e.item.name}\n`);
+      if (e.state === 'missing' && e.method === 'test' && e.tests.length === 0) {
+        process.stdout.write(`           name a test with ${tagFor(status.changeName, e.item)}\n`);
+      }
+      for (const t of e.tests) process.stdout.write(`           ${t}\n`);
+      if (e.note) process.stdout.write(`           ${e.note}\n`);
+      if (e.at) process.stdout.write(`           ${e.at}\n`);
+    }
+    process.stdout.write('\n');
+  }
+  return open > 0 ? 1 : 0;
+}
+
+/** Requirement ids in the accepted baseline, `openspec/specs/`. */
+function baselineRequirementIds(projectRoot: string): Set<string> {
+  const ids = new Set<string>();
+  const dir = join(projectRoot, 'openspec', 'specs');
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return ids;
+  }
+  for (const capability of entries) {
+    const file = join(dir, capability, 'spec.md');
+    try {
+      for (const r of parseSpecFile(readFileSync(file, 'utf8'), capability, file).requirements) ids.add(r.id);
+    } catch {
+      // Not a capability folder.
+    }
+  }
+  return ids;
+}
+
 async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number> {
   if (!args.change) {
     process.stderr.write('Usage: spec-tacular archive <change>\n');
     return 1;
   }
+  const ok = await archiveChange(args, adapter, args.change, {
+    out: (text) => process.stdout.write(text),
+    err: (text) => process.stderr.write(text),
+  });
+  return ok ? 0 : 1;
+}
 
+/**
+ * Archives a change, or says why not — the CLI's and the TUI's archive. What
+ * it reports goes to `out`, refusals to `err`; true once it is archived (or,
+ * on a dry run, once it could be).
+ */
+async function archiveChange(
+  args: Args,
+  adapter: OpenSpecAdapter,
+  change: string,
+  write: { out: (text: string) => void; err: (text: string) => void },
+): Promise<boolean> {
   const { changes } = await adapter.statusAll();
-  const status = changes.find((c) => c.changeName === args.change);
+  const status = changes.find((c) => c.changeName === change);
   if (!status) {
-    process.stderr.write(`No change called '${args.change}'.\n`);
-    return 1;
+    write.err(`No change called '${change}'.\n`);
+    return false;
   }
 
   const queue = loadChangeReview(args.cwd, status);
-  const plan = planArchive(args.change, queue.requirements);
+  const plan = planArchive(change, queue.requirements);
 
-  process.stdout.write(
+  write.out(
     `${plan.merging.length} requirement(s) merge into the baseline\n` +
       `${plan.diverting.length} divert to pending validation\n`,
   );
   for (const entry of plan.diverting) {
-    process.stdout.write(`  ${entry.capability}: ${entry.name} — ${entry.needs}\n`);
+    write.out(`  ${entry.capability}: ${entry.name} — ${entry.needs}\n`);
   }
 
   if (plan.unresolved.length > 0) {
-    process.stderr.write(
+    write.err(
       `\nRefused: ${plan.unresolved.length} requirement(s) are neither accepted nor deferred.\n`,
     );
-    for (const id of plan.unresolved) process.stderr.write(`  - ${id}\n`);
-    process.stderr.write(
+    for (const id of plan.unresolved) write.err(`  - ${id}\n`);
+    write.err(
       '\nArchiving now would merge text nobody agreed to — exactly what `--yes` does.\n',
     );
-    return 1;
+    return false;
+  }
+
+  // The class's last word: a change whose code a person must read is not
+  // archived until they have.
+  const pipeline = (await loadPipelines(adapter, args.cwd)).pipelines.find((p) => p.name === change);
+  const diff = pipeline?.apply.signoff;
+  if (pipeline?.apply.tasks?.applied && diff && !diff.accepted) {
+    write.err(
+      `\nRefused: ${change} is a ${pipeline.consequence?.class} change and nobody has accepted its implementation diff` +
+        `${diff.drifted ? ' since the code last changed' : ''}.\n` +
+        `Read it with \`spec-tacular diff ${change}\`, then accept it with \`--accept\`.\n`,
+    );
+    return false;
+  }
+
+  // No-Go until proven: where the project runs tests for evidence, every
+  // accepted requirement and risk must be verified or waived. Silence is
+  // not consent.
+  if (pipeline?.evidence && !pipeline.evidence.complete) {
+    const matrices = changeMatrices(args.cwd, change, queue.requirements.map((r) => r.item), loadGlossary(args.cwd));
+    const rows = rowsRequired(matrices, pipeline.consequence?.class ?? null);
+    const unconnected = unconnectedItems(args.cwd, matrices, queue.requirements).items;
+    const open = changeEvidence(args.cwd, change, queue.requirements, rows, unconnected, vacuousItems(matrices)).filter(
+      (e) => e.state !== 'passing' && e.state !== 'excepted',
+    );
+    write.err(`\nRefused: ${open.length} item(s) of ${change} have no current evidence.\n`);
+    for (const e of open) write.err(`  - ${e.state}: ${e.item.id}\n`);
+    write.err(`\nSee \`spec-tacular evidence ${change}\`; \`--run\` runs the tests.\n`);
+    return false;
   }
 
   if (args.dryRun) {
-    process.stdout.write('\nDry run — nothing written.\n');
-    return 0;
+    write.out('\nDry run — nothing written.\n');
+    return true;
   }
 
   try {
-    const prepared = prepareArchive(args.cwd, args.change, queue.requirements);
-    for (const file of prepared.rewritten) process.stdout.write(`  rewrote ${file}\n`);
+    const prepared = prepareArchive(args.cwd, change, queue.requirements);
+    for (const file of prepared.rewritten) write.out(`  rewrote ${file}\n`);
     for (const file of prepared.removed) {
-      process.stdout.write(`  removed ${file} (every requirement in it deferred)\n`);
+      write.out(`  removed ${file} (every requirement in it deferred)\n`);
     }
   } catch (err) {
     if (err instanceof ArchiveBlockedError) {
-      process.stderr.write(`${err.message}\n`);
-      return 1;
+      write.err(`${err.message}\n`);
+      return false;
     }
     throw err;
   }
 
   // `--yes` is honest here: the only incomplete tasks are ones deliberately
   // deferred, and every deferred requirement is now recorded in the register.
-  const output = await adapter.archive(args.change);
-  process.stdout.write(output);
+  const output = await adapter.archive(change);
+  write.out(output);
+
+  // The risks outlive the change: each joins the register, or updates the
+  // hazard it names. Only accepted ones — a rejected risk was judged wrong.
+  const risks = queue.requirements.filter((r) => r.state === 'accepted' && isRisk(r.item)).map((r) => r.item as Risk);
+  if (risks.length > 0) {
+    write.out('\nHazard register:\n');
+    for (const p of promoteRisks(args.cwd, change, risks)) {
+      write.out(`  ${p.created ? 'added' : 'updated'} ${p.hazard} from risk "${p.risk}"\n`);
+    }
+  }
+  return true;
+}
+
+/** Every formal item of the active changes, and of the accepted baseline. */
+async function formalItems(args: Args, adapter: OpenSpecAdapter): Promise<{ where: string; item: ReviewItem }[]> {
+  const out: { where: string; item: ReviewItem }[] = [];
+  const { changes } = await adapter.statusAll();
+  for (const status of changes) {
+    if (args.change && status.changeName !== args.change) continue;
+    for (const r of loadChangeReview(args.cwd, status).requirements) {
+      if (formalOf(r.item)) out.push({ where: status.changeName, item: r.item });
+    }
+  }
+  if (!args.change) {
+    // Archived requirements keep their formal forms in the baseline.
+    const dir = join(args.cwd, 'openspec', 'specs');
+    for (const capability of existsSync(dir) ? readdirSync(dir) : []) {
+      const file = join(dir, capability, 'spec.md');
+      if (!existsSync(file)) continue;
+      for (const r of parseSpecFile(readFileSync(file, 'utf8'), capability, file).requirements) {
+        if (formalOf(r)) out.push({ where: 'baseline', item: r });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `spec-tacular fret check|export|realizability` — NASA FRET alongside.
+ *
+ * - `check [<change>]` compares spec-tacular's reading of every FRETish
+ *   requirement with FRET's own finite-trace formula, on the matrix's
+ *   sequences and on seeded random traces. Formulas come from the FRET
+ *   command line where it is set up (`fret.cli` in verification.yaml), else
+ *   from the committed cache it fills.
+ * - `export [<change>] [--out dir]` writes the requirements and the glossary
+ *   in FRET's terms.
+ * - `realizability <project> <component>` runs FRET's own check, on
+ *   requirements imported into FRET.
+ */
+async function runFret(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const glossary = loadGlossary(args.cwd);
+  if (args.sub === 'realizability') {
+    const cli = fretCli(args.cwd);
+    if (!cli || !args.change || !args.target) {
+      process.stderr.write(
+        cli
+          ? 'Usage: spec-tacular fret realizability <FRET project> <component>\n'
+          : 'FRET is not set up: set fret.cli in spec-tacular/verification.yaml to the command before `formalize`,\n' +
+              'e.g. `npm run --silent --prefix ~/fret/fret-electron start-cli --`, and import `spec-tacular fret export` into FRET first.\n',
+      );
+      return 1;
+    }
+    const r = spawnSync('sh', ['-c', `${cli} realizability --diagnose '${args.change}' '${args.target}'`], { stdio: 'inherit' });
+    return r.status ?? 1;
+  }
+
+  const items = await formalItems(args, adapter);
+  const frets = items.flatMap(({ where, item }) => formalOf(item)!.frets.map((f) => ({ where, item, f })));
+
+  if (args.sub === 'export') {
+    const rows = items.flatMap(({ where, item }) => {
+      const form = formalOf(item)!;
+      return form.frets.map((f, i) => ({
+        reqid: `${where === 'baseline' ? '' : `${where}:`}${item.id}${form.frets.length > 1 ? `-${i + 1}` : ''}`,
+        fulltext: f.source,
+        rationale: item.text.split('\n')[0] ?? item.name,
+      }));
+    });
+    const dir = args.out ?? join(args.cwd, 'spec-tacular', 'fret', 'export');
+    mkdirSync(dir, { recursive: true });
+    for (const [name, content] of Object.entries(exportFiles(args.change ?? 'spec-tacular', rows, glossary))) {
+      writeFileSync(join(dir, name), content, 'utf8');
+      process.stdout.write(`wrote ${join(dir, name)}\n`);
+    }
+    process.stdout.write(`${rows.length} FRETish requirement(s). Decisions are not FRETish and stay out; FRET's own analyses start from these.\n`);
+    return 0;
+  }
+
+  if (args.sub !== 'check') {
+    process.stderr.write('Usage: spec-tacular fret check [<change>] | fret export [<change>] [--out dir] | fret realizability <project> <component>\n');
+    return 1;
+  }
+  if (frets.length === 0) {
+    process.stdout.write('No FRETish requirements to check.\n');
+    return 0;
+  }
+  let disagreeing = 0;
+  let unchecked = 0;
+  for (const { where, item, f } of frets) {
+    const source = fretFormula(args.cwd, f.source);
+    const label = `${where}: ${item.name}`;
+    if (source.formula === null) {
+      unchecked++;
+      process.stdout.write(`?  ${label}\n   ${f.source}\n   not checked — ${source.why}\n`);
+      continue;
+    }
+    const sequences = matricesFor(item, '', formalOf(item)!, glossary)
+      .filter((m) => m.kind === 'fret' && m.source === f.source)
+      .flatMap((m) => m.rows.map((r) => r.steps as Env[]));
+    const result = crossCheck(f, source.formula, sequences);
+    const ok = result.disagreements.length === 0;
+    if (!ok) disagreeing++;
+    process.stdout.write(
+      `${ok ? '✓' : '✗'}  ${label}\n   ${f.source}\n   FRET (${source.from}): ${source.formula}\n` +
+        `   ${result.traces} traces, ${result.disagreements.length} disagreement(s)\n`,
+    );
+    const first = result.disagreements[0];
+    if (first) {
+      const shown = first.trace.map((s, i) => `${i}: ${Object.entries(s).map(([k, v]) => `${k}=${v === true ? 'T' : v === false ? 'F' : v}`).join(' ')}`);
+      process.stdout.write(`   e.g. FRET says ${first.fret ? 'holds' : 'violated'}, spec-tacular ${first.ours ? 'holds' : 'violated'}, on:\n${shown.map((l) => `     ${l}`).join('\n')}\n`);
+    }
+    const unmonitorable = monitorability(f);
+    if (unmonitorable) process.stdout.write(`   ! ${unmonitorable}\n`);
+  }
+  if (unchecked > 0) process.stdout.write(`\n${unchecked} not checked: FRET is needed once to formalize them; its answers are then cached.\n`);
+  return disagreeing > 0 ? 1 : 0;
+}
+
+/**
+ * `spec-tacular monitor <trace.jsonl> [<change>]` — a recorded run, one JSON
+ * object of variable values per line, checked against every formal
+ * requirement whose variables it records. Exits non-zero on a violation.
+ */
+async function runMonitor(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  if (!args.target || !existsSync(args.target)) {
+    process.stderr.write('Usage: spec-tacular monitor <trace.jsonl> [<change>] — one JSON object of variable values per step\n');
+    return 1;
+  }
+  const trace = readTrace(readFileSync(args.target, 'utf8'));
+  const glossary = loadGlossary(args.cwd);
+  let violated = 0;
+  for (const { where, item } of await formalItems(args, adapter)) {
+    const form = formalOf(item)!;
+    const verdicts = [
+      ...form.decisions.map((d) => monitorDecision(item.name, d, trace, glossary)),
+      ...form.frets.map((f) => monitorFret(item.name, f, trace)),
+    ];
+    for (const v of verdicts) {
+      if (v.holds === null) {
+        process.stdout.write(`-  ${where}: ${v.requirement} — not recorded: ${v.unobserved.join(', ')}\n`);
+        continue;
+      }
+      if (!v.holds) violated++;
+      process.stdout.write(
+        `${v.holds ? '✓' : '✗'}  ${where}: ${v.requirement}\n   ${v.form}\n` +
+          (v.holds ? '' : `   violated at step${v.violated.length > 1 ? 's' : ''} ${v.violated.join(', ')}\n`),
+      );
+    }
+  }
+  process.stdout.write(`${trace.length} steps recorded.\n`);
+  return violated > 0 ? 1 : 0;
+}
+
+/**
+ * `spec-tacular harness [<change>] [--check]` — for each component the
+ * change's matrices run through: its harness, whether it is connected, and
+ * why not. `--check` runs the check — the matrix tests with coverage, then
+ * with mutants of the code under test in a scratch copy — and records it.
+ */
+async function runHarness(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const glossary = loadGlossary(args.cwd);
+  const config = matrixConfig(args.cwd);
+  const { changes } = await adapter.statusAll();
+  const target = args.change ? changes.filter((c) => c.changeName === args.change) : changes;
+  if (args.change && target.length === 0) {
+    process.stderr.write(`No change called '${args.change}'.\n`);
+    return 1;
+  }
+  let open = 0;
+  const done = new Set<string>();
+  for (const status of target) {
+    const queue = loadChangeReview(args.cwd, status);
+    const entries = changeMatrices(args.cwd, status.changeName, queue.requirements.map((r) => r.item), glossary);
+    const components = [...new Set(entries.map((e) => slugify(e.matrix.component)))];
+    for (const component of components) {
+      if (done.has(component)) continue;
+      done.add(component);
+      const h = componentHarness(args.cwd, component, config);
+      const group = entries.filter((e) => slugify(e.matrix.component) === component);
+      if (args.check) {
+        // Regenerated first: a mapping reaches its tests through them.
+        writeTests(args.cwd, group);
+        process.stdout.write(`Checking ${component}: coverage, then mutants of ${h.production.join(', ') || '(no code)'}…\n`);
+        const tests = group.map((e) => testFileFor(args.cwd, e, config).path);
+        saveCheck(args.cwd, runHarnessCheck(args.cwd, h, tests, config));
+      }
+      const states = queue.requirements
+        .filter((r) => r.item.capability === `harness/${component}`)
+        .map((r) => ({ accepted: r.state === 'accepted' }));
+      if (args.allowSurvivors !== undefined) {
+        if (!args.allowSurvivors.trim()) {
+          process.stderr.write('--allow-survivors needs a reason: why may the code differ there?\n');
+          return 1;
+        }
+        const allowed = allowSurvivors(args.cwd, component, args.allowSurvivors.trim());
+        if (allowed) process.stdout.write(`Allowed ${allowed.survivors.length} surviving change(s) to ${component}: ${allowed.reason}\n`);
+      }
+      const c = connection(args.cwd, h, group.map((g) => g.matrix), states, undefined, config);
+      const check = loadCheck(args.cwd, component);
+      process.stdout.write(
+        `${component}  ${c.connected ? 'connected' : 'NOT CONNECTED'}  (${h.kind}${h.path ? `: ${h.path}` : ''})\n` +
+          (check ? `    last check ${check.at}: ${check.killed}/${check.mutants} mutants caught${check.unexecuted.length ? `, not executed: ${check.unexecuted.join(', ')}` : ''}\n` : ''),
+      );
+      for (const b of c.because) process.stdout.write(`    - ${b}\n`);
+      const allowed = loadAllowed(args.cwd, component);
+      if (allowed) process.stdout.write(`    allowed ${allowed.survivors.length} surviving change(s): ${allowed.reason}\n`);
+      if (!c.connected) open++;
+    }
+  }
+  if (done.size === 0) process.stdout.write('No matrices yet, so no harnesses to check.\n');
+  return open > 0 ? 1 : 0;
+}
+
+/**
+ * `spec-tacular matrix [<change>] [--write]` — generates the test matrix of
+ * every formal requirement and risk guard, writes it to
+ * `spec-tacular/matrix/`, and prints it. `--write` also copies the runner
+ * into the project and writes a table-driven test file per matrix, and names
+ * the harnesses that still have to be written.
+ */
+async function runMatrix(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const glossary = loadGlossary(args.cwd);
+  const { pipelines } = await loadPipelines(adapter, args.cwd);
+  const { changes } = await adapter.statusAll();
+  const target = args.change ? changes.filter((c) => c.changeName === args.change) : changes;
+  if (args.change && target.length === 0) {
+    process.stderr.write(`No change called '${args.change}'.\n`);
+    return 1;
+  }
+  const all: MatrixEntry[] = [];
+  let blocked = 0;
+  for (const status of target) {
+    const items = loadChangeReview(args.cwd, status).requirements.map((r) => r.item);
+    const entries = changeMatrices(args.cwd, status.changeName, items, glossary);
+    const withForm = items.filter((i) => formalOf(i));
+    // A form with errors gives no matrix: say which, rather than skip silently.
+    for (const item of withForm) {
+      const problems = checkFormal(formalOf(item)!, glossary).errors;
+      if (problems.length > 0) {
+        blocked++;
+        process.stdout.write(`! ${status.changeName}: ${item.name} — no matrix until its formal form is fixed: ${problems.join('; ')}\n`);
+      }
+    }
+    if (entries.length === 0) continue;
+    const cls = pipelines.find((p) => p.name === status.changeName)?.consequence?.class ?? null;
+    // Only --write writes: without it, say what is out of date.
+    const stale = new Set(staleMatrices(args.cwd, entries).map((e) => e.path));
+    const written = new Set(args.write ? writeMatrices(args.cwd, entries) : []);
+    process.stdout.write(`${status.changeName}${cls ? `  (class ${cls})` : ''}\n`);
+    for (const e of entries) {
+      const required = requiredRows(e.matrix, cls);
+      const runnable = e.matrix.rows.filter((r) => !r.infeasible).length;
+      const mark = written.has(e.path) ? ' (updated)' : stale.has(e.path) ? ' (out of date — --write regenerates it)' : '';
+      process.stdout.write(
+        `  ${e.item.name} → ${e.path}${mark}\n` +
+          `  ${required.length} of ${runnable} rows required to pass${e.matrix.vacuous ? ' — but it tests nothing' : ''}\n`,
+      );
+      for (const line of matrixLines(e.matrix)) process.stdout.write(`  ${line}\n`);
+      process.stdout.write('\n');
+    }
+    all.push(...entries);
+  }
+  if (all.length === 0 && blocked === 0) {
+    process.stdout.write('No formal requirements yet — a requirement gets a matrix once it has a ```formal block.\n');
+    return 0;
+  }
+  if (args.write) {
+    // What is no longer generated goes, with its test: a renamed matrix
+    // must not leave its old tests running against nothing.
+    const keep = new Set<string>();
+    for (const status of changes) {
+      const items = loadChangeReview(args.cwd, status).requirements.map((r) => r.item);
+      for (const e of changeMatrices(args.cwd, status.changeName, items, glossary)) keep.add(e.path);
+    }
+    const baseline = (await formalItems({ ...args, change: undefined }, adapter)).filter((f) => f.where === 'baseline');
+    for (const e of changeMatrices(args.cwd, 'baseline', baseline.map((f) => f.item), glossary)) keep.add(e.path);
+    for (const gone of removeOrphanMatrices(args.cwd, keep, changes.map((c) => c.changeName))) {
+      process.stdout.write(`Removed ${gone} and its test: no longer generated\n`);
+    }
+  }
+  if (args.write && all.length > 0) {
+    const result = writeTests(args.cwd, all);
+    process.stdout.write(`Runner: ${result.runner}\n`);
+    for (const t of result.tests) process.stdout.write(`Test:   ${t}\n`);
+    for (const h of result.missingHarness) {
+      process.stdout.write(
+        `Write:  ${h} — export \`harness\`, a function returning { reset?, drive(name, value), observe(name), tick? }\n` +
+          '        that sets each input in the real code and reads each output from it.\n',
+      );
+    }
+  }
+  return blocked > 0 ? 1 : 0;
+}
+
+/**
+ * `spec-tacular glossary` — the variables formal requirements are written
+ * over, which requirements use each, and what is missing: variables used but
+ * not defined, and ones without a source in the system — which cannot be
+ * observed, and so cannot be monitored.
+ */
+async function runGlossary(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const glossary = loadGlossary(args.cwd);
+  const { changes } = await adapter.statusAll();
+  const usedBy = new Map<string, string[]>();
+  let errors = 0;
+  for (const status of changes) {
+    for (const r of loadChangeReview(args.cwd, status).requirements) {
+      const form = formalOf(r.item);
+      if (!form) continue;
+      const names = new Set<string>();
+      for (const d of form.decisions) [d.output, ...variablesOf(d.expr)].forEach((v) => names.add(v));
+      for (const f of form.frets) fretVariables(f).forEach((v) => names.add(v));
+      for (const n of names) usedBy.set(n, [...(usedBy.get(n) ?? []), `${status.changeName}: ${r.item.name}`]);
+      const problems = checkFormal(form, glossary).errors;
+      if (problems.length > 0) {
+        errors++;
+        process.stdout.write(`! ${status.changeName}: ${r.item.name} — ${problems.join('; ')}\n`);
+      }
+    }
+  }
+  if (!glossary) {
+    process.stdout.write(
+      `No glossary yet. Formal requirements are written over variables defined in ${glossaryPath(args.cwd)}:\n\n` +
+        'variables:\n' +
+        '  tasks_applied:\n' +
+        '    role: input          # mode | input | output | internal\n' +
+        '    type: bool           # bool | int | float | enum (with values: [...])\n' +
+        '    meaning: every task is ticked or deferred\n' +
+        '    source: src/core/tasks.ts#taskProgress\n' +
+        'constraints:\n' +
+        '  - token_valid -> NOT token_expired\n',
+    );
+    return errors > 0 ? 1 : 0;
+  }
+  for (const problem of glossary.problems) process.stdout.write(`! ${problem}\n`);
+  for (const v of glossary.variables.values()) {
+    const users = usedBy.get(v.name) ?? [];
+    process.stdout.write(
+      `${v.name}  ${v.role} ${v.type}${v.values.length ? ` (${v.values.join(', ')})` : ''} — ${v.meaning}\n` +
+        `    source: ${v.source || '(none — cannot be observed or monitored)'}\n` +
+        (users.length ? users.map((u) => `    used by ${u}\n`).join('') : '    used by nothing yet\n'),
+    );
+  }
+  for (const c of glossary.constraints) process.stdout.write(`constraint: ${c.source}\n`);
+  return errors > 0 || glossary.problems.length > 0 ? 1 : 0;
+}
+
+/**
+ * `spec-tacular defect <name> [--description …]` — a change that fixes
+ * something, created with the defect schema: report, specs, risks, fix,
+ * tasks, reproducer first.
+ */
+async function runDefect(args: Args, adapter: OpenSpecAdapter): Promise<number> {
+  const problem = args.change ? validateChangeName(args.change) : 'A name is required';
+  if (problem) {
+    process.stderr.write(`${problem}\nUsage: spec-tacular defect <name> [--description "what went wrong"]\n`);
+    return 1;
+  }
+  if (!existsSync(join(args.cwd, 'openspec', 'schemas', DEFECT_SCHEMA_NAME, 'schema.yaml'))) {
+    process.stderr.write(`The defect schema is not installed here. Run \`spec-tacular init --force\` first.\n`);
+    return 1;
+  }
+  await adapter.newChange(args.change!, args.description, DEFECT_SCHEMA_NAME);
+  process.stdout.write(
+    `Created ${args.change}, a defect change. Its report decides first whose bug it is —\n` +
+      'the code\'s, the requirement\'s, or a gap — and its first task is a reproducer\n' +
+      'that fails on the code as it is.\n',
+  );
   return 0;
+}
+
+/**
+ * `spec-tacular hazards` — the register and where each hazard stands, by its
+ * guards' latest results. `--reviewed HAZ-0003` records a look at one. Exits
+ * non-zero while a hazard's guard is failing.
+ */
+function runHazards(args: Args): number {
+  if (args.reviewed) {
+    const updated = markReviewed(args.cwd, args.reviewed, args.note);
+    if (!updated) {
+      process.stderr.write(`No hazard ${args.reviewed} in ${hazardsDir(args.cwd)}.\n`);
+      return 1;
+    }
+    process.stdout.write(`Reviewed ${updated.id} today.\n`);
+    return 0;
+  }
+  const states = registerStates(args.cwd);
+  if (states.length === 0) {
+    process.stdout.write('No hazards yet. Each change\'s accepted risks join the register when it is archived.\n');
+    return 0;
+  }
+  for (const s of states) {
+    process.stdout.write(
+      `${s.hazard.id}  ${s.status.padEnd(11)} ${(s.hazard.severity || '-').padEnd(8)} ${s.hazard.title}\n` +
+        `           ${s.because}${s.dueForReview ? ` · due for review (last ${s.hazard.reviewed ?? 'never'})` : ''}\n`,
+    );
+  }
+  return states.some((s) => s.status === 'open') ? 1 : 0;
 }
 
 /** `spec-tacular roadmap` — show, promote, or complete a slice. */
@@ -806,6 +1784,7 @@ async function dispatch(
 
     const driver = defaultRegistry().get(args.driver);
     const prompt = await composePrompt(args, adapter, artifact, change, feedback);
+    clearStopReport(args.cwd, change, artifact);
     startJob({
       projectRoot: args.cwd,
       change,
@@ -832,14 +1811,18 @@ async function dispatch(
 async function startNextSlice(
   args: Args,
   adapter: OpenSpecAdapter,
+  id?: string,
 ): Promise<{ ok: true; change: string } | { ok: false; reason: string }> {
   try {
     const roadmap = loadRoadmap(args.cwd);
     if (!roadmap) return { ok: false, reason: 'There is no roadmap' };
     const { pipelines } = await loadPipelines(adapter, args.cwd);
     const isSpecified = (id: string) => specified(pipelines.find((p) => p.name === id));
-    const next = nextPromotable(roadmap, isSpecified);
-    if (!next) return { ok: false, reason: 'No slice can start yet — accept the current one\'s specs first' };
+    // The slice the developer picked, or else the next one the roadmap allows.
+    const next = id ? roadmap.slices.find((s) => s.id === id) : nextPromotable(roadmap, isSpecified);
+    if (!next) {
+      return { ok: false, reason: id ? `No slice called '${id}' on the roadmap` : 'No slice can start yet — accept the current one\'s specs first' };
+    }
     const promoted = promoteSlice(roadmap, next.id, isSpecified);
     if (!promoted.ok) return { ok: false, reason: promoted.reason };
     await adapter.newChange(next.id, next.summary);
@@ -855,6 +1838,54 @@ async function startNextSlice(
  * interactive session on the apply instructions — so it runs commands and
  * asks for permissions just as it does when started by hand.
  */
+function implementingSessionsPath(projectRoot: string): string {
+  return join(projectRoot, '.spec-tacular', 'implementing', 'sessions.jsonl');
+}
+
+function recordImplementingSession(projectRoot: string, change: string, sessionId: string): void {
+  mkdirSync(dirname(implementingSessionsPath(projectRoot)), { recursive: true });
+  appendFileSync(implementingSessionsPath(projectRoot), `${JSON.stringify({ change, sessionId, at: new Date().toISOString() })}\n`, 'utf8');
+}
+
+/** What the implementing sessions used, as their transcripts say: tokens, no cost. */
+function implementingUsage(projectRoot: string): Usage[] {
+  let lines: string[];
+  try {
+    lines = readFileSync(implementingSessionsPath(projectRoot), 'utf8').split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+  return lines.flatMap((l) => {
+    try {
+      const { sessionId } = JSON.parse(l) as { sessionId: string };
+      const usage = claudeSessionUsage(claudeTranscriptPath(projectRoot, sessionId));
+      return usage ? [usage] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * The commands an implementing session runs to show its work: the project's
+ * test commands from verification.yaml, the matrix's, and spec-tacular's
+ * own checks — as prefixes a driver can pre-approve.
+ */
+function implementingCommands(projectRoot: string): string[] {
+  const out = new Set(['spec-tacular matrix', 'spec-tacular harness', 'spec-tacular evidence', 'spec-tacular glossary']);
+  // A command's first two words: `bun test`, `npx vitest`, `pytest --junitxml…` → `pytest`.
+  const prefix = (command: string) => {
+    const words = command.replace(/^([A-Z_]+=\S+\s+)+/, '').trim().split(/\s+/);
+    return words.slice(0, words[1] && !words[1].startsWith('-') && !words[1].includes('{') ? 2 : 1).join(' ');
+  };
+  const verification = loadVerification(projectRoot);
+  if (verification && !('problem' in verification)) out.add(prefix(verification.command));
+  const matrix = matrixConfig(projectRoot);
+  out.add(prefix(matrix.run));
+  out.add(prefix(matrix.coverage));
+  return [...out].filter((p) => p !== '');
+}
+
 async function implementCommand(
   args: Args,
   adapter: OpenSpecAdapter,
@@ -869,7 +1900,10 @@ async function implementCommand(
     const driver = defaultRegistry().get(args.driver);
     if (!driver.interactive) return { ok: false, reason: `${driver.label} cannot be opened interactively` };
     const prompt = await composePrompt(args, adapter, 'apply', change);
-    return { ok: true, command: driver.interactive(prompt), label: driver.label };
+    // Named, so what it used can be read from its transcript afterwards.
+    const sessionId = args.driver === 'claude' ? randomUUID() : undefined;
+    if (sessionId) recordImplementingSession(args.cwd, change, sessionId);
+    return { ok: true, command: driver.interactive(prompt, implementingCommands(args.cwd), sessionId), label: driver.label };
   } catch (err) {
     return { ok: false, reason: describeError(err) };
   }
@@ -943,6 +1977,7 @@ async function main(): Promise<number> {
   if (args.command === 'adr') return runAdrs(args);
   if (args.command === 'foundation') return runFoundation(args);
   if (args.command === 'pending') return runPending(args);
+  if (args.command === 'hazards') return runHazards(args);
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
 
   try {
@@ -951,6 +1986,15 @@ async function main(): Promise<number> {
     if (args.command === 'run') return await runAgent(args, adapter);
     if (args.command === 'archive') return await runArchive(args, adapter);
     if (args.command === 'verify') return await runVerify(args, adapter);
+    if (args.command === 'classes') return await runClasses(args, adapter);
+    if (args.command === 'diff') return await runDiff(args, adapter);
+    if (args.command === 'evidence') return await runEvidence(args, adapter);
+    if (args.command === 'defect') return await runDefect(args, adapter);
+    if (args.command === 'glossary') return await runGlossary(args, adapter);
+    if (args.command === 'matrix') return await runMatrix(args, adapter);
+    if (args.command === 'harness') return await runHarness(args, adapter);
+    if (args.command === 'fret') return await runFret(args, adapter);
+    if (args.command === 'monitor') return await runMonitor(args, adapter);
 
     if (!tui) {
       const { pipelines, failed } = await loadPipelines(adapter, args.cwd);
@@ -961,6 +2005,15 @@ async function main(): Promise<number> {
           root: args.cwd,
         }) + '\n',
       );
+      // A hazard whose guard fails is a regression in something the project
+      // already decided must not happen: it is said on every overview.
+      for (const s of registerStates(args.cwd)) {
+        if (s.status === 'open' && s.hazard.verification.length > 0) {
+          process.stdout.write(`! ${s.hazard.id} ${s.hazard.title} is open again — ${s.because}\n`);
+        } else if (s.dueForReview) {
+          process.stdout.write(`· ${s.hazard.id} ${s.hazard.title} is due for review (\`spec-tacular hazards\`)\n`);
+        }
+      }
       return 0;
     }
 
@@ -1007,6 +2060,7 @@ async function main(): Promise<number> {
         saveReview(args.cwd, { ...session.review, ...(documents ? { documents } : {}) });
       },
       lintConfig: loadLintConfig(args.cwd),
+      glossary: () => loadGlossary(args.cwd),
       reparse: (change) =>
         queueFor(change)?.requirements.map((r) => r.item) ?? [],
       reloadPipelines: async () => {
@@ -1068,19 +2122,47 @@ async function main(): Promise<number> {
       setup: () => setUpProject(args.cwd, args.driver),
       questions: () => guidedQuestions(args.cwd),
       answer: (question, text) => answerFoundation(question.item, text),
-      createChange: async (name, description) => {
+      createChange: async (name, description, kind) => {
         try {
-          await adapter.newChange(name, description || undefined);
+          await adapter.newChange(name, description || undefined, kind === 'defect' ? DEFECT_SCHEMA_NAME : undefined);
           return { ok: true };
         } catch (err) {
           return { ok: false, reason: describeError(err) };
         }
       },
       dispatch: (change, artifact, feedback) => dispatch(args, adapter, change, artifact, feedback),
+      stopReport: (change, artifact, job) => {
+        let text = readStopReport(args.cwd, change, artifact);
+        let source: StopReport['source'] = 'report';
+        if (text === null && job) {
+          // No report: its last words, kept as one so they outlive the log.
+          let driver;
+          try {
+            driver = defaultRegistry().get(job.driver);
+          } catch {
+            return null;
+          }
+          text = driver.finalMessage?.(tailJob(job, 20000)) ?? null;
+          if (text === null) return null;
+          saveStopReport(args.cwd, change, artifact, text);
+        }
+        if (text === null) return null;
+        if (!/^#\s+Stopped:/m.test(text)) source = 'message';
+        const items = queueFor(change)?.requirements.map((r) => r.item) ?? [];
+        return parseStop(text, items, { change, artifact, source });
+      },
       implement: (change) => implementCommand(args, adapter, change),
       launch: (change, command) => openElsewhere(writeSessionScript(args.cwd, change, command), args.cwd),
       implementing: () => implementingNow(args.cwd),
-      startNextSlice: () => startNextSlice(args, adapter),
+      startNextSlice: (id) => startNextSlice(args, adapter, id),
+      archive: async (change, dryRun) => {
+        let text = '';
+        const collect = (t: string) => {
+          text += t;
+        };
+        const ok = await archiveChange({ ...args, dryRun }, adapter, change, { out: collect, err: collect });
+        return { ok, text };
+      },
       acceptDocument: (change, artifact, content) => {
         try {
           acceptDocument(args.cwd, change, artifact, content);
@@ -1090,6 +2172,13 @@ async function main(): Promise<number> {
         }
       },
       readArtifact: async (change, artifact) => {
+        // Not a file: what the branch changed, read to be accepted as a whole.
+        // Exactly the text that is hashed on acceptance — no placeholder.
+        if (artifact === 'implementation') {
+          const text = implementationDiff(args.cwd);
+          if (text === null) return { ok: false, reason: 'not a git repository — there is no diff to read' };
+          return { ok: true, file: '', content: text };
+        }
         const file = statuses.get(change)?.artifactPaths[artifact]?.resolvedOutputPath;
         if (!file || file.includes('*')) return { ok: false, reason: `${artifact} is not a single document` };
         try {
@@ -1100,7 +2189,9 @@ async function main(): Promise<number> {
       },
       greenfield: () => isGreenfield(args.cwd),
       roadmap: () => loadRoadmap(args.cwd),
-      ...(assistants = createAssistants({ cwd: args.cwd, driver: args.driver })),
+      ...(assistants = createAssistants({ cwd: args.cwd, driver: args.driver, record: (u) => appendUsageLog(args.cwd, u) })),
+      pastUsage: loadUsageLog(args.cwd),
+      implementingUsage: () => implementingUsage(args.cwd),
       reviseAnswer: {
         unavailable: assistants.answerRefiner ? null : assistants.advisorNote,
         propose: async (question, current, turns, instruction) => {

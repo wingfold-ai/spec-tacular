@@ -51,7 +51,7 @@ export const freshChange = (name: string) => changeWith(name);
 
 const named: Record<string, string> = {
   return: 'RETURN', tab: 'TAB', up: 'ARROW_UP', down: 'ARROW_DOWN', left: 'ARROW_LEFT',
-  right: 'ARROW_RIGHT', backspace: 'BACKSPACE', space: ' ',
+  right: 'ARROW_RIGHT', backspace: 'BACKSPACE', space: ' ', home: 'HOME', end: 'END',
 };
 
 export async function mountApp(
@@ -90,6 +90,7 @@ export async function mountApp(
     modelFor?: TuiInput['modelFor'];
     onUsage?: TuiInput['onUsage'];
     jobUsage?: TuiInput['jobUsage'];
+    stopReport?: TuiInput['stopReport'];
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'spectacular-app-'));
@@ -104,7 +105,7 @@ export async function mountApp(
   }
   options.prepare?.(root);
   const changes: ChangePipeline[] = [...(options.changes ?? [])];
-  const created: { name: string; description: string }[] = [];
+  const created: { name: string; description: string; kind?: 'change' | 'defect' }[] = [];
   const dispatched: string[] = [];
   const jobs: Job[] = [];
   const docs = new Map<string, string>();
@@ -149,9 +150,9 @@ export async function mountApp(
     },
     questions: () => guidedQuestions(root),
     answer: (q, text) => answerFoundation(q.item, text),
-    createChange: async (name, description) => {
+    createChange: async (name, description, kind) => {
       changes.push(freshChange(name));
-      created.push({ name, description });
+      created.push({ name, description, ...(kind ? { kind } : {}) });
       return { ok: true };
     },
     dispatch: async (change, artifact, feedback) => {
@@ -182,6 +183,7 @@ export async function mountApp(
     modelFor: options.modelFor,
     onUsage: options.onUsage,
     jobUsage: options.jobUsage,
+    stopReport: options.stopReport,
     warm: (target) => warmed.push(target),
     greenfield: () => isGreenfield(root),
     roadmap: () => loadRoadmap(root),
@@ -228,6 +230,11 @@ export async function mountApp(
       // A new draft is new text: whatever was accepted before no longer holds.
       acceptedIn(change).delete(artifact);
       if (i >= 0) changes[i] = changeWith(change, done, [...acceptedIn(change)]);
+    },
+    /** Pretends an agent finished on `artifact` of `change` without writing it. */
+    stopJob: (change: string, artifact: string) => {
+      const job = jobs.find((j) => j.change === change && j.artifact === artifact && j.status === 'running');
+      if (job) job.status = 'succeeded';
     },
     /** Answers every ground-rule question, as if the setup were done. */
     settleGroundRules: () => {

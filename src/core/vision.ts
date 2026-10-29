@@ -210,9 +210,17 @@ export function buildInterviewParts(projectRoot: string, session: VisionSession)
         empty: '(no questions asked yet)',
       },
     ],
-    task: INTERVIEW_TASK,
+    // A detailed description still leaves things only the developer can
+    // say: the interview always asks at least once, and they can skip it.
+    task: session.turns.length === 0 ? `${INTERVIEW_TASK}\n\n${FIRST_TURN}` : INTERVIEW_TASK,
   };
 }
+
+const FIRST_TURN = [
+  'No question has been asked yet: enough must be false this turn. Ask the one',
+  'question whose answer most shapes the first usable version — a rule, a',
+  'number or a boundary the description leaves open.',
+].join('\n');
 
 /**
  * A first message that only sets the scene (like the advisor's): sent before
@@ -509,4 +517,48 @@ export class VisionInterviewer {
     saveSession(this.projectRoot, session);
     return result;
   }
+}
+
+/**
+ * The slice at `index` with the next one folded into it: one change that
+ * does both. Whatever depended on the folded slice depends on the merged one.
+ */
+export function mergeSlices(slices: ProposedSlice[], index: number): ProposedSlice[] {
+  const into = slices[index];
+  const from = slices[index + 1];
+  if (!into || !from) return slices;
+  const summary = [into.summary, from.summary].map((s) => s.trim().replace(/[.;]\s*$/, '')).filter(Boolean).join('; ');
+  const merged: ProposedSlice = {
+    ...into,
+    title: `${into.title} + ${from.title.charAt(0).toLowerCase()}${from.title.slice(1)}`,
+    summary: summary ? `${summary}.` : '',
+    why: into.why,
+    dependsOn: [...new Set([...into.dependsOn, ...from.dependsOn])].filter((d) => d !== into.id && d !== from.id),
+  };
+  return [...slices.slice(0, index), merged, ...slices.slice(index + 2)].map((s) =>
+    s.id === merged.id ? s : { ...s, dependsOn: [...new Set(s.dependsOn.map((d) => (d === from.id ? into.id : d)))] },
+  );
+}
+
+/**
+ * The slice at `index` moved one place up (-1) or down (+1); an error when
+ * that would build a slice before one it depends on.
+ */
+export function moveSlice(
+  slices: ProposedSlice[],
+  index: number,
+  delta: -1 | 1,
+): { ok: true; slices: ProposedSlice[] } | { ok: false; reason: string } {
+  const other = index + delta;
+  const a = slices[index];
+  const b = slices[other];
+  if (!a || !b) return { ok: false, reason: delta < 0 ? 'Already first' : 'Already last' };
+  const [early, late] = delta < 0 ? [b, a] : [a, b];
+  if (late.dependsOn.includes(early.id)) {
+    return { ok: false, reason: `“${late.title}” builds on “${early.title}”, so it has to come after it` };
+  }
+  const next = [...slices];
+  next[index] = b;
+  next[other] = a;
+  return { ok: true, slices: next };
 }

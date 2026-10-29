@@ -1,7 +1,7 @@
 /**
  * Installs spec-tacular's schema into an OpenSpec project.
  *
- * The schema is what enforces `proposal → specs → design → tasks` for anyone
+ * The schema is what enforces `proposal → specs → risks → design → tasks` for anyone
  * running plain `openspec`, without spec-tacular in the loop
  * (docs/problem-analysis.md §1). Its one substantive change from `spec-driven`
  * is `design.requires: [specs]` instead of `[proposal]`; the rest is
@@ -11,11 +11,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { VERIFICATION_STARTER, verificationPath } from './evidence.ts';
 import { scaffoldFoundation } from './foundation.ts';
-import { SCHEMA_FILES } from './schema-files.ts';
+import { DEFECT_SCHEMA_FILES, SCHEMA_FILES } from './schema-files.ts';
 import { isGreenfield } from './vision.ts';
 
 export const SCHEMA_NAME = 'spec-tacular';
+/** The schema a defect change uses instead (`spec-tacular defect`). */
+export const DEFECT_SCHEMA_NAME = 'spec-tacular-defect';
 
 /**
  * The schema's source directory in this repository. Installs are written from
@@ -37,8 +40,8 @@ export interface InitResult {
   notes: string[];
 }
 
-function writeSchema(to: string, written: string[]): void {
-  for (const [file, content] of Object.entries(SCHEMA_FILES)) {
+function writeSchema(to: string, written: string[], files: Readonly<Record<string, string>> = SCHEMA_FILES): void {
+  for (const [file, content] of Object.entries(files)) {
     const dst = join(to, file);
     mkdirSync(dirname(dst), { recursive: true });
     writeFileSync(dst, content, 'utf8');
@@ -85,6 +88,8 @@ export function initProject(
 
   const files: string[] = [];
   writeSchema(schemaDir, files);
+  // Next to it, the schema a defect change is created with.
+  writeSchema(join(projectRoot, 'openspec', 'schemas', DEFECT_SCHEMA_NAME), [], DEFECT_SCHEMA_FILES);
 
   const notes: string[] = [];
   if (replaced) {
@@ -103,6 +108,14 @@ export function initProject(
         ' left as TBD on purpose: a default nobody chose is indistinguishable' +
         ' from a decision.',
     );
+  }
+
+  // How to run the tests, for evidence: a starter, all comments, so it is
+  // there to fill in rather than to be written from the README.
+  const verification = verificationPath(projectRoot);
+  if (!existsSync(verification)) {
+    mkdirSync(dirname(verification), { recursive: true });
+    writeFileSync(verification, VERIFICATION_STARTER, 'utf8');
   }
 
   const configUpdated = options.setSchema === false ? false : setProjectSchema(projectRoot, SCHEMA_NAME);

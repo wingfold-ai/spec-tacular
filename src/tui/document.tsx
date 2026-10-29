@@ -12,7 +12,7 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
-import { editLine, isCancel, isEditor, isEnter, isRevise } from './input.ts';
+import { createLine, isCancel, isEditor, isEnter, isRevise, withCursor } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { Button, KeyBar, Panel } from './widgets.tsx';
 
@@ -29,6 +29,9 @@ export interface DocumentViewProps {
   actions: DocumentAction[];
   /** Redrafts with the developer's feedback, when that is possible. */
   onRedraft?: (feedback: string) => void;
+  /** The redraft button, and the question over its input, where they differ. */
+  redraftLabel?: string;
+  redraftPrompt?: string;
   onClose: () => void;
 }
 
@@ -38,7 +41,7 @@ interface Line {
   bold?: boolean;
 }
 
-/** Just enough Markdown to read comfortably: headings, lists, comments. */
+/** Just enough Markdown to read comfortably: headings, lists, quotes, comments. */
 function render(content: string, width: number): Line[] {
   const out: Line[] = [];
   let fence = false;
@@ -64,6 +67,14 @@ function render(content: string, width: number): Line[] {
       });
       continue;
     }
+    // Quoted text — a requirement shown as written — set off by a bar.
+    const quote = /^>\s?(.*)$/.exec(raw);
+    if (quote) {
+      const body = quote[1]!;
+      const fg = /^#{1,6}\s/.test(body) ? THEME.accent2 : THEME.text;
+      for (const l of wrap(body.replace(/^#{1,6}\s+/, '') || ' ', width - 2)) out.push({ text: `│ ${l}`, fg });
+      continue;
+    }
     const bullet = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(raw);
     if (bullet) {
       const indent = bullet[1]!.length;
@@ -84,10 +95,17 @@ export function DocumentView(props: DocumentViewProps) {
   const contentWidth = useContentWidth();
   const [top, setTop] = createSignal(0);
   const [focus, setFocus] = createSignal(0);
-  const [feedback, setFeedback] = createSignal<string | null>(null);
+  /** Whether the developer is typing feedback for a redraft, and what. */
+  const [asking, setAsking] = createSignal(false);
+  const line = createLine();
+  const feedback = () => (asking() ? line.text() : null);
+  const setFeedback = (text: string | null) => {
+    line.set(text ?? '');
+    setAsking(text !== null);
+  };
   const copy = useCopy();
 
-  usePasteInto(() => (feedback() !== null ? (text: string) => setFeedback((f) => (f ?? '') + text) : null));
+  usePasteInto(() => (feedback() !== null ? (text: string) => line.insert(text) : null));
 
   const lines = createMemo(() => render(props.content, Math.max(contentWidth() - 8, 30)));
   /** Rows available for the text, after the header, buttons and key bar. */
@@ -98,7 +116,7 @@ export function DocumentView(props: DocumentViewProps) {
   const buttons = createMemo(() => [
     ...props.actions,
     ...(props.onRedraft
-      ? [{ label: '↻ Redraft with feedback', key: 'r', run: () => setFeedback('') }]
+      ? [{ label: props.redraftLabel ?? '↻ Redraft with feedback', key: 'r', run: () => setFeedback('') }]
       : []),
     { label: '← Back', key: 'q', run: props.onClose },
   ]);
@@ -112,10 +130,7 @@ export function DocumentView(props: DocumentViewProps) {
           setFeedback(null);
           props.onRedraft?.(draft.trim());
         }
-      } else {
-        const next = editLine(draft, key);
-        if (next !== null) setFeedback(next);
-      }
+      } else line.edit(key);
       return;
     }
 
@@ -156,9 +171,9 @@ export function DocumentView(props: DocumentViewProps) {
           </For>
         </box>
         <Show when={feedback() !== null}>
-          <text style={{ fg: THEME.warn }}>What should change? The agent redrafts it with this.</text>
+          <text style={{ fg: THEME.warn }}>{props.redraftPrompt ?? 'What should change? The agent redrafts it with this.'}</text>
           <box style={{ border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1 }}>
-            <text style={{ fg: THEME.text }}>{`› ${feedback()}▏`}</text>
+            <text style={{ fg: THEME.text }}>{`› ${withCursor(line.text(), line.cursor())}`}</text>
           </box>
         </Show>
         <box style={{ flexDirection: 'row' }}>

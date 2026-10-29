@@ -10,6 +10,11 @@
  */
 
 import { isRequirement } from '../core/requirements.ts';
+import { isRisk, missingFields } from '../core/risks.ts';
+import { lacksNegativeScenario, NO_NEGATIVE } from '../core/evidence.ts';
+import { formalLines } from '../core/formal/formal.ts';
+import { reviewView } from '../core/formal/view.ts';
+import type { Glossary } from '../core/formal/glossary.ts';
 import type { ReviewedItem } from '../core/review.ts';
 import type { ReviewSummary } from '../core/review.ts';
 
@@ -20,14 +25,26 @@ export interface RequirementViewOptions {
   summary: ReviewSummary;
   /** Terminal width to wrap prose at. */
   width?: number;
+  /** The glossary its formal form is checked against, when there is one. */
+  glossary?: Glossary | null;
 }
 
 const DEFAULT_WIDTH = 76;
 
-/** Greedy word wrap. Long unbreakable tokens (URLs, paths) overflow rather than split. */
+/**
+ * Greedy word wrap. Long unbreakable tokens (URLs, paths) overflow rather than
+ * split, and fenced blocks are kept as written: a formula broken across lines
+ * is not the formula that was accepted.
+ */
 export function wrap(text: string, width: number): string[] {
   const out: string[] = [];
+  let fenced = false;
   for (const paragraph of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(paragraph)) fenced = !fenced;
+    if (fenced || /^\s*(```|~~~)/.test(paragraph)) {
+      out.push(paragraph);
+      continue;
+    }
     if (paragraph.trim() === '') {
       out.push('');
       continue;
@@ -77,7 +94,11 @@ export function renderRequirement(
 
   const noun = isRequirement(r)
     ? 'requirement'
-    : r.capability.startsWith('foundation/')
+    : isRisk(r)
+      ? 'risk'
+      : r.capability.startsWith('harness/')
+        ? 'binding'
+        : r.capability.startsWith('foundation/')
       ? 'ground rule'
       : 'decision';
   const operation = isRequirement(r) ? `   [${r.operation}]` : '';
@@ -99,6 +120,25 @@ export function renderRequirement(
     // is a defect in the spec, not merely an empty section. A decision has
     // none by nature, so the warning is scoped to requirements.
     out.push('  (no scenarios — every requirement must have at least one)');
+    out.push('');
+  }
+
+  const missing = isRisk(r) ? missingFields(r) : [];
+  if (missing.length > 0) {
+    out.push(`  ! missing ${missing.join(', ')} — without them this risk cannot be guarded`);
+    out.push('');
+  }
+
+  if (lacksNegativeScenario(r)) {
+    out.push(`  ! ${NO_NEGATIVE}`);
+    out.push('');
+  }
+
+  // The formula read back, and what is wrong with it — or, without one, the
+  // words formalizing would have to pin down.
+  const formal = reviewView(r, opts.glossary ?? null);
+  if (formal) {
+    out.push(...formalLines(formal).map((l) => l.text));
     out.push('');
   }
 

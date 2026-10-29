@@ -25,13 +25,20 @@ import {
   SECTION_HEADER,
 } from './markdown.ts';
 import { hashBlock, parseSpecFile, slugify, type Requirement, type ReviewItem } from './requirements.ts';
+import { isRisk, parseRisks, RISK_HEADER, type Risk } from './risks.ts';
 import { setState, type ChangeReview } from './review.ts';
 import { currentItem, moveTo, refresh, type ReviewSession } from './session.ts';
 import { REVISION_RULES } from './revision.ts';
 
+/**
+ * What can be revised in conversation: a requirement, or a risk — each a
+ * block in its file that is written back in place.
+ */
+export type Revisable = Requirement | Risk;
+
 /** What the agent is shown besides the requirement itself. */
 export interface RefineContext {
-  requirement: Requirement;
+  requirement: Revisable;
   /** The spec file the requirement is in, as it is now. */
   spec: string;
   /** The change's proposal, when it has one: why the requirement exists. */
@@ -63,7 +70,7 @@ export const REFINE_SCHEMA = {
 } as const;
 
 /** Reads what the agent needs to know besides the requirement. */
-export function refineContext(changeRoot: string, requirement: Requirement): RefineContext {
+export function refineContext(changeRoot: string, requirement: Revisable): RefineContext {
   const spec = readFileSync(requirement.file, 'utf8');
   const proposalPath = join(changeRoot, 'proposal.md');
   const proposal = existsSync(proposalPath) ? readFileSync(proposalPath, 'utf8') : undefined;
@@ -111,6 +118,8 @@ export function buildRefineParts(
   instruction: string,
 ): PromptParts {
   const req = context.requirement;
+  const risk = isRisk(req);
+  const noun = risk ? 'risk' : 'requirement';
   const current = readBlockFrom(context.spec, req);
   const sections: ContextSection[] = [];
   if (context.proposal) {
@@ -118,11 +127,11 @@ export function buildRefineParts(
   }
   sections.push(
     {
-      heading: `The spec it is part of (capability ${req.capability})`,
+      heading: risk ? "The change's risks document it is part of" : `The spec it is part of (capability ${req.capability})`,
       lines: normalizeContent(context.spec).split('\n').map((l) => l.trimEnd()),
     },
     {
-      heading: 'The requirement, as it is in the file now',
+      heading: `The ${noun}, as it is in the file now`,
       lines: (current.ok ? current.block : '').split('\n'),
     },
     {
@@ -132,15 +141,17 @@ export function buildRefineParts(
     },
   );
 
-  const from = turns.length > 0 ? `your latest proposal, [${turns.length}]` : 'the requirement as it is in the file now';
+  const from = turns.length > 0 ? `your latest proposal, [${turns.length}]` : `the ${noun} as it is in the file now`;
   const task = [
-    `The developer asks you to change the requirement "${req.name}":`,
+    `The developer asks you to change the ${noun} "${req.name}":`,
     '',
     instruction.trim(),
     '',
-    `Start from ${from}. Return the whole revised requirement in \`requirement\`,`,
+    `Start from ${from}. Return the whole revised ${noun} in \`requirement\`,`,
     'and in `summary` one short sentence saying what you changed.',
   ].join('\n');
+
+  if (risk) return { preamble: PREAMBLE.replace(/requirement/g, 'risk'), context: sections, task, rules: RISK_RULES };
 
   const rules = [
     'Format — the requirement is written back into the spec file exactly as you',
@@ -159,6 +170,20 @@ export function buildRefineParts(
 
   return { preamble: PREAMBLE, context: sections, task, rules };
 }
+
+const RISK_RULES = [
+  'Format — the risk is written back into the risks document exactly as you',
+  'return it:',
+  '- It starts with `### Risk: <name>` and is one risk: no other heading.',
+  '- Then one bullet per field, `- **Field:** text`, in this order: Hazard,',
+  '  Affects, Boundary, Causes (optional), Severity (high | medium | low),',
+  '  Guard, Check — or, for a risk knowingly left unmitigated, Unmitigated',
+  '  (why) instead of Guard and Check — and Known hazard (HAZ-NNNN) when it',
+  '  is an instance of a register entry.',
+  '- A formal form, when it has one, stays in its ```formal fence after the',
+  '  fields; keep it consistent with what you changed.',
+  '- No code fence around it and no commentary inside it.',
+].join('\n');
 
 /** Strips a code fence the agent put around the whole answer anyway. */
 function unfence(text: string): string {
@@ -186,6 +211,7 @@ export function parseRefinement(raw: unknown, context: RefineContext): Refinemen
 
   const lines = block.split('\n');
   const mask = buildCodeFenceMask(lines);
+  if (isRisk(context.requirement)) return parseRiskRefinement(block, lines, mask, record, context.requirement, context.spec);
   if (!REQUIREMENT_HEADER.test(lines[0]!)) {
     throw new Error('The revision does not start with "### Requirement:"');
   }
@@ -216,6 +242,36 @@ export function parseRefinement(raw: unknown, context: RefineContext): Refinemen
   if (revised.scenarios.length === 0) warnings.push('It has no scenario left');
   if (revised.hash === original.hash) warnings.push('Nothing changed');
 
+  const summary = typeof record['summary'] === 'string' ? record['summary'].trim() : '';
+  return { block, summary, warnings };
+}
+
+function parseRiskRefinement(
+  block: string,
+  lines: string[],
+  mask: boolean[],
+  record: Record<string, unknown>,
+  original: Risk,
+  document: string,
+): Refinement {
+  if (!RISK_HEADER.test(lines[0]!)) throw new Error('The revision does not start with "### Risk:"');
+  if (lines.some((l, i) => i > 0 && !mask[i] && /^#{1,3}\s/.test(l))) {
+    throw new Error('The revision has a heading in it, which would split the risks document');
+  }
+  const parsed = parseRisks(block, original.file);
+  if (parsed.length !== 1) throw new Error(`The revision holds ${parsed.length} risks, not one`);
+  const revised = parsed[0]!;
+  const warnings: string[] = [];
+  if (revised.name !== original.name) {
+    const others = parseRisks(document, original.file).filter((r) => r.line !== original.line);
+    if (others.some((r) => slugify(r.name) === slugify(revised.name))) {
+      throw new Error(`The revision renames it to "${revised.name}", which another risk already uses`);
+    }
+    warnings.push(`Renames it to "${revised.name}" — the design and the tasks refer to it by name`);
+  }
+  if (!revised.hazard) warnings.push('It has no Hazard left');
+  if (!revised.unmitigated && (!revised.guard || !revised.check)) warnings.push('It has no Guard and Check, and is not marked Unmitigated');
+  if (revised.hash === original.hash) warnings.push('Nothing changed');
   const summary = typeof record['summary'] === 'string' ? record['summary'].trim() : '';
   return { block, summary, warnings };
 }
@@ -251,7 +307,7 @@ interface Located {
  * Located in the raw text, not a normalized copy, because it is written back
  * into the raw text: normalizing would rewrite a CRLF file's every line.
  */
-function locate(content: string, requirement: Requirement): Located | { reason: string } {
+function locate(content: string, requirement: Revisable): Located | { reason: string } {
   // A lone CR is a line break to the parser but not to `split('\n')`, so
   // the line numbers would disagree.
   if (/\r(?!\n)/.test(content)) return { reason: 'the spec file uses bare CR line endings; edit it with E' };
@@ -260,27 +316,31 @@ function locate(content: string, requirement: Requirement): Located | { reason: 
   const normalized = lines.map((_, i) => plain(i));
   const mask = buildCodeFenceMask(normalized);
 
+  const risk = isRisk(requirement);
   const start = requirement.line - 1;
   const header = normalized[start];
-  const match = header === undefined || mask[start] ? null : REQUIREMENT_HEADER.exec(header);
-  if (!match?.[1] || normalizeRequirementName(match[1]) !== requirement.name) {
-    return { reason: 'the spec file changed since it was read — reopen the review' };
+  const match = header === undefined || mask[start] ? null : (risk ? RISK_HEADER : REQUIREMENT_HEADER).exec(header);
+  const name = risk ? match?.[1]?.trim() : match?.[1] && normalizeRequirementName(match[1]);
+  if (!name || name !== requirement.name) {
+    return { reason: `the ${risk ? 'risks document' : 'spec file'} changed since it was read — reopen the review` };
   }
+  // A risk ends at any heading of its level or above, as risks.ts reads it.
+  const ends = (line: string) => (risk ? /^#{1,3}\s/.test(line) : REQUIREMENT_HEADER.test(line) || SECTION_HEADER.test(line));
   let end = normalized.length;
   for (let i = start + 1; i < normalized.length; i++) {
-    if (!mask[i] && (REQUIREMENT_HEADER.test(normalized[i]!) || SECTION_HEADER.test(normalized[i]!))) {
+    if (!mask[i] && ends(normalized[i]!)) {
       end = i;
       break;
     }
   }
   if (hashBlock(normalized.slice(start, end).join('\n')) !== requirement.hash) {
-    return { reason: 'the requirement changed since it was read — reopen the review' };
+    return { reason: `the ${risk ? 'risk' : 'requirement'} changed since it was read — reopen the review` };
   }
   while (end > start + 1 && normalized[end - 1]!.trim() === '') end--;
   return { lines, crlf: content.includes('\r\n'), start, end };
 }
 
-function readBlockFrom(content: string, requirement: Requirement): { ok: true; block: string } | { ok: false; reason: string } {
+function readBlockFrom(content: string, requirement: Revisable): { ok: true; block: string } | { ok: false; reason: string } {
   const found = locate(content, requirement);
   if ('reason' in found) return { ok: false, reason: found.reason };
   return {
@@ -290,7 +350,7 @@ function readBlockFrom(content: string, requirement: Requirement): { ok: true; b
 }
 
 /** A requirement's Markdown, as it is in its file. */
-export function readRequirementBlock(requirement: Requirement): { ok: true; block: string } | { ok: false; reason: string } {
+export function readRequirementBlock(requirement: Revisable): { ok: true; block: string } | { ok: false; reason: string } {
   try {
     return readBlockFrom(readFileSync(requirement.file, 'utf8'), requirement);
   } catch (err) {
@@ -304,7 +364,7 @@ export function readRequirementBlock(requirement: Requirement): { ok: true; bloc
  * The blank lines after the block, and everything before and after it, are
  * kept byte for byte — line endings included.
  */
-export function writeRequirementBlock(requirement: Requirement, block: string): { ok: true } | { ok: false; reason: string } {
+export function writeRequirementBlock(requirement: Revisable, block: string): { ok: true } | { ok: false; reason: string } {
   let content: string;
   try {
     content = readFileSync(requirement.file, 'utf8');
@@ -370,7 +430,7 @@ export function remapAfterRevision(
  */
 export function acceptRefinement(
   session: ReviewSession,
-  requirement: Requirement,
+  requirement: Revisable,
   block: string,
   reparse: () => ReviewItem[],
 ): { ok: true; session: ReviewSession } | { ok: false; reason: string } {

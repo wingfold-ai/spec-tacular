@@ -16,7 +16,7 @@ const TASKS = `## 1. Setup
 
 describe('task progress', () => {
   test('counts ticked, deferred and open tasks', () => {
-    expect(taskProgress(TASKS)).toEqual({ total: 4, done: 2, deferred: 1, open: 1, applied: false });
+    expect(taskProgress(TASKS)).toEqual({ total: 4, done: 2, deferred: 1, open: 1, unproven: 0, applied: false });
   });
 
   test('applied once all but the deferred ones are ticked', () => {
@@ -63,7 +63,7 @@ describe('implementing', () => {
     const p = planned({ tasks: taskProgress(TASKS.replace('- [ ] 1.2', '- [x] 1.2')) });
     expect(p.apply.state).toBe('accepted');
     const step = nextStep(p, true);
-    expect(step.actions).toEqual([]);
+    expect(step.actions).toEqual(['archive']);
     expect(step.text).toContain('Implemented: all 3 tasks are ticked off.');
     expect(step.text).toContain('1 deferred until it is deployed');
   });

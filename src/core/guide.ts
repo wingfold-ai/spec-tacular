@@ -9,7 +9,7 @@
  * Derivation only. Nothing here acts; the TUI offers the action it names.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isOpenSpecProject, openSpecToolsInstalled } from '../adapter/openspec.ts';
 import { foundationExists, isDeferred, isUnanswered, loadFoundation } from './foundation.ts';
@@ -102,19 +102,29 @@ export function projectStage(projectRoot: string, changeCount: number, driver?: 
   const answered = items.filter((i) => !isUnanswered(i)).length;
   if (answered < items.length) return { kind: 'foundation', answered, total: items.length };
 
-  return changeCount > 0 ? { kind: 'working' } : { kind: 'no-changes' };
+  // A project that has archived a change is past its first one.
+  return changeCount > 0 || hasArchived(projectRoot) ? { kind: 'working' } : { kind: 'no-changes' };
+}
+
+function hasArchived(projectRoot: string): boolean {
+  try {
+    return readdirSync(join(projectRoot, 'openspec', 'changes', 'archive')).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** What a change's next step is, and which keys act on it. */
 export interface NextStep {
   text: string;
   /** Keys the overview offers for this step. */
-  actions: ('review' | 'read' | 'draft' | 'write' | 'foundation')[];
+  actions: ('review' | 'read' | 'draft' | 'write' | 'foundation' | 'archive')[];
   /** The artifact `read`/`draft`/`write` act on. */
   artifact?: string;
 }
 
 function reviewNoun(stage: Stage): string {
+  if (stage.id === 'risks') return 'risk';
   return stage.id === 'design' ? 'decision' : 'requirement';
 }
 
@@ -129,11 +139,28 @@ export function nextStep(pipeline: ChangePipeline, foundationSettled: boolean): 
 
   if (!stage) {
     const tasks = pipeline.apply.tasks;
+    // Its class asks a person to read what the agent wrote: ticking the last
+    // task off is not the end of implementing, accepting the diff is.
+    const diff = pipeline.apply.signoff;
+    if (tasks?.applied && diff && !diff.accepted) {
+      return {
+        text: diff.drifted
+          ? 'The code changed since you accepted it. Read the implementation diff again, then accept it.'
+          : `All tasks are ticked off. This is a ${pipeline.consequence?.class ?? 'critical'} change: ` +
+            'read the code the agent wrote, then accept it.',
+        actions: ['read'],
+        artifact: 'implementation',
+      };
+    }
     if (pipeline.apply.state === 'accepted' && tasks) {
       const later = tasks.deferred > 0
         ? ` ${tasks.deferred} deferred until it is deployed — they are checked when it is archived.`
         : '';
-      return { text: `Implemented: all ${tasks.done} tasks are ticked off.${later}`, actions: [] };
+      return {
+        text: `Implemented: all ${tasks.done} tasks are ticked off.${later} ` +
+          'Archive it to make its requirements the baseline the next change builds on.',
+        actions: ['archive'],
+      };
     }
     if (pipeline.apply.state === 'ready' && pipeline.waitingOn.length > 0) {
       return {

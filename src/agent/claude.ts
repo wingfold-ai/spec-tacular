@@ -347,12 +347,40 @@ export class StreamJsonSession implements StructuredSession {
   }
 }
 
+/** What an implementing session may run without asking: it only looks. */
+const READ_ONLY_TOOLS = [
+  'Bash(openspec list:*)',
+  'Bash(openspec show:*)',
+  'Bash(openspec status:*)',
+  'Bash(openspec validate:*)',
+  'Bash(ls:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git log:*)',
+];
+
 export const claudeDriver: AgentDriver = {
   id: 'claude',
   label: 'Claude Code',
 
-  interactive(prompt: string): AgentCommand {
-    return { command: 'claude', args: [prompt] };
+  interactive(prompt: string, allow: string[] = [], sessionId?: string): AgentCommand {
+    // Editing the project's files is the job, and its tests and checks are
+    // how it shows the job done: asking about each is noise that hides the
+    // prompts worth reading — anything outside the project, installing.
+    return {
+      command: 'claude',
+      // The prompt first: --allowedTools takes every argument after it.
+      args: [
+        prompt,
+        ...(sessionId ? ['--session-id', sessionId] : []),
+        '--permission-mode',
+        'acceptEdits',
+        '--allowedTools',
+        ...READ_ONLY_TOOLS,
+        ...allow.map((prefix) => `Bash(${prefix}:*)`),
+        ...extraArgs(),
+      ],
+    };
   },
 
   build(request: AgentRequest): AgentCommand {
@@ -472,6 +500,30 @@ export const claudeDriver: AgentDriver = {
 
     // System init, user echoes, partial chunks: protocol noise.
     return null;
+  },
+
+  finalMessage(lines: string[]): string | null {
+    let last: string | null = null;
+    for (const line of lines) {
+      let event: StreamEvent;
+      try {
+        event = JSON.parse(line.trim()) as StreamEvent;
+      } catch {
+        continue;
+      }
+      // The result repeats the last reply in full; the reply itself is the
+      // fallback for a run cut off before it.
+      if (event.type === 'result' && typeof event.result === 'string' && event.result.trim()) {
+        last = event.result.trim();
+      } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+        const text = event.message.content
+          .filter((p) => p.type === 'text' && p.text?.trim())
+          .map((p) => p.text!.trim())
+          .join('\n\n');
+        if (text) last = text;
+      }
+    }
+    return last;
   },
 
   parseUsage(line: string): Usage | null {

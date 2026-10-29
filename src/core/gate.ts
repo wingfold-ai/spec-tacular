@@ -40,14 +40,15 @@ function describeBlocker(stage: Stage): string | null {
   if (!review) return null; // written, and nothing reviewable to check
   if (review.complete) return null;
 
+  const noun = stage.id === 'risks' ? 'risks' : 'requirements';
   if (review.total === 0) {
-    return `${stage.id} has no requirements that could be reviewed`;
+    return `${stage.id} has no ${noun} that could be reviewed`;
   }
   const parts: string[] = [];
   if (review.pending > 0) parts.push(`${review.pending} pending`);
   if (review.rejected > 0) parts.push(`${review.rejected} rejected`);
   const detail = parts.length > 0 ? parts.join(' and ') : 'unreviewed';
-  return `${stage.id}: ${detail} of ${review.total} requirements`;
+  return `${stage.id}: ${detail} of ${review.total} ${noun}`;
 }
 
 /** A prerequisite that drifted after this artifact was written against it. */
@@ -87,6 +88,41 @@ export function gateFor(pipeline: ChangePipeline, artifactId: string): GateDecis
     if (stale) warnings.push(stale);
   }
 
+  // Risks the design left unanswered, or the tasks left unguarded, are named
+  // where they matter next. Warnings, not blockers: the name is a cheap link
+  // to check, and a design can answer a risk in words the check misses.
+  const risks = pipeline.risks;
+  if (risks && artifactId === 'tasks' && risks.unanswered.length > 0) {
+    warnings.push(`the design does not answer ${listOf(risks.unanswered, 'risk')}`);
+  }
+  if (risks && artifactId === 'apply' && risks.unguarded.length > 0) {
+    warnings.push(`no guard task for ${listOf(risks.unguarded, 'risk')}`);
+  }
+
+  // The consequence class's rules, where they bear on this artifact. A
+  // waived rule is named where it would have applied, with the reason.
+  const consequence = pipeline.consequence;
+  if (consequence && artifactId === 'design' && risks && risks.unmitigatedHigh.length > 0) {
+    const waived = consequence.waived.find((t) => t.rule === 'guard-high-risks');
+    if (consequence.rules.includes('guard-high-risks')) {
+      blockers.push(
+        `a ${consequence.class} change cannot leave a high-severity risk unmitigated: ` +
+          risks.unmitigatedHigh.map((n) => `"${n}"`).join(', '),
+      );
+    } else if (waived) {
+      warnings.push(`high-severity risks left unmitigated, allowed for ${waived.class} because: ${waived.reason}`);
+    }
+  }
+
+  // A formula that cannot be read, names what the glossary does not define,
+  // or contradicts another, is not something to design against — the same
+  // reason contradicting requirements stop the design agent.
+  const formal = pipeline.formal;
+  if (formal && artifactId === 'design') {
+    for (const e of formal.errors) blockers.push(`the formal form of "${e.item}": ${e.problems.join('; ')}`);
+    for (const c of formal.conflicts) blockers.push(c);
+  }
+
   // A slice builds on the ones before it: what it does may be specified
   // ahead, but how it is built waits until their code exists.
   if (buildsOnCode(pipeline, artifactId)) {
@@ -102,6 +138,108 @@ export function gateFor(pipeline: ChangePipeline, artifactId: string): GateDecis
     };
   }
   return { allowed: true, warnings };
+}
+
+/** `risk "A"` or `2 risks: "A", "B"`. */
+function listOf(names: string[], noun: string): string {
+  const quoted = names.map((n) => `"${n}"`).join(', ');
+  return names.length === 1 ? `${noun} ${quoted}` : `${names.length} ${noun}s: ${quoted}`;
+}
+
+/**
+ * What is open about a change's risks and boundary, worded for the overview.
+ *
+ * Each line names the risks or files it is about: "2 risks unguarded" sends
+ * someone looking, "no guard task for risk X" tells them where.
+ */
+export function riskWarnings(pipeline: ChangePipeline): string[] {
+  const risks = pipeline.risks;
+  if (!risks) return [];
+  const out: string[] = [];
+  if (risks.unanswered.length > 0) out.push(`the design does not answer ${listOf(risks.unanswered, 'risk')}`);
+  if (risks.unguarded.length > 0) out.push(`no guard task for ${listOf(risks.unguarded, 'risk')}`);
+  if (risks.unproven.length > 0) {
+    out.push(`guard ticked off without being shown red: ${risks.unproven.map((n) => `"${n}"`).join(', ')}`);
+  }
+  const outside = risks.outsideBoundary;
+  if (outside.length > 0) {
+    const shown = outside.slice(0, 3).join(', ');
+    const more = outside.length > 3 ? ` and ${outside.length - 3} more` : '';
+    out.push(`${outside.length} file${outside.length === 1 ? '' : 's'} changed outside the boundary: ${shown}${more}`);
+  }
+  return out;
+}
+
+/**
+ * What the change's consequence class says about it, worded for the overview:
+ * its class, when it reached into a higher one than it declared, and what is
+ * still owed — or waived — for it.
+ */
+export function classWarnings(pipeline: ChangePipeline): string[] {
+  const c = pipeline.consequence;
+  if (!c?.class) return [];
+  const out: string[] = [];
+  if (c.raisedBy.length > 0) {
+    const shown = c.raisedBy.slice(0, 3).join(', ');
+    const more = c.raisedBy.length > 3 ? ` and ${c.raisedBy.length - 3} more` : '';
+    out.push(`declared ${c.declared ?? 'unclassified'}, but changed ${c.class} code: ${shown}${more}`);
+  }
+  const diff = pipeline.apply.signoff;
+  if (c.rules.includes('diff-review') && pipeline.apply.tasks?.applied && diff && !diff.accepted) {
+    out.push(
+      diff.drifted
+        ? `the code changed since you accepted it — read the implementation diff again (${c.class})`
+        : `a ${c.class} change: read and accept the implementation diff before it counts as implemented`,
+    );
+  }
+  for (const t of c.waived) out.push(`waived for ${t.class}: ${t.rule} — ${t.reason}`);
+  return out;
+}
+
+/**
+ * What the change still owes in evidence, once implementing has started.
+ * Before then every item is missing by definition, and saying so would be
+ * noise.
+ */
+export function evidenceWarnings(pipeline: ChangePipeline): string[] {
+  const e = pipeline.evidence;
+  if (!e || e.complete || e.total === 0 || (pipeline.apply.tasks?.done ?? 0) === 0) return [];
+  const parts: string[] = [];
+  if (e.failing) parts.push(`${e.failing} failing`);
+  if (e.stale) parts.push(`${e.stale} stale`);
+  if (e.unconnected) parts.push(`${e.unconnected} through a harness not shown to reach the code`);
+  if (e.missing) parts.push(`${e.missing} without evidence`);
+  return [`evidence ${e.passing + e.excepted}/${e.total}: ${parts.join(', ')} — see \`spec-tacular evidence ${pipeline.name}\``];
+}
+
+/** For a defect change: what does not fit whose bug the report says it is. */
+export function defectWarnings(pipeline: ChangePipeline): string[] {
+  return pipeline.defect?.warnings ?? [];
+}
+
+/** What is wrong with the change's formal forms; it holds up the design. */
+export function formalWarnings(pipeline: ChangePipeline): string[] {
+  const f = pipeline.formal;
+  if (!f) return [];
+  const stale = f.staleMatrices ?? [];
+  return [
+    ...f.errors.map((e) => `formal form of "${e.item}": ${e.problems.join('; ')}`),
+    ...f.conflicts,
+    ...(stale.length > 0
+      ? [`test matrix missing or out of date for ${stale.map((n) => `"${n}"`).join(', ')} — run \`spec-tacular matrix ${pipeline.name} --write\``]
+      : []),
+    // Said once implementing has started; before, every harness is missing.
+    ...((pipeline.apply.tasks?.done ?? 0) > 0
+      ? (f.unconnected ?? []).map((u) => `harness for ${u.component} not connected: ${u.because[0]}${u.because.length > 1 ? ` (+${u.because.length - 1} more)` : ''}`)
+      : []),
+  ];
+}
+
+/** A defect change's kind, for its label: `defect · requirement bug`. */
+export function defectLabel(pipeline: ChangePipeline): string | null {
+  const d = pipeline.defect;
+  if (!d) return null;
+  return d.report.fault ? `defect · ${d.report.fault === 'gap' ? 'gap' : `${d.report.fault} bug`}` : 'defect';
 }
 
 /**

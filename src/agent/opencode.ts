@@ -389,6 +389,26 @@ export const opencodeDriver: AgentDriver = {
     }
   },
 
+  finalMessage(lines: string[]): string | null {
+    // The text of the last step: what it said after its last tool call.
+    let step: string[] = [];
+    let last: string[] = [];
+    for (const line of lines) {
+      let event: RunEvent;
+      try {
+        event = JSON.parse(line.trim()) as RunEvent;
+      } catch {
+        continue;
+      }
+      if (event.type === 'step_start') step = [];
+      if (event.type === 'text' && event.part?.text?.trim()) {
+        step.push(event.part.text.trim());
+        last = step;
+      }
+    }
+    return last.length > 0 ? last.join('\n\n') : null;
+  },
+
   parseUsage(line: string): Usage | null {
     let event: RunEvent;
     try {

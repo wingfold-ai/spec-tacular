@@ -132,10 +132,11 @@ export class OpenSpecAdapter {
     return stdout + stderr;
   }
 
-  /** Creates a change. Its schema comes from the project's config. */
-  async newChange(name: string, description?: string): Promise<void> {
+  /** Creates a change. Its schema comes from the project's config, unless named. */
+  async newChange(name: string, description?: string, schema?: string): Promise<void> {
     const args = ['new', 'change', name];
     if (description) args.push('--description', description);
+    if (schema) args.push('--schema', schema);
     await this.run(args);
   }
 

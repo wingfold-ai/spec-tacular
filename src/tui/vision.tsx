@@ -12,12 +12,12 @@ import { useKeyboard } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
 import { optionAnswer, type AdviceOption } from '../core/advisor.ts';
 import type { RefineTurn, Refinement } from '../core/refine.ts';
-import type { ProposedSlice, VisionSession } from '../core/vision.ts';
+import { mergeSlices, moveSlice, type ProposedSlice, type VisionSession } from '../core/vision.ts';
 import { RevisePanel } from './revise.tsx';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
-import { editLine, isCancel, isEnter } from './input.ts';
+import { createLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
 import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
 
@@ -62,11 +62,23 @@ type Row = { kind: 'skip' } | { kind: 'option'; option: AdviceOption } | { kind:
 
 export function VisionScreen(props: VisionScreenProps) {
   const contentWidth = useContentWidth();
-  const [draft, setDraft] = createSignal(props.session?.vision ? '' : (props.seed ?? '').trim());
+  const line = createLine(props.session?.vision ? '' : (props.seed ?? '').trim());
+  const draft = line.text;
+  const setDraft = line.set;
   const [sel, setSel] = createSignal(0);
   /** Slices the developer dropped from the proposal, by id. */
   const [dropped, setDropped] = createSignal<Set<string>>(new Set());
   const [sliceSel, setSliceSel] = createSignal(0);
+  /** The proposed slices as the developer reshapes them: merged, moved, reworded. */
+  const [slices, setSlices] = createSignal<ProposedSlice[]>(props.session?.slices ?? []);
+  createEffect(on(() => props.session?.slices, (proposed) => {
+    setSlices(proposed ?? []);
+    setDropped(new Set<string>());
+    setSliceSel(0);
+  }));
+  /** The slice whose description is being rewritten, by position. */
+  const [rewording, setRewording] = createSignal<number | null>(null);
+  const sliceLine = createLine('');
   const [hint, setHint] = createSignal<string | null>(null);
   /** An answer being revised with the agent: the panel has the screen. */
   const [revising, setRevising] = createSignal<{ ask: string; current: string } | null>(null);
@@ -96,7 +108,7 @@ export function VisionScreen(props: VisionScreenProps) {
     setSel(rec >= 0 ? rec : rows().length - 1);
   }));
 
-  const kept = createMemo(() => (props.session?.slices ?? []).filter((s) => !dropped().has(s.id)));
+  const kept = createMemo(() => slices().filter((s) => !dropped().has(s.id)));
 
   /** The highlighted option's whole answer, when there is more of it than its row shows. */
   const preview = createMemo(() => {
@@ -123,7 +135,7 @@ export function VisionScreen(props: VisionScreenProps) {
 
   // Pasting a long description is the natural way to hand over a vision.
   usePasteInto(
-    () => (!props.busy && !revising() && (phase() === 'describe' || phase() === 'interview') ? (text: string) => setDraft((d) => d + text) : null),
+    () => (!props.busy && !revising() && (phase() === 'describe' || phase() === 'interview') ? (text: string) => line.insert(text) : null),
     { multiline: true },
   );
 
@@ -153,14 +165,46 @@ export function VisionScreen(props: VisionScreenProps) {
       if (isCancel(key)) props.onClose();
       return;
     }
+    if (phase() === 'review' && rewording() !== null) {
+      const at = rewording()!;
+      if (isEnter(key)) {
+        const text = sliceLine.text().trim();
+        if (text) setSlices((all) => all.map((sl, i) => (i === at ? { ...sl, summary: text } : sl)));
+        setRewording(null);
+        return;
+      }
+      if (isCancel(key)) return setRewording(null);
+      sliceLine.edit(key);
+      return;
+    }
+
     if (isCancel(key)) return props.onClose();
 
     if (phase() === 'review') {
-      const n = props.session!.slices.length;
-      if (key.name === 'up' || key.name === 'k') setSliceSel((s) => (s - 1 + n) % n);
-      else if (key.name === 'down' || key.name === 'j') setSliceSel((s) => (s + 1) % n);
-      else if (key.name === 'space' || key.name === 'x') {
-        const id = props.session!.slices[sliceSel()]!.id;
+      const n = slices().length;
+      const move = key.name === 'up' || key.name === 'k' ? -1 : key.name === 'down' || key.name === 'j' ? 1 : 0;
+      setHint(null);
+      if (move !== 0 && key.shift) {
+        const moved = moveSlice(slices(), sliceSel(), move);
+        if (!moved.ok) return setHint(moved.reason);
+        setSlices(moved.slices);
+        setSliceSel((s) => s + move);
+      } else if (move !== 0) setSliceSel((s) => (s + move + n) % n);
+      else if (key.name === 'm') {
+        if (sliceSel() >= n - 1) return setHint('The last slice has nothing after it to merge — move to the one above');
+        const absorbed = slices()[sliceSel() + 1]!;
+        setSlices((all) => mergeSlices(all, sliceSel()));
+        setDropped((d) => {
+          const next = new Set(d);
+          next.delete(absorbed.id);
+          return next;
+        });
+        setHint(`Merged “${absorbed.title}” into this slice`);
+      } else if (key.name === 'e') {
+        sliceLine.set(slices()[sliceSel()]!.summary);
+        setRewording(sliceSel());
+      } else if (key.name === 'space' || key.name === 'x') {
+        const id = slices()[sliceSel()]!.id;
         setDropped((d) => {
           const next = new Set(d);
           if (next.has(id)) next.delete(id);
@@ -193,9 +237,7 @@ export function VisionScreen(props: VisionScreenProps) {
       return;
     }
 
-    const next = editLine(draft(), key);
-    if (next !== null) {
-      setDraft(next);
+    if (line.edit(key)) {
       setHint(null);
       if (phase() === 'interview') setSel(rows().length - 1);
     }
@@ -218,7 +260,16 @@ export function VisionScreen(props: VisionScreenProps) {
           ['ctrl+c', 'back'],
         ];
       case 'review':
-        return [['↑↓', 'move'], ['space', 'keep / drop'], ['enter', 'create the roadmap'], ['ctrl+c', 'back']];
+        if (rewording() !== null) return [['enter', 'save the description'], ['esc', 'leave it as it was']];
+        return [
+          ['↑↓', 'select'],
+          ['space', 'keep / drop'],
+          ['m', 'merge with the next'],
+          ['shift+↑↓', 'reorder'],
+          ['e', 'reword'],
+          ['enter', 'create the roadmap'],
+          ['ctrl+c', 'back'],
+        ];
       default:
         return [['enter', 'ask again'], ['ctrl+c', 'back']];
     }
@@ -238,7 +289,7 @@ export function VisionScreen(props: VisionScreenProps) {
     >
       <Show when={draft()} fallback={<text style={{ fg: THEME.dim }}>{`› ▏${p.placeholder}`}</text>}>
         {/* Inside a panel and this box: two borders and two paddings a side. */}
-        <DraftText draft={draft()} width={contentWidth() - 8} maxLines={8} />
+        <DraftText draft={draft()} cursor={line.cursor()} width={contentWidth() - 8} maxLines={8} />
       </Show>
     </box>
   );
@@ -403,7 +454,7 @@ export function VisionScreen(props: VisionScreenProps) {
           <text>{' '}</text>
           {/* Scrolls rather than squeezing slices into each other when there are many */}
           <ScrollArea follow={`slice-${sliceSel()}`}>
-          <For each={props.session!.slices}>
+          <For each={slices()}>
             {(slice, i) => (
               <box
                 id={`slice-${i()}`}
@@ -420,11 +471,35 @@ export function VisionScreen(props: VisionScreenProps) {
                   </text>
                   <text style={{ fg: THEME.dim }}>{`   ${slice.id}`}</text>
                 </box>
-                <text style={{ fg: dropped().has(slice.id) ? THEME.dim : THEME.text }}>
-                  {`       ${clip(slice.summary, width() - 8)}`}
-                </text>
-                <Show when={slice.why}>
-                  <text style={{ fg: THEME.dim }}>{`       ${clip(slice.why, width() - 8)}`}</text>
+                {/* The selected slice in full; the others a line each */}
+                <Show
+                  when={sliceSel() === i()}
+                  fallback={
+                    <>
+                      <text style={{ fg: dropped().has(slice.id) ? THEME.dim : THEME.text }}>
+                        {`       ${clip(slice.summary, width() - 8)}`}
+                      </text>
+                      <Show when={slice.why}>
+                        <text style={{ fg: THEME.dim }}>{`       ${clip(slice.why, width() - 8)}`}</text>
+                      </Show>
+                    </>
+                  }
+                >
+                  <Show
+                    when={rewording() === i()}
+                    fallback={
+                      <For each={wrap(slice.summary, width() - 8)}>
+                        {(l) => <text style={{ fg: dropped().has(slice.id) ? THEME.dim : THEME.text }}>{`       ${l}`}</text>}
+                      </For>
+                    }
+                  >
+                    <box style={{ marginLeft: 7, border: true, borderStyle: 'rounded', borderColor: THEME.accent, paddingLeft: 1, paddingRight: 1 }}>
+                      <DraftText draft={sliceLine.text()} cursor={sliceLine.cursor()} width={width() - 14} maxLines={6} />
+                    </box>
+                  </Show>
+                  <For each={slice.why ? wrap(slice.why, width() - 8) : []}>
+                    {(l) => <text style={{ fg: THEME.dim }}>{`       ${l}`}</text>}
+                  </For>
                 </Show>
               </box>
             )}

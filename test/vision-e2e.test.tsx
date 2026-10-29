@@ -353,7 +353,7 @@ describe('an agent’s draft', () => {
     expect(ui.frame()).toContain('Clinics double-book rooms.');
     expect(ui.frame()).toContain('• Add booking');
     // The same keys as everywhere: a accepts, r revises, ctrl+e edits.
-    expect(ui.frame()).toContain('✓ Accept — draft the specs  a');
+    expect(ui.frame()).toContain('✓ Accept it  a');
     expect(ui.frame()).toContain('↻ Redraft with feedback  r');
     expect(ui.frame()).toContain('✎ Edit it  ctrl+e');
 
@@ -365,7 +365,7 @@ describe('an agent’s draft', () => {
     expect(ui.dispatched.at(-1)).toBe('book-rooms/proposal (mention cancellations)');
   });
 
-  test('accepting it ticks it off and drafts the next artifact, and v reads it again', async () => {
+  test('accepting it ticks it off and waits to draft the next artifact, and v reads it again', async () => {
     const ui = await mountApp({ baseline: true });
     mounted.push(ui);
     await ui.press('return');
@@ -379,11 +379,18 @@ describe('an agent’s draft', () => {
     ui.finishJob('book-rooms', 'proposal', '# Proposal\n\nBody.\n');
     await ui.settle(2300);
 
-    await ui.press('a'); // ✓ Accept — draft the specs
+    await ui.press('a'); // ✓ Accept it
+    await ui.settle(50);
+    // Accepting drafts nothing by itself: the specs wait for the developer.
+    expect(ui.dispatched).toEqual(['book-rooms/proposal']);
+    expect(ui.frame()).toContain('✓ proposal');
+    expect(ui.frame()).toContain('accepted — w drafts the specs');
+    expect(ui.frame()).toContain('✦ Let an agent draft');
+
+    await ui.press('w');
     await ui.settle(50);
     expect(ui.dispatched.at(-1)).toBe('book-rooms/specs');
     expect(ui.frame()).toContain('Claude Code is drafting the specs');
-    expect(ui.frame()).toContain('✓ proposal');
 
     // Read again once accepted, there is nothing left to accept.
     await ui.press('v');
@@ -391,6 +398,22 @@ describe('an agent’s draft', () => {
     expect(ui.frame()).toContain('book-rooms › proposal');
     expect(ui.frame()).not.toContain('✓ Accept');
     expect(ui.frame()).toContain('✓ Looks good');
+  });
+
+  test('typed text can be corrected anywhere, not only at its end', async () => {
+    const ui = await mountApp({ baseline: true });
+    mounted.push(ui);
+    await ui.press('return');
+    ui.settleGroundRules();
+    await ui.press('c', { ctrl: true });
+    await ui.press('n');
+    await ui.type('Let users book');
+    for (let i = 0; i < 4; i++) await ui.press('left');
+    await ui.type('rooms ');
+    expect(ui.frame()).toContain('› Let users rooms ▏book');
+    await ui.press('end');
+    await ui.press('backspace');
+    expect(ui.frame()).toContain('› Let users rooms boo▏');
   });
 
   test('a proposal left unread is the next step, and blocks the specs', async () => {
@@ -416,6 +439,6 @@ describe('an agent’s draft', () => {
     expect(ui.dispatched).toEqual(['book-rooms/proposal']);
 
     await ui.press('return'); // ▶ Read the proposal
-    expect(ui.frame()).toContain('✓ Accept — draft the specs');
+    expect(ui.frame()).toContain('✓ Accept it');
   });
 });

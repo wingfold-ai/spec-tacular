@@ -15,11 +15,15 @@ import { currentItem, position } from '../core/session.ts';
 import { renderCounts, renderProgressBar, wrap } from '../render/requirement.ts';
 import type { Finding } from '../core/concreteness.ts';
 import { exampleValues, renderExamples } from '../core/examples.ts';
-import { isRequirement, type Requirement, type ReviewItem } from '../core/requirements.ts';
+import { isRequirement, type ReviewItem } from '../core/requirements.ts';
+import type { Revisable } from '../core/refine.ts';
+import { isRisk, missingFields } from '../core/risks.ts';
+import { lacksNegativeScenario, NO_NEGATIVE } from '../core/evidence.ts';
+import { formalLines, type FormalView } from '../core/formal/formal.ts';
 import type { RefineTurn, Refinement } from '../core/refine.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
-import { isCancel, isEditor, isPrintable, isRevise } from './input.ts';
+import { createLine, isCancel, isEditor, isRevise, withCursor } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { RevisePanel } from './revise.tsx';
 
@@ -31,10 +35,10 @@ export interface RefinePort {
   /** Why there is no agent to revise with, or null when there is one. */
   unavailable: string | null;
   /** The requirement's Markdown as it is in its file. */
-  current: (item: Requirement) => { ok: true; block: string } | { ok: false; reason: string };
-  propose: (item: Requirement, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
+  current: (item: Revisable) => { ok: true; block: string } | { ok: false; reason: string };
+  propose: (item: Revisable, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
   /** Writes an accepted revision; the session then shows it pending again. */
-  accept: (item: Requirement, block: string) => { ok: true } | { ok: false; reason: string };
+  accept: (item: Revisable, block: string) => { ok: true } | { ok: false; reason: string };
 }
 
 /** An item as Markdown, for copying when its file cannot be read. */
@@ -52,6 +56,8 @@ export interface ReviewScreenProps {
   session: ReviewSession;
   /** Concreteness findings for the current requirement. Advisory, never blocking. */
   findings?: Finding[];
+  /** Its formal form read back and checked, or the words it leaves vague. */
+  formal?: FormalView | null;
   /** Marks a flagged value as an illustration rather than a contract. */
   onMarkExample?: (finding: Finding) => void;
   /** Lifts the current design decision to a project-wide ADR. */
@@ -80,11 +86,13 @@ const STATE_COLOR: Record<string, string> = {
 export function ReviewScreen(props: ReviewScreenProps) {
   const contentWidth = useContentWidth();
   const [prompt, setPrompt] = createSignal<PromptKind | null>(null);
-  const [draft, setDraft] = createSignal('');
+  const line = createLine();
+  const draft = line.text;
+  const setDraft = line.set;
   const [help, setHelp] = createSignal(false);
   const [marking, setMarking] = createSignal(false);
   /** The requirement being revised with the agent, and its text when opened. */
-  const [revising, setRevising] = createSignal<{ item: Requirement; current: string } | null>(null);
+  const [revising, setRevising] = createSignal<{ item: Revisable; current: string } | null>(null);
   /** One line about what just happened, until the next key. */
   const [flash, setFlash] = createSignal<string | null>(null);
   const copy = useCopy();
@@ -104,6 +112,15 @@ export function ReviewScreen(props: ReviewScreenProps) {
     const current = item();
     return current && isRequirement(current.item) ? current.item.scenarios : [];
   });
+  const missing = createMemo(() => {
+    const current = item();
+    return current && isRisk(current.item) ? missingFields(current.item) : [];
+  });
+  // Advisory, like the concreteness findings: the words are a heuristic.
+  const noNegative = createMemo(() => {
+    const current = item();
+    return current ? lacksNegativeScenario(current.item) : false;
+  });
   const operation = createMemo(() => {
     const current = item();
     return current && isRequirement(current.item) ? `   [${current.item.operation}]` : '';
@@ -114,6 +131,8 @@ export function ReviewScreen(props: ReviewScreenProps) {
     const current = item();
     if (!current) return 'item';
     if (isRequirement(current.item)) return 'requirement';
+    if (isRisk(current.item)) return 'risk';
+    if (current.item.capability.startsWith('harness/')) return 'binding';
     return current.item.capability.startsWith('foundation/') ? 'ground rule' : 'decision';
   });
   const label = createMemo(() => {
@@ -143,8 +162,8 @@ export function ReviewScreen(props: ReviewScreenProps) {
     const current = item();
     if (!current) return;
     if (!props.refine) return props.onEdit();
-    if (!isRequirement(current.item)) {
-      setFlash('Only requirements are revised with the AI — E opens this in your editor');
+    if (!isRequirement(current.item) && !isRisk(current.item)) {
+      setFlash(`A ${noun()} is not revised with the AI — E opens it in your editor`);
       return;
     }
     const text = props.refine.current(current.item);
@@ -158,11 +177,11 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const copyCurrent = () => {
     const current = item();
     if (!current) return;
-    const fromFile = isRequirement(current.item) ? props.refine?.current(current.item) : undefined;
+    const fromFile = isRequirement(current.item) || isRisk(current.item) ? props.refine?.current(current.item) : undefined;
     copy(fromFile?.ok ? fromFile.block : asMarkdown(current.item), `the ${noun()}`);
   };
 
-  usePasteInto(() => (prompt() ? (text: string) => setDraft((d) => d + text) : null));
+  usePasteInto(() => (prompt() ? (text: string) => line.insert(text) : null));
 
   useKeyboard((key) => {
     // The revise panel has the keyboard while it is open.
@@ -183,8 +202,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
     if (prompt()) {
       if (isCancel(key)) closePrompt();
       else if (key.name === 'return' || key.name === 'enter') submitPrompt();
-      else if (key.name === 'backspace') setDraft((d) => d.slice(0, -1));
-      else if (isPrintable(key)) setDraft((d) => d + key.sequence);
+      else line.edit(key);
       return;
     }
 
@@ -296,6 +314,29 @@ export function ReviewScreen(props: ReviewScreenProps) {
             )}
           </For>
 
+          {/* A risk without its guard cannot be followed through */}
+          <Show when={missing().length > 0}>
+            <text style={{ fg: THEME.warn }}>
+              {`  ! missing ${missing().join(', ')} — without them this risk cannot be guarded`}
+            </text>
+            <text>{' '}</text>
+          </Show>
+          <Show when={noNegative()}>
+            <text style={{ fg: THEME.warn }}>{`  ! ${NO_NEGATIVE}`}</text>
+            <text>{' '}</text>
+          </Show>
+
+          <Show when={props.formal}>
+            <For each={formalLines(props.formal!)}>
+              {(line) => (
+                <text style={{ fg: line.tone === 'warn' ? THEME.warn : line.tone === 'dim' ? THEME.dim : THEME.text }}>
+                  {line.text}
+                </text>
+              )}
+            </For>
+            <text>{' '}</text>
+          </Show>
+
           <Show when={props.promotable}>
             <text style={{ fg: THEME.accent2 }}>
               {'  this decision is marked global — p promotes it to a project-wide ADR'}
@@ -346,7 +387,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
           <text style={{ fg: THEME.warn }}>
             {prompt() === 'reject' ? 'Why reject? ' : 'What would verify it? '}
           </text>
-          <text style={{ fg: THEME.text }}>{`${draft()}_`}</text>
+          <text style={{ fg: THEME.text }}>{withCursor(draft(), line.cursor(), '_')}</text>
           <text style={{ fg: THEME.dim }}>
             {prompt() === 'defer' && draft().trim() === ''
               ? '   (a reason is required)   esc cancel'

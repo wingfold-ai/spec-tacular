@@ -36,8 +36,14 @@ export interface AgentDriver {
    * developer's terminal, it asks for permissions exactly as it would if they
    * had started it themselves. How implementing runs — optional: without it
    * a driver implements in the background like it drafts.
+   *
+   * `allow` is the shell commands implementing needs — the project's tests,
+   * spec-tacular's checks — as command prefixes (`bun test`); a driver that
+   * can pre-approve them does, so the developer is asked about the rest.
+   * `sessionId`, when the driver can name its session, is what it is
+   * started as — so what it used can be read afterwards.
    */
-  interactive?(prompt: string): AgentCommand;
+  interactive?(prompt: string, allow?: string[], sessionId?: string): AgentCommand;
   /**
    * Renders one line of the agent's stdout for display, or null to drop it.
    * Agents emit a lot of protocol noise that nobody wants tailing past.
@@ -48,6 +54,12 @@ export interface AgentDriver {
    * a driver that does not report cost simply shows no cost for its jobs.
    */
   parseUsage?(line: string): Usage | null;
+  /**
+   * What the agent said last, from a finished job's output lines — the reason
+   * it gives when it stops without writing anything. Optional: without it
+   * such a stop is still reported, just without its reason.
+   */
+  finalMessage?(lines: string[]): string | null;
   /**
    * The model this driver uses for a kind of request, when one is configured.
    * `undefined` means the agent's own default, which only it knows.

@@ -7,9 +7,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { OpenSpecChangeStatus } from '../adapter/types.ts';
 import { loadDecisions } from './decisions.ts';
+import { loadRisks, type Risk } from './risks.ts';
+import { changeMatrices } from './formal/files.ts';
+import { formalOf } from './formal/formal.ts';
+import { loadGlossary } from './formal/glossary.ts';
+import { componentHarness, harnessItems } from './formal/harness.ts';
 import {
   capabilityFromPath,
   parseSpecFile,
+  slugify,
   type Rename,
   type Requirement,
   type ReviewItem,
@@ -26,8 +32,12 @@ import {
 
 export interface ChangeReviewQueue {
   change: string;
+  /** Everything to review, in order: requirements, then risks, then decisions. */
   requirements: ReviewedItem[];
+  /** The spec requirements alone: what the specs stage is accepted on. */
   summary: ReviewSummary;
+  /** The risks alone, once written: what the risks stage is accepted on. */
+  risks?: ReviewSummary;
   review: ChangeReview;
   /** Spec files that could not be read, so the UI can say so rather than under-report. */
   unreadable: string[];
@@ -53,6 +63,36 @@ export function specsArtifactId(status: OpenSpecChangeStatus): string | null {
 export function specFilesOf(status: OpenSpecChangeStatus): string[] {
   const id = specsArtifactId(status);
   return id ? (status.artifactPaths[id]?.existingOutputPaths ?? []) : [];
+}
+
+/** The id of the artifact that writes `risks.md`, when the schema has one. */
+export function risksArtifactId(status: OpenSpecChangeStatus): string | null {
+  for (const artifact of status.artifacts) {
+    const path = status.artifactPaths[artifact.id]?.outputPath ?? '';
+    if (/(^|\/)risks\.md$/.test(path.replace(/\\/g, '/'))) return artifact.id;
+  }
+  return null;
+}
+
+/** The harness items of the components a change's matrices run through. */
+export function changeHarnessItems(projectRoot: string, change: string, items: ReviewItem[]): ReviewItem[] {
+  if (!items.some((i) => formalOf(i))) return [];
+  const glossary = loadGlossary(projectRoot);
+  const components = [...new Set(changeMatrices(projectRoot, change, items, glossary).map((e) => slugify(e.matrix.component)))];
+  return components.flatMap((c) => harnessItems(projectRoot, componentHarness(projectRoot, c), glossary));
+}
+
+/** Whether the change has written its risks. */
+export function risksWritten(status: OpenSpecChangeStatus): boolean {
+  const id = risksArtifactId(status);
+  return id !== null && status.artifacts.some((a) => a.id === id && a.status === 'done');
+}
+
+/** The change's risks, once written. */
+export function loadChangeRisks(status: OpenSpecChangeStatus): Risk[] {
+  const id = risksArtifactId(status);
+  if (!id || !risksWritten(status)) return [];
+  return loadRisks(status.artifactPaths[id]?.resolvedOutputPath ?? join(status.changeRoot, 'risks.md'));
 }
 
 /** The change's design decisions, reviewable like any other item. */
@@ -84,18 +124,27 @@ export function loadChangeReview(
     renames.push(...parsed.renames);
   }
 
-  // Decisions come after requirements: a design is written against settled
-  // specs, so reviewing it first would be reviewing it out of order.
-  const items: ReviewItem[] = [...requirements];
+  // The queue follows the pipeline: risks are written against settled specs,
+  // and a design against both, so reviewing either first is out of order.
+  const risks = loadChangeRisks(status);
+  const items: ReviewItem[] = [...requirements, ...risks];
   if (options.includeDecisions) items.push(...loadChangeDecisions(status));
+  // Last, once implementing has written them: how each variable of the
+  // change's matrices is bound to the code — reviewed like any other item.
+  items.push(...changeHarnessItems(projectRoot, status.changeName, [...requirements, ...risks]));
 
   const review = applyRenames(loadReview(projectRoot, status.changeName), renames);
   const reviewed = reconcile(items, review);
+  const ofKind = (capability: (c: string) => boolean) =>
+    summarize(reviewed.filter((r) => capability(r.item.capability)));
 
   return {
     change: status.changeName,
     requirements: reviewed,
-    summary: summarize(reviewed),
+    summary: ofKind((c) => c !== 'risks' && c !== 'design' && !c.startsWith('harness/')),
+    // Written but unreadable still gets a summary — an empty one, which is
+    // never complete — so the stage says so instead of waving it through.
+    ...(risksWritten(status) ? { risks: ofKind((c) => c === 'risks') } : {}),
     review,
     unreadable,
   };
