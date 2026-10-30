@@ -1,17 +1,9 @@
 #!/bin/sh
-# A wrapper around the real `claude`, for evaluations. Headless calls
-# (`claude -p …`, spec-tacular's drafting agents and advisor) pass through
-# untouched. An interactive session — implementing — gets file edits and a
-# short list of safe commands approved up front; anything else still asks,
-# and the evaluating agent answers in that session's terminal like a person.
+# A wrapper around the real `claude`, for evaluations: every call passes
+# through untouched — headless ones (`claude -p …`, spec-tacular's drafting
+# agents and advisor) and the interactive implementing session alike. What
+# that session may do without asking is spec-tacular's own choice, part of
+# what is evaluated; the evaluating agent answers the rest in that session's
+# terminal like a person. It exists so that a run names the binary it uses.
 real=${EVAL_REAL_CLAUDE:?set EVAL_REAL_CLAUDE to the real claude binary}
-for arg in "$@"; do
-  case "$arg" in
-    -p|--print) exec "$real" "$@" ;;
-  esac
-done
-exec "$real" --permission-mode acceptEdits \
-  --allowedTools 'Bash(bun:*)' 'Bash(bunx:*)' 'Bash(npm:*)' 'Bash(npx:*)' 'Bash(git status:*)' 'Bash(git diff:*)' \
-  'Bash(git add:*)' 'Bash(git log:*)' 'Bash(openspec:*)' 'Bash(spec-tacular:*)' 'Bash(ls:*)' 'Bash(cat:*)' \
-  'Bash(mkdir:*)' 'Bash(node:*)' 'Bash(tsc:*)' \
-  -- "$@"
+exec "$real" "$@"

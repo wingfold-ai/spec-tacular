@@ -16,8 +16,9 @@ evidence, in the same shape every time so versions can be compared.
   screen, send keys. No tmux, no desktop.
 - `tools/shims/` — what makes a run self-contained: a `tmux` stand-in so
   spec-tacular's implementing session opens in another headless terminal
-  rather than a desktop window, and a `claude` wrapper that pre-approves
-  edits and a short list of safe commands for that session.
+  rather than a desktop window, and a `claude` wrapper that passes every
+  call through — what the implementing session may do without asking is the
+  version under test's own choice.
 - `setup.sh` — prepares a run directory: an empty git repository with
   OpenSpec initialised, the environment, and a `start.sh`.
 

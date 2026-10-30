@@ -54,9 +54,11 @@ minutes). Do not mash keys while it works.
 **Implementing** opens the coding agent in another headless terminal: after
 you start it, `cat <run>/sessions/implementing.log` names it
 (`<run>/sessions/impl-1`). Drive it with the same `tui` commands. It is an
-interactive Claude Code session: file edits and common commands are
-pre-approved; for anything else it asks, and you answer as Sam would
+interactive Claude Code session with the permissions the version under
+test gives it; for anything else it asks, and you answer as Sam would
 (approve what stays inside the project and serves the task, deny the rest).
+Count the prompts you answer, approved and denied: how many it asks is part
+of the evaluation.
 It can take a long time — check every minute or two with
 `tui screen … --settle 20`, and do not interrupt it unless it is stuck. When
 it says it is done, return to the TUI.
