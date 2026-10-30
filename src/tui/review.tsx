@@ -9,7 +9,8 @@
  */
 
 import { useKeyboard } from '@opentui/solid';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
+import type { ScrollBoxRenderable } from '@opentui/core';
 import type { ReviewSession } from '../core/session.ts';
 import { currentItem, position } from '../core/session.ts';
 import { renderCounts, renderProgressBar, wrap } from '../render/requirement.ts';
@@ -26,6 +27,7 @@ import { useContentWidth } from './layout.ts';
 import { createLine, isCancel, isEditor, isRevise, withCursor } from './input.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
 import { RevisePanel } from './revise.tsx';
+import { ScrollArea } from './widgets.tsx';
 
 /** A decision that needs a typed reason before it is recorded. */
 export type PromptKind = 'reject' | 'defer';
@@ -95,6 +97,22 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [revising, setRevising] = createSignal<{ item: Revisable; current: string } | null>(null);
   /** One line about what just happened, until the next key. */
   const [flash, setFlash] = createSignal<string | null>(null);
+  /**
+   * A card is taller than the screen once a formula brings its reading,
+   * matrices and flags: it scrolls, and the long parts fold to a line each
+   * until asked for.
+   */
+  const [showMatrices, setShowMatrices] = createSignal(false);
+  const [showFlags, setShowFlags] = createSignal(false);
+  let card: ScrollBoxRenderable | undefined;
+  createEffect(on(() => item()?.item.id, () => {
+    setShowMatrices(false);
+    setShowFlags(false);
+    card?.scrollTo(0);
+  }, { defer: true }));
+  /** More flags than this fold to one line. */
+  const FLAGS_SHOWN = 3;
+  const hasMatrix = createMemo(() => (props.formal?.matrix?.length ?? 0) > 0);
   const copy = useCopy();
 
   const item = createMemo(() => currentItem(props.session));
@@ -229,7 +247,22 @@ export function ReviewScreen(props: ReviewScreenProps) {
       case 'e': return openRevise();
       case 'y': return copyCurrent();
       case 'm':
-        if (findings().length > 0) setMarking(true);
+        if (findings().length > 0) {
+          setShowFlags(true);
+          setMarking(true);
+        }
+        return;
+      case 't':
+        if (hasMatrix()) setShowMatrices((v) => !v);
+        return;
+      case 'f':
+        if (findings().length > FLAGS_SHOWN) setShowFlags((v) => !v);
+        return;
+      case 'pagedown': case 'space':
+        card?.scrollBy(Math.max((card?.height ?? 10) - 2, 1));
+        return;
+      case 'pageup':
+        card?.scrollBy(-Math.max((card?.height ?? 10) - 2, 1));
         return;
       case 'p':
         // `p` only promotes on a design decision; on a requirement it is
@@ -284,6 +317,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
           </text>
           <text>{' '}</text>
 
+          <ScrollArea onReady={(box) => (card = box)}>
           {/* The requirement */}
           <text style={{ fg: THEME.accent }}>
             {`${label()}: ${item()!.item.name}`}
@@ -327,7 +361,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
           </Show>
 
           <Show when={props.formal}>
-            <For each={formalLines(props.formal!)}>
+            <For each={formalLines(props.formal!, { foldMatrices: !showMatrices() })}>
               {(line) => (
                 <text style={{ fg: line.tone === 'warn' ? THEME.warn : line.tone === 'dim' ? THEME.dim : THEME.text }}>
                   {line.text}
@@ -346,13 +380,18 @@ export function ReviewScreen(props: ReviewScreenProps) {
 
           {/* Advisory only — a finding can never block a stage */}
           <Show when={findings().length > 0}>
-            <For each={findings()}>
+            <For each={showFlags() ? findings() : findings().slice(0, FLAGS_SHOWN)}>
               {(finding, i) => (
                 <text style={{ fg: THEME.warn }}>
                   {`  ${i() + 1}. ${finding.question}: ${finding.value}`}
                 </text>
               )}
             </For>
+            <Show when={!showFlags() && findings().length > FLAGS_SHOWN}>
+              <text style={{ fg: THEME.dim }}>
+                {`  … ${findings().length - FLAGS_SHOWN} more specificity flags · f shows them`}
+              </text>
+            </Show>
             <text>{' '}</text>
           </Show>
 
@@ -367,6 +406,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
               {`  ${item()!.state}${item()!.review.note ? ` — ${item()!.review.note}` : ''}`}
             </text>
           </Show>
+          </ScrollArea>
         </box>
         </Show>
       </Show>
@@ -409,6 +449,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
           <text style={{ fg: THEME.text }}>a accept · x reject (asks why) · d defer (asks what would verify it)</text>
           <text style={{ fg: THEME.text }}>r revise with AI: say what should change, see the diff, accept or ask again</text>
           <text style={{ fg: THEME.text }}>E or ctrl+e edit in $EDITOR · y copy it · s skip · n/p move · q back</text>
+          <text style={{ fg: THEME.text }}>pgdn/pgup or the wheel scroll a long card · t shows its matrices · f all specificity flags</text>
           <text style={{ fg: THEME.text }}>drag to select text, ctrl+c copies it · ctrl+v pastes into a prompt · any key closes</text>
         </box>
       </Show>
@@ -420,7 +461,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
               ? 'a accept · r revise with AI · x reject · ctrl+e editor · p promote to ADR · s skip · ? help · q back'
               : findings().length > 0
                 ? 'a accept · r revise with AI · x reject · d defer · ctrl+e editor · m mark example · s skip · ? help · q back'
-                : 'a accept · r revise with AI · x reject · d defer · ctrl+e editor · s skip · n/p move · ? help · q back'}
+                : `a accept · r revise with AI · x reject · d defer · ctrl+e editor${hasMatrix() ? ` · t ${showMatrices() ? 'fold' : 'show'} matrices` : ''} · s skip · n/p move · pgdn scroll · ? help · q back`}
           </text>
         </box>
       </Show>

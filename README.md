@@ -420,7 +420,10 @@ asked: Does a deferred task count as open? — No; deferred tasks are excused.
   *promptly*, *large*, *gracefully*.
 
 A formal form's tests are not chosen; they are generated. `spec-tacular matrix
-<change>` derives its **test matrix**, shown in the review under the formula:
+<change>` derives its **test matrix**, shown in the review under the formula —
+folded to one line per matrix (*4 rows, 2 MC/DC · t shows them*) until `t`
+opens it; a card taller than the screen scrolls (`pgdn`/`pgup`, the wheel),
+and more than three specificity flags fold behind `f`:
 
 ```
 Matrix (3 conditions): alarm = armed & voltage > 9 & voltage < 20

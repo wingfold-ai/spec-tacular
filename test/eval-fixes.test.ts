@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeDriver } from '../src/agent/claude.ts';
+import { lintRequirement, withoutFormal } from '../src/core/concreteness.ts';
 import { changeEvidence, loadVerification, VERIFICATION_STARTER, type EvidenceRecord } from '../src/core/evidence.ts';
 import { formalOf } from '../src/core/formal/formal.ts';
 import { readGlossary } from '../src/core/formal/glossary.ts';
@@ -288,5 +289,18 @@ describe('reopening a review', () => {
     const b = { ...a, id: 'harness/timer#harness', capability: 'harness/timer', name: 'harness code for timer', hash: 'h2' };
     const review = { requirements: { [a.id]: { state: 'accepted' as const, hash: a.hash, reviewedAt: 'x' } }, cursor: a.id } as unknown as Parameters<typeof openSession>[2];
     expect(currentItem(openSession('c', [a, b], review))!.item.id).toBe('harness/timer#harness');
+  });
+});
+
+describe('the specificity lint', () => {
+  test('leaves a formula\'s glossary names alone, and keeps every other offset', () => {
+    const r = parseSpecFile(
+      '## ADDED Requirements\n\n### Requirement: R\nThe system SHALL save to `entries.json`.\n\n```formal\ndecision: saved = `uses_tick_data` AND file_exists\n```\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n',
+      'timer',
+      'f',
+    ).requirements[0]!;
+    const findings = lintRequirement(r);
+    expect(findings.map((f) => f.value)).toEqual(['entries.json']);
+    expect(withoutFormal(r.text)).toHaveLength(r.text.length);
   });
 });

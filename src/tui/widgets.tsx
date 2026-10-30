@@ -62,6 +62,8 @@ export function ScrollArea(props: {
    * and the first thing to give way when there is not room for it all.
    */
   grow?: boolean;
+  /** Hands over the scroll box, for keys that scroll it (pgup/pgdn). */
+  onReady?: (box: ScrollBoxRenderable) => void;
 }) {
   let ref: ScrollBoxRenderable | undefined;
   createEffect(() => {
@@ -70,7 +72,10 @@ export function ScrollArea(props: {
   });
   return (
     <scrollbox
-      ref={(r: ScrollBoxRenderable) => (ref = r)}
+      ref={(r: ScrollBoxRenderable) => {
+        ref = r;
+        props.onReady?.(r);
+      }}
       // Rows around it keep their height: it takes only the room left over,
       // or, sized to its content, gives up room before anything else does.
       style={

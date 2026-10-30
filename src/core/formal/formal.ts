@@ -275,7 +275,11 @@ export function formalView(item: ReviewItem, glossary: Glossary | null): FormalV
 }
 
 /** The view as lines, the same on the review screen and in `--print`. */
-export function formalLines(view: FormalView): { text: string; tone: 'plain' | 'dim' | 'warn' }[] {
+export function formalLines(
+  view: FormalView,
+  /** Each matrix as one line, its warnings kept, until asked for in full. */
+  options: { foldMatrices?: boolean } = {},
+): { text: string; tone: 'plain' | 'dim' | 'warn' }[] {
   const out: { text: string; tone: 'plain' | 'dim' | 'warn' }[] = [];
   if (view.reading.length > 0) {
     out.push({ text: '  Reads as:', tone: 'dim' });
@@ -287,9 +291,40 @@ export function formalLines(view: FormalView): { text: string; tone: 'plain' | '
   if (view.vague.length > 0) {
     out.push({ text: `  ! undefined words: ${view.vague.join(', ')} — how much, how soon, compared to what?`, tone: 'warn' });
   }
-  for (const line of view.matrix ?? []) {
-    out.push({ text: line, tone: line.includes('! ') ? 'warn' : line.includes('×') ? 'dim' : 'plain' });
+  const lines = view.matrix ?? [];
+  if (!options.foldMatrices) {
+    for (const line of lines) out.push({ text: line, tone: line.includes('! ') ? 'warn' : line.includes('×') ? 'dim' : 'plain' });
+    return out;
   }
+  // Folded: a matrix is a header, rows, its warnings and hints.
+  let header: string | null = null;
+  let rows = 0;
+  let mcdc = 0;
+  let impossible = 0;
+  const warnings: string[] = [];
+  const flush = () => {
+    if (header === null) return;
+    const counts = [`${rows} row${rows === 1 ? '' : 's'}`, mcdc ? `${mcdc} MC/DC` : '', impossible ? `${impossible} cannot happen` : '']
+      .filter(Boolean)
+      .join(', ');
+    out.push({ text: `${header.replace(/:\s.*$/, ':')} ${counts} · t shows them`, tone: 'plain' });
+    for (const w of warnings) out.push({ text: w, tone: 'warn' });
+    header = null;
+    rows = mcdc = impossible = 0;
+    warnings.length = 0;
+  };
+  for (const line of lines) {
+    if (/Matrix \(/.test(line)) {
+      flush();
+      header = line;
+    } else if (line.includes('! ')) warnings.push(line);
+    else if (header !== null && !/^\s*·|^\s{4,}\(e\.g\./.test(line) && line.trim() !== '') {
+      rows++;
+      if (line.includes('◆')) mcdc++;
+      if (line.includes('×')) impossible++;
+    }
+  }
+  flush();
   return out;
 }
 
