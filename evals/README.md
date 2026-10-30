@@ -41,7 +41,21 @@ directory, a label and the scenario, e.g.:
 > Use the spec-tacular-evaluator agent: run directory /tmp/eval/run-1,
 > label `fret`, scenario evals/scenarios/time-tracker.md.
 
-It writes `log.md` and `report.md` into the run directory. To compare two
+It writes `log.md` and `report.md` into the run directory, with the run's
+measurements from `tools/metrics.py` (`metrics.json`, `metrics.md`): drafting
+jobs and their cost, the implementing session's tokens from Claude Code's own
+transcripts, what was reviewed, the questions answered and left for later,
+per-phase time spent waiting on an agent, and the produced code's size and
+test results — measured from the run, the same way for every version.
+Scores are levels with stated conditions (the scenario's *Scoring*), and two
+ledgers record whether each upfront question and each assurance step paid
+off.
+
+Run directories live wherever you put them, often a temporary folder. To
+keep a run, copy it into the repository: `evals/tools/keep.sh <run-dir>
+<label>` puts its report, log, measurements and prompts under
+`evals/results/<date>-<label>/`. `evals/tools/compare.py evals/results/*/`
+prints their measurements side by side. To compare two
 versions, prepare a run for each (another binary, another README) and run
 the agent on both — in parallel is fine, each run is isolated.
 

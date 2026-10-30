@@ -1,0 +1,124 @@
+{
+  "label": "eval-fret3",
+  "jobs": [
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T11:06:22.347Z",
+      "minutes": 0.64,
+      "cost_usd": 0.3392598,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T11:07:38.627Z",
+      "minutes": 0.63,
+      "cost_usd": 0.31150760000000005,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "specs",
+      "start": "2026-10-30T11:08:46.185Z",
+      "minutes": 2.35,
+      "cost_usd": 0.6799972,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "risks",
+      "start": "2026-10-30T11:18:38.904Z",
+      "minutes": 1.39,
+      "cost_usd": 0.47887500000000005,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "design",
+      "start": "2026-10-30T11:21:50.039Z",
+      "minutes": 4.02,
+      "cost_usd": 1.0697112,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "tasks",
+      "start": "2026-10-30T11:26:28.046Z",
+      "minutes": 1.87,
+      "cost_usd": 0.8102416000000001,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "tasks",
+      "start": "2026-10-30T11:28:41.068Z",
+      "minutes": 0.27,
+      "cost_usd": 0.333695,
+      "status": "succeeded"
+    }
+  ],
+  "drafting": {
+    "jobs": 7,
+    "by_artifact": {
+      "design": 1,
+      "proposal": 2,
+      "risks": 1,
+      "specs": 1,
+      "tasks": 2
+    },
+    "minutes": 11.2,
+    "cost_usd": 4.02
+  },
+  "tui_sessions": {
+    "requests": 25,
+    "cost_usd": 1.78,
+    "output": 35543,
+    "cache_write": 119063,
+    "cache_read": 394029
+  },
+  "implementing": {
+    "sessions": 1,
+    "minutes": 38.9,
+    "output_tokens": 128487,
+    "cache_read_tokens": 17213994,
+    "cache_write_tokens": 288209,
+    "permission_prompts": 45
+  },
+  "reported_cost_usd": 5.8,
+  "questions": {
+    "interview_asked": 1,
+    "interview_answered": 1,
+    "ground_rules_answered": 12,
+    "ground_rules_left_for_later": 31,
+    "roadmap_slices": 5
+  },
+  "review": {
+    "requirement": {
+      "items": 19,
+      "accepted": 19,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "risk": {
+      "items": 6,
+      "accepted": 6,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "decision": {
+      "items": 16,
+      "accepted": 16,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "harness": {
+      "items": 3,
+      "accepted": 3,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "documents accepted": 3
+  },
+  "phases": [],
+  "code": {
+    "source_lines": 881,
+    "test_lines": 2305,
+    "tests_pass": 189,
+    "tests_fail": 0,
+    "tests_skip": 0
+  }
+}

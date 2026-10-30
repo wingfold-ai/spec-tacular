@@ -4,6 +4,12 @@
 # agents and advisor) and the interactive implementing session alike. What
 # that session may do without asking is spec-tacular's own choice, part of
 # what is evaluated; the evaluating agent answers the rest in that session's
-# terminal like a person. It exists so that a run names the binary it uses.
+# terminal like a person.
+#
+# One thing is dropped: the marker an evaluating Claude Code session passes
+# down, which would turn off the transcripts of every session started here.
+# The transcripts are how evals/tools/metrics.py measures what each session
+# used, the same way for every version under test.
 real=${EVAL_REAL_CLAUDE:?set EVAL_REAL_CLAUDE to the real claude binary}
+unset CLAUDE_CODE_CHILD_SESSION
 exec "$real" "$@"

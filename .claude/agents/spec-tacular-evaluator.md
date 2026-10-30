@@ -85,7 +85,15 @@ with `start.sh` — the project's state is on disk.
   blocker and work around it, saying how.
 - **Judge the code** as the scenario says: run the tests and the app, trace
   requirements to code and tests, read the code.
-- **Write `<run>/report.md`** in the scenario's exact shape. Scores need
+- **Measure as the scenario says**: `phases.tsv` at the end of each phase,
+  every permission prompt in `prompts.log`, and the question and assurance
+  ledgers from your log. Before writing the report, run
+  `python3 -I "$EVAL_TOOLS/metrics.py" <run>` (after `. <run>/env.sh`) and
+  paste its `metrics.md` into the report unchanged.
+- **Score by the scenario's levels**, naming the condition that decided each
+  score. When the evidence sits between two levels, take the lower one.
+- **Write `<run>/report.md`** in the scenario's exact shape. If it cannot be
+  written, say so and put the whole report in your reply instead. Scores need
   evidence; a 5 is earned, not given. Report what happened, including what
   went wrong because of you or the harness rather than the tool — say which.
 
