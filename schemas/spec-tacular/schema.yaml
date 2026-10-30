@@ -125,9 +125,21 @@ artifacts:
         `never`, `within N ticks`, `for N ticks`, `after N ticks`, `until C`,
         `before C`.
       - `asked: <question> — <answer>`: every question formalizing forced you
-        to answer ("promptly" — within how long? "closed" — does deferred
-        count?). Put each answer into the prose as well: the prose is what
-        the specs promise; the formula must say the same, never more.
+        to answer that the brief, the ground rules and the proposal do not
+        already settle ("promptly" — within how long? an empty list — every
+        member, or refused?). Your answer is a proposal: the developer is
+        asked each one in the review, before the requirement, and may answer
+        differently. So propose the answer that refuses or limits rather
+        than the one that silently does more, and never write an `asked:`
+        line for what is already settled. Put each answer into the prose as
+        well: the prose is what the specs promise; the formula must say the
+        same, never more.
+
+      A formal form never replaces scenarios. Every case the formula
+      distinguishes that a reader would ask about — the empty, the missing,
+      the degenerate, each boundary — and every `asked:` answer gets a
+      scenario of its own, as it would without the formula. A requirement
+      with a formula has no fewer scenarios than one without.
 
       Every variable comes from `spec-tacular/glossary.yaml`, with its role
       (mode, input, output, internal), type and meaning; add the ones you
@@ -338,7 +350,11 @@ artifacts:
       lower-cased, with every run of other characters turned into one dash.
       Every requirement verified by test, and every guarded risk, gets one.
 
-      A requirement or guard with a formal form is not tested by hand-picked
+      Formal requirements are verified in one of two ways, and the section
+      "How this change's formal requirements are verified" below says which
+      applies to this change. Without matrices, a formal requirement is
+      tested like any other: a tagged test per scenario. With matrices, a
+      requirement or guard with a formal form is not tested by hand-picked
       cases: its test matrix is generated (`spec-tacular matrix <change>
       --write`) — every row of its truth table or every step sequence, with
       the outcome the formula requires — and run as one test per row. Its
@@ -385,8 +401,10 @@ apply:
     Work through pending tasks, marking each complete as you go.
 
     Stay inside the project. Write and change files with your edit tools,
-    not with shell redirection or heredocs: edits are pre-approved, a shell
-    command that writes files asks the developer every time. Use the
+    not with shell redirection or heredocs. Run the project's tests and
+    checks as plain commands — `bun test <file>`, `bunx tsc --noEmit` — not
+    behind `export`, `&&` chains or `$(…)`: plain ones are pre-approved,
+    and anything else may stop and ask the developer each time. Use the
     toolchain that is installed — if it differs from what the design pins,
     say so and carry on with the installed one rather than installing
     another. Scratch work goes in a directory inside the project, ignored by
@@ -415,7 +433,9 @@ apply:
     `test('[req:export#export-data] exports only the caller\'s rows', …)`.
     A test without its tag is not counted as evidence for anything.
 
-    For a formal requirement, run `spec-tacular matrix <change> --write`: it
+    Where the section "How this change's formal requirements are verified"
+    says they are verified through matrices — and only there — this
+    applies. For a formal requirement, run `spec-tacular matrix <change> --write`: it
     writes the matrix, the table-driven test and the runner. Write only the
     harness it names. A harness drives and observes the real code — it never
     computes the expected answer itself, and it never reads the matrix. Do

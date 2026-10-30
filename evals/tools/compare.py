@@ -41,6 +41,7 @@ ROWS = [
         lambda m: get(m, "questions.ground_rules_left_for_later"),
     ),
     ("Requirements reviewed", lambda m: items(m, "requirement")),
+    ("Questions put to the developer", lambda m: items(m, "question")),
     ("Risks reviewed", lambda m: items(m, "risk")),
     ("Decisions reviewed", lambda m: items(m, "decision")),
     ("Harness bindings reviewed", lambda m: items(m, "harness")),

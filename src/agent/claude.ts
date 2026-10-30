@@ -357,6 +357,13 @@ const READ_ONLY_TOOLS = [
   'Bash(git status:*)',
   'Bash(git diff:*)',
   'Bash(git log:*)',
+  // What a test run's output is read through.
+  'Bash(grep:*)',
+  'Bash(head:*)',
+  'Bash(tail:*)',
+  'Bash(wc:*)',
+  'Bash(sort:*)',
+  'Bash(cat:*)',
 ];
 
 export const claudeDriver: AgentDriver = {
@@ -364,17 +371,17 @@ export const claudeDriver: AgentDriver = {
   label: 'Claude Code',
 
   interactive(prompt: string, allow: string[] = [], sessionId?: string): AgentCommand {
-    // Editing the project's files is the job, and its tests and checks are
-    // how it shows the job done: asking about each is noise that hides the
-    // prompts worth reading — anything outside the project, installing.
+    // The developer's own session, in the permission mode they use — auto,
+    // accept edits, ask — never one chosen for them: overriding auto mode
+    // turned an unattended session into 22 prompts. What is added only
+    // widens it: the project's tests and checks, and commands that only
+    // look, so a test run piped into grep does not ask either.
     return {
       command: 'claude',
       // The prompt first: --allowedTools takes every argument after it.
       args: [
         prompt,
         ...(sessionId ? ['--session-id', sessionId] : []),
-        '--permission-mode',
-        'acceptEdits',
         '--allowedTools',
         ...READ_ONLY_TOOLS,
         ...allow.map((prefix) => `Bash(${prefix}:*)`),

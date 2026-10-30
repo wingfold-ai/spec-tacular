@@ -19,6 +19,7 @@ import { exampleValues, renderExamples } from '../core/examples.ts';
 import { isRequirement, type ReviewItem } from '../core/requirements.ts';
 import type { Revisable } from '../core/refine.ts';
 import { isRisk, missingFields } from '../core/risks.ts';
+import { isQuestion } from '../core/questions.ts';
 import { lacksNegativeScenario, NO_NEGATIVE } from '../core/evidence.ts';
 import { formalLines, type FormalView } from '../core/formal/formal.ts';
 import type { RefineTurn, Refinement } from '../core/refine.ts';
@@ -98,7 +99,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [help, setHelp] = createSignal(false);
   const [marking, setMarking] = createSignal(false);
   /** The requirement being revised with the agent, and its text when opened. */
-  const [revising, setRevising] = createSignal<{ item: Revisable; current: string } | null>(null);
+  const [revising, setRevising] = createSignal<{ item: Revisable; current: string; seed?: string } | null>(null);
   /** One line about what just happened, until the next key. */
   const [flash, setFlash] = createSignal<string | null>(null);
   /**
@@ -154,6 +155,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
     if (!current) return 'item';
     if (isRequirement(current.item)) return 'requirement';
     if (isRisk(current.item)) return 'risk';
+    if (isQuestion(current.item)) return 'question';
     if (current.item.capability.startsWith('harness/')) return 'binding';
     return current.item.capability.startsWith('foundation/') ? 'ground rule' : 'decision';
   });
@@ -184,6 +186,20 @@ export function ReviewScreen(props: ReviewScreenProps) {
     const current = item();
     if (!current) return;
     if (!props.refine) return props.onEdit();
+    // A question is answered by revising the requirement that asked it.
+    if (isQuestion(current.item)) {
+      const q = current.item;
+      const parent = props.session.items.find((i) => i.item.id === q.parent)?.item;
+      if (!parent || !isRequirement(parent)) return setFlash(`“${q.parentName}” is not in this review any more`);
+      const block = props.refine.current(parent);
+      if (!block.ok) return setFlash(block.reason);
+      setRevising({
+        item: parent,
+        current: block.block,
+        seed: `The answer to “${q.question}” is: `,
+      });
+      return;
+    }
     if (!isRequirement(current.item) && !isRisk(current.item)) {
       setFlash(`A ${noun()} is not revised with the AI — E opens it in your editor`);
       return;
@@ -301,7 +317,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
             <RevisePanel
               name={revising()!.item.name}
               current={revising()!.current}
-              seed={item()?.state === 'rejected' && !item()?.drifted ? item()?.review.note : undefined}
+              seed={revising()!.seed ?? (item()?.state === 'rejected' && !item()?.drifted ? item()?.review.note : undefined)}
               unavailable={props.refine?.unavailable ?? null}
               propose={(turns, instruction) => props.refine!.propose(revising()!.item, turns, instruction)}
               describeGlossary={props.refine?.describeGlossary}
@@ -335,6 +351,13 @@ export function ReviewScreen(props: ReviewScreenProps) {
             {(line) => <text style={{ fg: THEME.text }}>{line || ' '}</text>}
           </For>
           <text>{' '}</text>
+
+          <Show when={isQuestion(item()!.item)}>
+            <text style={{ fg: THEME.accent2 }}>
+              {'  The agent answered this to write the formula. a — that is the answer · r — give yours: its requirement is revised with it'}
+            </text>
+            <text>{' '}</text>
+          </Show>
 
           <Show when={examples().length > 0}>
             <text style={{ fg: THEME.dim }}>

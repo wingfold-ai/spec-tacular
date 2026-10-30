@@ -12,6 +12,7 @@
  * rather than needing to be revisited.
  */
 
+import { DEFERRED } from './foundation.ts';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadClasses, renderClasses } from './classes.ts';
@@ -121,7 +122,7 @@ export function renderContext(bundle: ContextBundle): string {
     out.push('# Project ground rules', '');
     out.push('These are settled. Conform to them, or say explicitly why you cannot.', '');
     for (const doc of bundle.foundation) {
-      out.push(`## ${doc.name}`, '', doc.content.trim(), '');
+      out.push(`## ${doc.name}`, '', compactDeferred(doc.content), '');
     }
   }
 
@@ -193,4 +194,31 @@ export function renderContext(bundle: ContextBundle): string {
 export function buildPrompt(bundle: ContextBundle, instructions: string): string {
   const context = renderContext(bundle);
   return context ? `${context}\n---\n\n${instructions}` : instructions;
+}
+
+/**
+ * A ground-rules document as an agent needs it: what is settled in full,
+ * and the questions left for later as one short list. Each of them used to
+ * travel with the same two sentences, into every prompt — two dozen such
+ * sections in a first change's ground rules, none of them saying anything.
+ */
+export function compactDeferred(content: string): string {
+  const parts = content.trim().split(/^(?=## )/m);
+  const kept: string[] = [];
+  const later: string[] = [];
+  for (const part of parts) {
+    const heading = /^## (.+)$/m.exec(part)?.[1]?.trim();
+    const body = part.replace(/^## .+$/m, '').trim();
+    if (heading && body === DEFERRED) later.push(heading);
+    else kept.push(part.trim());
+  }
+  if (later.length === 0) return content.trim();
+  const list = [
+    '## Left for later',
+    '',
+    'Not settled yet. A change that depends on one of these raises it as an open question instead of assuming an answer:',
+    '',
+    ...later.map((q) => `- ${q}`),
+  ].join('\n');
+  return [...kept, list].join('\n\n');
 }

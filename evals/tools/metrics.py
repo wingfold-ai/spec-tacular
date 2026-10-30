@@ -173,6 +173,8 @@ def review(project):
                 if cap == "design"
                 else "harness"
                 if cap.startswith("harness/")
+                else "question"
+                if cap == "questions"
                 else "requirement"
             )
             k = kinds.setdefault(

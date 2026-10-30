@@ -68,7 +68,7 @@ import {
   runHarnessCheck,
   saveCheck,
 } from './core/formal/harness.ts';
-import { matrixConfig } from './core/formal/config.ts';
+import { matrixConfig, matrixVerified } from './core/formal/config.ts';
 import type { ReviewedItem } from './core/review.ts';
 
 /**
@@ -533,7 +533,9 @@ async function loadPipelines(
     // they give: which rows must pass, by the change's class.
     const items = (queue?.requirements ?? []).map((r) => r.item);
     const formalState = items.some((i) => formalOf(i)) ? changeFormal(items, glossary) : undefined;
-    const matrices = formalState ? changeMatrices(projectRoot, status.changeName, items, glossary) : [];
+    // Matrices, a harness and its check only where the class asks for them.
+    const verified = matrixVerified(consequence?.class ?? null, matrixConfig(projectRoot));
+    const matrices = formalState && verified ? changeMatrices(projectRoot, status.changeName, items, glossary) : [];
     if (formalState && matrices.length > 0) {
       formalState.staleMatrices = [...new Set(staleMatrices(projectRoot, matrices).map((e) => e.item.name))];
     }
@@ -759,9 +761,25 @@ async function composePrompt(
   const described = intent
     ? `The developer described this change as:\n\n> ${intent.replace(/\n/g, '\n> ')}\n\n${instructions}`
     : instructions;
+  // How its formal forms are verified decides what the plan and the work
+  // include: said once, where it is decided.
+  const verifying = artifact === 'tasks' || artifact === 'apply'
+    ? `${described}\n\n${await verificationNote(args, adapter, change)}`
+    : described;
   // Implementing is interactive: a stop there is said in the session itself.
-  const task = artifact === 'apply' ? described : `${described}\n\n${stopInstructions(args.cwd, change, artifact)}`;
+  const task = artifact === 'apply' ? verifying : `${verifying}\n\n${stopInstructions(args.cwd, change, artifact)}`;
   return buildPrompt(buildContext(args.cwd, reviewed), task);
+}
+
+/** How a change's formal requirements are verified: through matrices, or as any other requirement. */
+async function verificationNote(args: Args, adapter: OpenSpecAdapter, change: string): Promise<string> {
+  const pipeline = (await loadPipelines(adapter, args.cwd)).pipelines.find((p) => p.name === change);
+  const cls = pipeline?.consequence?.class ?? null;
+  const config = matrixConfig(args.cwd);
+  const where = cls ? `This change is in consequence class ${cls}` : 'This project has no consequence classes for this change';
+  return matrixVerified(cls, config)
+    ? `# How this change's formal requirements are verified\n\n${where}, so its formal requirements are verified through their generated test matrices: the harness, the matrix tests and \`spec-tacular harness <change> --check\` are part of the work.\n`
+    : `# How this change's formal requirements are verified\n\n${where}, so its formal requirements are tested like every other requirement — a tagged test per scenario — and not through generated matrices. Plan no harness, no \`spec-tacular matrix --write\` and no harness check, and do not run them.\n`;
 }
 
 /** The description a change was created with: its README, minus the heading. */
@@ -1140,8 +1158,11 @@ async function runEvidence(args: Args, adapter: OpenSpecAdapter): Promise<number
   const glossary = loadGlossary(args.cwd);
   let open = 0;
   for (const { status, queue } of target) {
-    const matrices = changeMatrices(args.cwd, status.changeName, queue.requirements.map((r) => r.item), glossary);
-    const rows = rowsRequired(matrices, classOf.get(status.changeName) ?? null);
+    const cls = classOf.get(status.changeName) ?? null;
+    const matrices = matrixVerified(cls, matrixConfig(args.cwd))
+      ? changeMatrices(args.cwd, status.changeName, queue.requirements.map((r) => r.item), glossary)
+      : [];
+    const rows = rowsRequired(matrices, cls);
     const unconnected = unconnectedItems(args.cwd, matrices, queue.requirements).items;
     const items = changeEvidence(args.cwd, status.changeName, queue.requirements, rows, unconnected, vacuousItems(matrices));
     if (items.length === 0) continue;
@@ -1253,8 +1274,11 @@ async function archiveChange(
   // accepted requirement and risk must be verified or waived. Silence is
   // not consent.
   if (pipeline?.evidence && !pipeline.evidence.complete) {
-    const matrices = changeMatrices(args.cwd, change, queue.requirements.map((r) => r.item), loadGlossary(args.cwd));
-    const rows = rowsRequired(matrices, pipeline.consequence?.class ?? null);
+    const cls = pipeline.consequence?.class ?? null;
+    const matrices = matrixVerified(cls, matrixConfig(args.cwd))
+      ? changeMatrices(args.cwd, change, queue.requirements.map((r) => r.item), loadGlossary(args.cwd))
+      : [];
+    const rows = rowsRequired(matrices, cls);
     const unconnected = unconnectedItems(args.cwd, matrices, queue.requirements).items;
     const open = changeEvidence(args.cwd, change, queue.requirements, rows, unconnected, vacuousItems(matrices)).filter(
       (e) => e.state !== 'passing' && e.state !== 'excepted',
@@ -1934,6 +1958,13 @@ function implementingCommands(projectRoot: string): string[] {
   const matrix = matrixConfig(projectRoot);
   out.add(prefix(matrix.run));
   out.add(prefix(matrix.coverage));
+  // The usual typecheckers and linters, however they are reached.
+  for (const tool of ['tsc', 'biome', 'eslint', 'prettier']) {
+    out.add(tool);
+    out.add(`bunx ${tool}`);
+    out.add(`npx ${tool}`);
+    out.add(`./node_modules/.bin/${tool}`);
+  }
   return [...out].filter((p) => p !== '');
 }
 

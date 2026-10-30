@@ -11,18 +11,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeDriver } from '../src/agent/claude.ts';
 import { lintRequirement, withoutFormal } from '../src/core/concreteness.ts';
+import { compactDeferred } from '../src/core/context.ts';
+import { DEFERRED } from '../src/core/foundation.ts';
 import { changeEvidence, loadVerification, VERIFICATION_STARTER, type EvidenceRecord } from '../src/core/evidence.ts';
 import { formalOf } from '../src/core/formal/formal.ts';
 import { applyGlossaryChanges, loadGlossary, readGlossary } from '../src/core/formal/glossary.ts';
 import { checksHold, matricesFor, ruledOutBy } from '../src/core/formal/matrix.ts';
-import { DEFAULT_MATRIX_CONFIG } from '../src/core/formal/config.ts';
+import { DEFAULT_MATRIX_CONFIG, matrixVerified } from '../src/core/formal/config.ts';
+import { questionsOf, withQuestions } from '../src/core/questions.ts';
 import { allowSurvivors, codeUnderTest, parseLcov, spreadMutants } from '../src/core/formal/harness.ts';
 import { hazardState, type Hazard } from '../src/core/hazards.ts';
 import { hasMarker, markerSpans, NOTE, SHOWN_RED, stripMarkers } from '../src/core/markers.ts';
 import { currentItem, openSession } from '../src/core/session.ts';
 import { parseRefinement, refineContext } from '../src/core/refine.ts';
 import { parseSpecFile } from '../src/core/requirements.ts';
-import { loadReview } from '../src/core/review.ts';
+import { emptyReview, loadReview, reconcile, setState, summarize } from '../src/core/review.ts';
 import { parseRisks } from '../src/core/risks.ts';
 import { acceptDocument, hashDocument } from '../src/core/signoff.ts';
 import { claudeSessionUsage } from '../src/core/usage.ts';
@@ -223,10 +226,11 @@ describe('verification.yaml', () => {
 });
 
 describe('the implementing session', () => {
-  test('may edit and run the project\'s tests without asking, and is named', () => {
+  test('keeps the developer\'s permission mode, adds the project\'s tests, and is named', () => {
     const c = claudeDriver.interactive!('Implement it', ['bun test'], 'abc');
     expect(c.args[0]).toBe('Implement it');
-    expect(c.args).toContain('acceptEdits');
+    expect(c.args).not.toContain('--permission-mode');
+    expect(c.args).toContain('Bash(grep:*)');
     expect(c.args).toContain('Bash(bun test:*)');
     expect(c.args.slice(c.args.indexOf('--session-id'), c.args.indexOf('--session-id') + 2)).toEqual(['--session-id', 'abc']);
   });
@@ -387,5 +391,61 @@ describe('an invariant\'s matrix', () => {
     expect(m.rows.map((row) => row.words.split(':')[0])).toEqual(['from the start', 'over a long run']);
     expect(m.rows[1]!.steps.length).toBeGreaterThan(m.rows[0]!.steps.length * 3);
     for (const t of m.selfTest) expect(checksHold(t.checks, t.response)).toBe(t.passes);
+  });
+});
+
+describe('the questions a formal form forced', () => {
+  const SPEC = '## ADDED Requirements\n\n### Requirement: Participants\nThe system SHALL record who shares an expense.\n\n```formal\ndecision: participants_all_members = NOT participants_given\nasked: Does an empty participants list mean "everyone" or is it invalid? — It means everyone, the same as leaving participants out.\n```\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n';
+  const [r] = parseSpecFile(SPEC, 'expenses', '/p/spec.md').requirements;
+
+  test('are each a review item, with the agent\'s answer only proposed', () => {
+    const [q] = questionsOf(r!);
+    expect(q).toMatchObject({
+      capability: 'questions',
+      name: 'Does an empty participants list mean "everyone" or is it invalid?',
+      answer: 'It means everyone, the same as leaving participants out.',
+      parent: r!.id,
+    });
+    expect(q!.text).toContain('Proposed answer: It means everyone');
+  });
+
+  test('come right before their requirement, and keep the specs open until answered', () => {
+    const items = withQuestions([r!]);
+    expect(items.map((i) => i.capability)).toEqual(['questions', 'expenses']);
+    const review = setState(emptyReview('c'), r!, 'accepted');
+    const summary = summarize(reconcile(items, review));
+    expect(summary.complete).toBe(false);
+    expect(summarize(reconcile(items, setState(review, items[0]!, 'accepted'))).complete).toBe(true);
+  });
+
+  test('a changed answer is asked again', () => {
+    const other = parseSpecFile(SPEC.replace('It means everyone, the same as leaving participants out.', 'It is refused.'), 'expenses', '/p/spec.md').requirements[0]!;
+    const [a] = questionsOf(r!);
+    const [b] = questionsOf(other);
+    expect(b!.id).toBe(a!.id);
+    expect(b!.hash).not.toBe(a!.hash);
+  });
+});
+
+describe('verifying formal forms through matrices', () => {
+  test('is for the code whose failure costs most, unless the project says otherwise', () => {
+    const auto = { ...DEFAULT_MATRIX_CONFIG };
+    expect(matrixVerified('P0', auto)).toBe(true);
+    expect(matrixVerified('P1', auto)).toBe(true);
+    expect(matrixVerified('P2', auto)).toBe(false);
+    expect(matrixVerified(null, auto)).toBe(false);
+    expect(matrixVerified(null, { ...auto, verify: 'always' })).toBe(true);
+    expect(matrixVerified('P0', { ...auto, verify: 'never' })).toBe(false);
+  });
+});
+
+describe('the ground rules in an agent\'s prompt', () => {
+  test('carry the questions left for later as one short list', () => {
+    const doc = `# Stack\n\n## Language\n\nTypeScript on Bun.\n\n## CI\n\n${DEFERRED}\n\n## Hooks\n\n${DEFERRED}\n`;
+    const out = compactDeferred(doc);
+    expect(out).toContain('## Language\n\nTypeScript on Bun.');
+    expect(out).toContain('## Left for later');
+    expect(out).toContain('- CI\n- Hooks');
+    expect(out.split(DEFERRED).length).toBe(1);
   });
 });

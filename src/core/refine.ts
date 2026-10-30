@@ -210,6 +210,10 @@ export function buildRefineParts(
       ? ['- Keep the name exactly: in a MODIFIED section the name says which', '  existing requirement this one replaces.']
       : []),
     GLOSSARY_RULES,
+    '- When the developer answers a question an `asked:` line records, their',
+    '  answer replaces the one there, and the prose, the formula and the',
+    '  scenarios change to agree with it — with a scenario for the case the',
+    '  question is about.',
   ].join('\n');
 
   return { preamble: PREAMBLE, context: sections, task, rules };

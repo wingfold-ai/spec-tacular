@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { OpenSpecChangeStatus } from '../adapter/types.ts';
 import { loadDecisions } from './decisions.ts';
+import { withQuestions } from './questions.ts';
 import { loadRisks, type Risk } from './risks.ts';
 import { changeMatrices } from './formal/files.ts';
 import { formalOf } from './formal/formal.ts';
@@ -127,7 +128,9 @@ export function loadChangeReview(
   // The queue follows the pipeline: risks are written against settled specs,
   // and a design against both, so reviewing either first is out of order.
   const risks = loadChangeRisks(status);
-  const items: ReviewItem[] = [...requirements, ...risks];
+  // Each requirement's open questions come right before it: answering
+  // them is how its formula is checked against what the developer means.
+  const items: ReviewItem[] = [...withQuestions(requirements), ...risks];
   if (options.includeDecisions) items.push(...loadChangeDecisions(status));
   // Last, once implementing has written them: how each variable of the
   // change's matrices is bound to the code — reviewed like any other item.

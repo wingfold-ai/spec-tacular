@@ -412,8 +412,13 @@ asked: Does a deferred task count as open? — No; deferred tasks are excused.
 - The review reads it back in plain words, with what each variable means —
   *archive_allowed is true exactly when tasks_applied and specs_accepted and
   not stop_open* — so a wrong formula is caught as a wrong sentence.
-- `asked:` lines are the questions formalizing forced; their answers go into
-  the prose, which stays what the specs promise.
+- `asked:` lines are the questions formalizing forced — an empty list: every
+  member, or refused? — and the agent's answer to each is only a proposal.
+  Each is a **question in the review**, right before its requirement: `a`
+  accepts the proposed answer, `r` gives yours, and the requirement is
+  revised with it. Writing the formula is what finds the question; deciding
+  it is yours. Their answers go into the prose, which stays what the specs
+  promise, and each gets a scenario of its own.
 - A formula that cannot be read, names a variable the glossary does not have,
   or defines an output differently from another requirement holds up the
   design, with the combination where they differ.
@@ -457,8 +462,17 @@ Matrix (3 conditions): alarm = armed & voltage > 9 & voltage < 20
   **harness**: how to set each input in the real code and read each output.
 - Each row is a test named `[req:…] [row:D7]`. Its consequence class decides
   which rows must pass for the requirement to count as verified: every row
-  for P0 (or without classes), MC/DC and boundary rows for P1. A matrix whose
-  formula or glossary changed is out of date, and the overview says so.
+  for P0, MC/DC and boundary rows for P1. A matrix whose formula or glossary
+  changed is out of date, and the overview says so.
+- **Only where it pays.** Matrices, their harness and its check are for the
+  code whose failure costs most: changes in class P0 or P1. Elsewhere — and
+  in a project without consequence classes — a formal form still specifies,
+  is read back, checked for conflicts and asks its questions, and its
+  requirement is tested like any other, with a tagged test per scenario;
+  the tasks plan no harness. `matrix.verify` in `verification.yaml` makes it
+  `always` or `never` instead of `auto`. In evaluation runs of two small
+  apps, the matrices and the harness cost most of a change's extra time and
+  caught little the ordinary tests did not.
 
 A green matrix proves nothing if the harness answers for the code, or reads
 the wrong place. So a matrix's results count only once its harness is
@@ -754,12 +768,13 @@ Implementing is your agent's own session. *Implement it* opens Claude Code (or
 opencode) on the change's apply instructions in a new tab — tmux, kitty,
 WezTerm, GNOME Terminal, Konsole, iTerm — or, in a terminal that cannot open
 tabs (an IDE's), a new window of the desktop's terminal. It is exactly as if
-you had started it yourself, with two exceptions: editing the project's files
-is pre-approved, and so are its test commands (from `verification.yaml`),
-spec-tacular's own checks and OpenSpec's read-only commands — so what it does
-ask about is worth reading: anything outside the project, installing. It is
-told to write files with its edit tools, not the shell, and to use the
-installed toolchain. spec-tacular stays open, shows the change being implemented, and follows
+you had started it yourself — in your own permission mode (auto, accept
+edits, or ask) — with one addition: the project's test commands (from
+`verification.yaml`), its typechecker and linter, spec-tacular's own checks,
+OpenSpec's read-only commands and the commands output is read through (`grep`,
+`head`, …) never ask. So what it does ask about is worth reading. It is told
+to write files with its edit tools, to run checks as plain commands, and to
+use the installed toolchain. spec-tacular stays open, shows the change being implemented, and follows
 the tasks as they are ticked off. Only when no tab or window can be opened does
 the agent take over spec-tacular's own terminal until it exits.
 
