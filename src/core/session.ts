@@ -66,7 +66,10 @@ export function openSession(
   // No stored position (or it points at a requirement that is gone): start at
   // the first thing that needs attention rather than at the top, so reopening
   // a mostly-reviewed change does not make you walk past the accepted ones.
-  const start = stored !== -1 ? stored : Math.max(reviewed.findIndex(isOpen), 0);
+  // Where you left off only while it still needs you: once it is decided,
+  // what came after it (new risks, a harness) is where the work is.
+  const firstOpen = reviewed.findIndex(isOpen);
+  const start = stored !== -1 && (isOpen(reviewed[stored]!) || firstOpen === -1) ? stored : Math.max(firstOpen, 0);
   return build(change, items, review, start);
 }
 

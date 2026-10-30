@@ -139,6 +139,18 @@ export function nextStep(pipeline: ChangePipeline, foundationSettled: boolean): 
 
   if (!stage) {
     const tasks = pipeline.apply.tasks;
+    // The harness is written while implementing, and reviewing it is the
+    // developer's step: until then its matrices prove nothing, and no task
+    // can be ticked for it.
+    const harness = pipeline.formal?.harnessPending ?? 0;
+    if (harness > 0) {
+      return {
+        text:
+          `Review the harness: ${harness} binding${harness === 1 ? '' : 's'} waiting. ` +
+          'Check that each sets and reads what its variable means — until then its matrix results do not count.',
+        actions: ['review'],
+      };
+    }
     // Its class asks a person to read what the agent wrote: ticking the last
     // task off is not the end of implementing, accepting the diff is.
     const diff = pipeline.apply.signoff;

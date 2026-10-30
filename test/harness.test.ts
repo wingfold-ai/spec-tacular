@@ -164,8 +164,8 @@ describe('coverage', () => {
   test('reads functions and lines hit per file from lcov', () => {
     const lcov = 'SF:src/a.ts\nFNF:2\nFNH:1\nLF:10\nLH:4\nend_of_record\nSF:/abs/root/src/b.ts\nFNF:1\nFNH:0\nLH:0\nend_of_record\n';
     const out = parseLcov(lcov, '/abs/root');
-    expect(out.get('src/a.ts')).toEqual({ lines: 4, functions: 1, fnFound: 2 });
-    expect(out.get('src/b.ts')).toEqual({ lines: 0, functions: 0, fnFound: 1 });
+    expect(out.get('src/a.ts')).toMatchObject({ lines: 4, functions: 1, fnFound: 2 });
+    expect(out.get('src/b.ts')).toMatchObject({ lines: 0, functions: 0, fnFound: 1 });
   });
 });
 

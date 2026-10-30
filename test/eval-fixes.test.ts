@@ -14,7 +14,10 @@ import { changeEvidence, loadVerification, VERIFICATION_STARTER, type EvidenceRe
 import { formalOf } from '../src/core/formal/formal.ts';
 import { readGlossary } from '../src/core/formal/glossary.ts';
 import { matricesFor, ruledOutBy } from '../src/core/formal/matrix.ts';
+import { DEFAULT_MATRIX_CONFIG } from '../src/core/formal/config.ts';
+import { allowSurvivors, codeUnderTest, parseLcov, spreadMutants } from '../src/core/formal/harness.ts';
 import { hazardState, type Hazard } from '../src/core/hazards.ts';
+import { currentItem, openSession } from '../src/core/session.ts';
 import { parseRefinement, refineContext } from '../src/core/refine.ts';
 import { parseSpecFile } from '../src/core/requirements.ts';
 import { loadReview } from '../src/core/review.ts';
@@ -233,5 +236,57 @@ describe('the implementing session', () => {
     writeFileSync(file, [msg('a'), msg('a'), msg('b'), JSON.stringify({ type: 'user' })].join('\n'));
     expect(claudeSessionUsage(file)).toMatchObject({ inputTokens: 20, outputTokens: 10, cacheReadTokens: 200, turns: 2, model: 'claude-opus-5-5' });
     expect(claudeSessionUsage(join(d, 'missing.jsonl'))).toBeNull();
+  });
+});
+
+describe('the code a harness check mutates', () => {
+  const config = { ...DEFAULT_MATRIX_CONFIG, exclude: ['src/generated'] };
+
+  test('is what the matrix ran, test doubles and excluded files aside', () => {
+    const d = root();
+    for (const f of ['src/app/start.ts', 'src/domain/rules.ts', 'src/test-support/in-memory-store.ts', 'src/generated/x.ts', 'src/fakes/clock.ts']) {
+      mkdirSync(join(d, f, '..'), { recursive: true });
+      writeFileSync(join(d, f), 'export const x = (a: boolean, b: boolean) => a && b;\n');
+    }
+    const lcov = parseLcov(
+      ['src/app/start.ts', 'src/domain/rules.ts', 'src/test-support/in-memory-store.ts', 'src/generated/x.ts', 'src/fakes/clock.ts', 'test/matrix/a.matrix.test.ts']
+        .map((f) => `SF:${f}\nDA:1,3\nLH:1\nend_of_record`)
+        .join('\n'),
+      d,
+    );
+    const h = { component: 'timer', kind: 'code' as const, path: 'h.ts', production: ['src/app/start.ts'], problems: [], hash: 'h' };
+    expect(codeUnderTest(d, h, lcov, config)).toEqual(['src/app/start.ts', 'src/domain/rules.ts']);
+  });
+
+  test('gives every file its share of the budget, on executed lines only', () => {
+    const d = root();
+    mkdirSync(join(d, 'src'));
+    writeFileSync(join(d, 'src/app.ts'), Array.from({ length: 40 }, (_, i) => `export const a${i} = (x: boolean, y: boolean) => x && y;`).join('\n'));
+    writeFileSync(join(d, 'src/rules.ts'), 'export const r = (x: number) => x > 1 && x < 9;\nexport const dead = (x: boolean, y: boolean) => x || y;\n');
+    const lcov = parseLcov('SF:src/app.ts\nDA:1,1\nDA:2,1\nDA:3,1\nDA:4,1\nDA:5,1\nDA:6,1\nLH:6\nend_of_record\nSF:src/rules.ts\nDA:1,1\nLH:1\nend_of_record', d);
+    const mutants = spreadMutants(d, ['src/app.ts', 'src/rules.ts'], lcov, 6);
+    expect(mutants).toHaveLength(6);
+    expect(mutants.filter((m) => m.file === 'src/rules.ts').length).toBeGreaterThanOrEqual(2);
+    expect(mutants.every((m) => m.file !== 'src/rules.ts' || m.line === 1)).toBe(true);
+  });
+
+  test('a matrix that caught nothing cannot have its survivors allowed', () => {
+    const d = root();
+    mkdirSync(join(d, '.spec-tacular', 'harness'), { recursive: true });
+    const survivor = { file: 'src/a.ts', line: 1, column: 0, from: '&&', to: '||' };
+    writeFileSync(
+      join(d, '.spec-tacular', 'harness', 'tick.json'),
+      JSON.stringify({ component: 'tick', at: 'a', harnessHash: '', production: {}, green: true, unexecuted: [], mutants: 1, killed: 0, survivors: [survivor], problems: [], passed: false }),
+    );
+    expect(() => allowSurvivors(d, 'tick', 'free to differ')).toThrow('caught none');
+  });
+});
+
+describe('reopening a review', () => {
+  test('starts where the work is once the stored place is decided', () => {
+    const a = req('decision: noop = timer_running');
+    const b = { ...a, id: 'harness/timer#harness', capability: 'harness/timer', name: 'harness code for timer', hash: 'h2' };
+    const review = { requirements: { [a.id]: { state: 'accepted' as const, hash: a.hash, reviewedAt: 'x' } }, cursor: a.id } as unknown as Parameters<typeof openSession>[2];
+    expect(currentItem(openSession('c', [a, b], review))!.item.id).toBe('harness/timer#harness');
   });
 });

@@ -341,8 +341,11 @@ artifacts:
       (the file `spec-tacular matrix --write` names, which sets each input in
       the real code and reads each output from it — a mapping where it can
       be), written before the code it tests; the matrix tests pass; and
-      `spec-tacular harness <change> --check` passes. Each binding of the
-      harness is then reviewed like a requirement.
+      `spec-tacular harness <change> --check` catches the changes it makes to
+      the code (allowing survivors, with a reason, is the developer's call).
+      Each binding of the harness is then reviewed by the developer like a
+      requirement — that review is their step, not a task: no task waits
+      for it.
 
       Evidence. If `spec-tacular/verification.yaml` has no uncommented
       `command:` yet, the first task fills it in for the project's test

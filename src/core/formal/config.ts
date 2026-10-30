@@ -27,6 +27,8 @@ export interface MatrixConfig {
   mutants: number;
   /** The share of mutants the matrix must kill, 0 to 1. */
   mutationThreshold: number;
+  /** Files and directories never mutated: generated code, test doubles kept elsewhere. */
+  exclude: string[];
 }
 
 export const DEFAULT_MATRIX_CONFIG: MatrixConfig = {
@@ -37,8 +39,9 @@ export const DEFAULT_MATRIX_CONFIG: MatrixConfig = {
   run: 'bun test {tests}',
   coverage: 'bun test --coverage --coverage-reporter=lcov --coverage-dir=.spec-tacular/coverage {tests}',
   lcov: '.spec-tacular/coverage/lcov.info',
-  mutants: 16,
+  mutants: 32,
   mutationThreshold: 1,
+  exclude: [],
 };
 
 export function matrixConfig(projectRoot: string): MatrixConfig {
@@ -58,6 +61,7 @@ export function matrixConfig(projectRoot: string): MatrixConfig {
       lcov: str('lcov') ?? d.lcov,
       mutants: num('mutants') ?? d.mutants,
       mutationThreshold: num('mutation_threshold') ?? d.mutationThreshold,
+      exclude: Array.isArray(m['exclude']) ? (m['exclude'] as unknown[]).filter((x): x is string => typeof x === 'string') : d.exclude,
     };
   } catch {
     return DEFAULT_MATRIX_CONFIG;

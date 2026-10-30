@@ -141,8 +141,19 @@ function resolveImport(projectRoot: string, fromFile: string, spec: string): str
   return null;
 }
 
+/**
+ * Test code, never the code under test: test directories, test files, and
+ * test doubles — wherever a project keeps them (`src/test-support/`, a
+ * `fakes/` folder). Mutating a fake shows nothing about the system.
+ */
 const isTestPath = (p: string, config: MatrixConfig) =>
-  /(^|\/)(test|tests|spec|__tests__)\//.test(p) || p.startsWith(normalize(config.harness)) || p.startsWith(normalize(config.tests));
+  /(^|\/)(test|tests|spec|specs|__tests__|__mocks__|test-?support|testing|fixtures|fakes?|mocks?|stubs?)\//i.test(p) ||
+  /\.(test|spec)\.[cm]?[jt]sx?$/.test(p) ||
+  /(^|\/)(fake|mock|stub|in-?memory)[-_.][^/]*$/i.test(p) ||
+  p.startsWith(normalize(config.harness)) ||
+  p.startsWith(normalize(config.tests)) ||
+  p === normalize(config.runner) ||
+  config.exclude.some((x) => p === normalize(x) || p.startsWith(`${normalize(x).replace(/\/$/, '')}/`));
 
 export interface HarnessCode {
   path: string;
@@ -274,15 +285,26 @@ export const isHarnessItem = (item: ReviewItem) => item.capability.startsWith('h
 // -----------------------------------------------------------------------------
 
 /** Lines and functions hit per file, from an lcov report. */
-export function parseLcov(text: string, projectRoot: string): Map<string, { lines: number; functions: number; fnFound: number }> {
-  const out = new Map<string, { lines: number; functions: number; fnFound: number }>();
+export interface LcovFile {
+  lines: number;
+  functions: number;
+  fnFound: number;
+  /** The lines that ran at least once. */
+  hit: Set<number>;
+}
+
+export function parseLcov(text: string, projectRoot: string): Map<string, LcovFile> {
+  const out = new Map<string, LcovFile>();
   let file: string | null = null;
-  let cur = { lines: 0, functions: 0, fnFound: 0 };
+  let cur: LcovFile = { lines: 0, functions: 0, fnFound: 0, hit: new Set() };
   for (const line of text.split('\n')) {
     if (line.startsWith('SF:')) {
       const p = line.slice(3).trim();
       file = normalize(isAbsolute(p) ? relative(projectRoot, p) : p);
-      cur = { lines: 0, functions: 0, fnFound: 0 };
+      cur = { lines: 0, functions: 0, fnFound: 0, hit: new Set() };
+    } else if (line.startsWith('DA:')) {
+      const [n, count] = line.slice(3).split(',');
+      if (Number(count) > 0) cur.hit.add(Number(n));
     } else if (line.startsWith('LH:')) cur.lines = Number(line.slice(3));
     else if (line.startsWith('FNH:')) cur.functions = Number(line.slice(4));
     else if (line.startsWith('FNF:')) cur.fnFound = Number(line.slice(4));
@@ -323,9 +345,11 @@ const OPERATORS: [RegExp, string][] = [
  * one operator once: a condition dropped, an operator swapped, a comparison
  * shifted by its edge. Comments, imports and type-only lines are skipped.
  */
-export function mutantsOf(file: string, text: string, max: number): Mutant[] {
+export function mutantsOf(file: string, text: string, max: number, executed?: Set<number>): Mutant[] {
   const all: Mutant[] = [];
   text.split('\n').forEach((line, i) => {
+    // A line the matrix never runs survives any change: no news in that.
+    if (executed && !executed.has(i + 1)) return;
     const t = line.trim();
     if (!t || t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.startsWith('import ') || /^(export\s+)?(type|interface)\b/.test(t)) return;
     const code = line.replace(/(['"`]).*?\1/g, (s) => ' '.repeat(s.length)).replace(/\/\/.*$/, '');
@@ -400,6 +424,8 @@ export interface HarnessCheck {
   mutants: number;
   killed: number;
   survivors: Mutant[];
+  /** Per file mutated: how many changes it got, and how many some row caught. */
+  perFile?: Record<string, { mutants: number; killed: number }>;
   /**
    * Per matrix test file, whether it alone catches at least one of the
    * mutants the matrix catches. A file that catches none is passing however
@@ -437,6 +463,8 @@ export function loadAllowed(projectRoot: string, component: string): AllowedSurv
 export function allowSurvivors(projectRoot: string, component: string, reason: string): AllowedSurvivors | null {
   const check = loadCheck(projectRoot, component);
   if (!check || check.survivors.length === 0) return null;
+  // Nothing caught is not code free to differ: the matrix does not reach it.
+  if (check.killed === 0) throw new Error(`${component}'s matrix caught none of ${check.mutants} changes to the code — its harness does not reach it, which is not allowed away`);
   const allowed: AllowedSurvivors = {
     component,
     at: new Date().toISOString(),
@@ -491,21 +519,23 @@ export function runHarnessCheck(projectRoot: string, h: ComponentHarness, tests:
   const covered = runTests(projectRoot, config.coverage, tests);
   if (!covered.ok) return fail(`the matrix tests fail on the code as it is:\n${covered.output.split('\n').slice(-12).join('\n')}`);
   let unexecuted: string[] = [];
+  let lcov: Map<string, LcovFile> | null = null;
   const lcovFile = join(projectRoot, config.lcov);
   if (existsSync(lcovFile)) {
-    const lcov = parseLcov(readFileSync(lcovFile, 'utf8'), projectRoot);
+    lcov = parseLcov(readFileSync(lcovFile, 'utf8'), projectRoot);
     unexecuted = h.production.filter((f) => {
-      const c = lcov.get(normalize(f));
+      const c = lcov!.get(normalize(f));
       return !c || (c.fnFound > 0 ? c.functions === 0 : c.lines === 0);
     });
   } else {
     problems.push(`no coverage report at ${config.lcov} — set matrix.coverage and matrix.lcov in verification.yaml`);
   }
 
-  // Mutants, in a scratch copy: each must turn at least one row red.
-  const mutants = h.production.flatMap((f) =>
-    existsSync(join(projectRoot, f)) ? mutantsOf(f, readFileSync(join(projectRoot, f), 'utf8'), config.mutants) : [],
-  ).slice(0, config.mutants);
+  // What is mutated is the code the matrix runs, not only what the harness
+  // imports: the decision logic is usually a layer further in.
+  const targets = codeUnderTest(projectRoot, h, lcov, config);
+  base.production = productionHashes(projectRoot, targets);
+  const mutants = spreadMutants(projectRoot, targets, lcov, config.mutants);
   const survivors: Mutant[] = [];
   const killers: Record<string, boolean> = {};
   if (mutants.length > 0) {
@@ -537,8 +567,63 @@ export function runHarnessCheck(projectRoot: string, h: ComponentHarness, tests:
   const killed = mutants.length - survivors.length;
   const score = mutants.length === 0 ? 1 : killed / mutants.length;
   if (mutants.length === 0) problems.push('no mutable operators in the code under test — nothing to show the matrix reaches it');
+  const perFile: Record<string, { mutants: number; killed: number }> = {};
+  for (const m of mutants) {
+    const f = (perFile[m.file] ??= { mutants: 0, killed: 0 });
+    f.mutants++;
+    if (!survivors.includes(m)) f.killed++;
+  }
   const passed = problems.length === 0 && unexecuted.length === 0 && score >= config.mutationThreshold;
-  return { ...base, green: true, unexecuted, mutants: mutants.length, killed, survivors, killers, problems, passed };
+  return { ...base, green: true, unexecuted, mutants: mutants.length, killed, survivors, perFile, killers, problems, passed };
+}
+
+const SOURCE = /\.[cm]?[jt]sx?$/;
+
+/**
+ * The production files the matrix tests run — every non-test source file
+ * the coverage report shows executed, besides what the harness names —
+ * or, without a report, what the harness names alone.
+ */
+export function codeUnderTest(projectRoot: string, h: ComponentHarness, lcov: Map<string, LcovFile> | null, config: MatrixConfig): string[] {
+  const out = new Set(h.production.map((f) => normalize(f)));
+  for (const [file, c] of lcov ?? []) {
+    if (c.hit.size === 0 && c.lines === 0) continue;
+    if (!SOURCE.test(file) || file.startsWith('..') || isAbsolute(file) || /(^|\/)node_modules\//.test(file)) continue;
+    if (isTestPath(file, config) || !existsSync(join(projectRoot, file))) continue;
+    out.add(file);
+  }
+  return [...out].sort();
+}
+
+/**
+ * At most `max` mutants over the files, the decision-dense ones first and
+ * every file its share: one file with many operators must not use up the
+ * budget before the domain is reached. Only executed lines, where known.
+ */
+export function spreadMutants(projectRoot: string, files: string[], lcov: Map<string, LcovFile> | null, max: number): Mutant[] {
+  const pools = files
+    .map((f) => {
+      const hit = lcov?.get(normalize(f))?.hit;
+      return mutantsOf(f, readFileSync(join(projectRoot, f), 'utf8'), Number.MAX_SAFE_INTEGER, hit && hit.size > 0 ? hit : undefined);
+    })
+    .filter((p) => p.length > 0)
+    .sort((a, b) => b.length - a.length);
+  // Every file a share; what a small one cannot use goes to the others.
+  const quota = pools.map(() => 0);
+  for (let left = max; left > 0 && quota.some((q, i) => q < pools[i]!.length); ) {
+    for (let i = 0; i < pools.length && left > 0; i++) {
+      if (quota[i]! < pools[i]!.length) {
+        quota[i]!++;
+        left--;
+      }
+    }
+  }
+  // Spread over each file rather than its first few lines.
+  const out: Mutant[] = [];
+  pools.forEach((pool, i) => {
+    for (let k = 0; k < quota[i]!; k++) out.push(pool[Math.floor((k * pool.length) / quota[i]!)]!);
+  });
+  return out;
 }
 
 export function saveCheck(projectRoot: string, check: HarnessCheck): void {
@@ -592,7 +677,8 @@ export function connection(
     else {
       const stale =
         check.harnessHash !== h.hash ||
-        Object.entries(productionHashes(projectRoot, h.production)).some(([f, hash]) => check.production[f] !== hash);
+        Object.entries(productionHashes(projectRoot, h.production)).some(([f, hash]) => check.production[f] !== hash) ||
+        Object.entries(productionHashes(projectRoot, Object.keys(check.production))).some(([f, hash]) => check.production[f] !== hash);
       if (stale) because.push('the harness or the code changed since its check — run it again');
       else {
         if (check.unexecuted.length > 0) because.push(`the matrix tests never execute ${check.unexecuted.join(', ')}`);

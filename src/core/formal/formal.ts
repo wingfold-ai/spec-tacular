@@ -304,6 +304,11 @@ export interface ChangeFormal {
   staleMatrices?: string[];
   /** Components whose harness is not shown to reach the code, with why. */
   unconnected?: { component: string; because: string[] }[];
+  /**
+   * Harness bindings (or harness code) not yet accepted in the review: the
+   * one step of a harness that is the developer's, not the agent's.
+   */
+  harnessPending?: number;
 }
 
 /** The formal state of a change's requirements and risks. */

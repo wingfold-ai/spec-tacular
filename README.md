@@ -473,8 +473,15 @@ the wrong place. So a matrix's results count only once its harness is
   otherwise pass for the wrong reason.
 - **`spec-tacular harness <change> --check`** runs the matrix tests with
   coverage — they must execute the code the harness names — and then with
-  **mutants** of that code (`&&` → `||`, a `!` dropped, `>` → `>=`, …), each
-  of which some row must catch. Mutants run in a scratch copy; the real
+  **mutants** of the code they ran (`&&` → `||`, a `!` dropped, `>` → `>=`,
+  …), each of which some row must catch. What is mutated is every source
+  file the coverage report shows executed, not only what the harness
+  imports — the decision logic is usually a layer further in — and only its
+  executed lines; test files and test doubles (`test-support/`, `fakes/`,
+  `in-memory-…`) never, nor what `matrix.exclude` in `verification.yaml`
+  lists. The budget (`matrix.mutants`, 32) is shared out over the files, and
+  the check reports per file how many changes it got and how many were
+  caught. Mutants run in a scratch copy; the real
   source is never written. A harness that computes the answer itself passes
   every row and catches no mutant:
 
@@ -491,11 +498,14 @@ the wrong place. So a matrix's results count only once its harness is
   for the component, settled once: add the requirement, or — where the code
   is free to differ, say a CLI flag no requirement is about — allow it with
   `spec-tacular harness <change> --allow-survivors "<why>"`, recorded with
-  the survivors it allowed (new ones are asked again).
+  the survivors it allowed (new ones are asked again). A matrix that caught
+  none of its changes cannot be allowed: its harness does not reach the code.
 - **Each matrix by its own tests.** Every item's matrix tests must themselves
   catch some mutant the others catch; one matrix with a harness that answers
   for the code does not make its neighbours *not connected*.
-- **Each binding is reviewed** in the change's review queue, beside what its
+- **Each binding is reviewed** in the change's review queue — once the
+  harness is written, the overview's next step is reviewing it; from a
+  shell, `spec-tacular harness <change> --accept` — beside what its
   variable means — *tasks_applied: every task ticked or deferred · Set by:
   arg tasksApplied in src/archive/decide.ts* — and an edit sends it back.
 

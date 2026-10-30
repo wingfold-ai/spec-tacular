@@ -59,6 +59,13 @@ describe('implementing', () => {
     expect(nextStep(p, true).text).toBe('2 of 4 tasks ticked off. Carry on implementing — the agent opens right here.');
   });
 
+  test('a harness waiting for review is the next step: it is the developer\'s, not a task', () => {
+    const formal = { errors: [], conflicts: [], formal: 1, total: 1, harnessPending: 2 };
+    const p = planned({ tasks: taskProgress(TASKS), formal });
+    expect(nextStep(p, true)).toMatchObject({ actions: ['review'] });
+    expect(nextStep(p, true).text).toContain('Review the harness: 2 bindings waiting');
+  });
+
   test('all tasks ticked but the deferred: implemented', () => {
     const p = planned({ tasks: taskProgress(TASKS.replace('- [ ] 1.2', '- [x] 1.2')) });
     expect(p.apply.state).toBe('accepted');

@@ -76,6 +76,8 @@ export const VERIFICATION_STARTER = `# How spec-tacular runs this project's test
 #   coverage: bun test --coverage --coverage-reporter=lcov --coverage-dir=.spec-tacular/coverage {tests}
 #   lcov: .spec-tacular/coverage/lcov.info
 #   mutation_threshold: 1
+#   mutants: 32                 # changes per harness check, shared over the files run
+#   exclude: [src/generated]    # never mutated, besides test files and test doubles
 `;
 
 export function verificationPath(projectRoot: string): string {

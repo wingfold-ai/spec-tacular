@@ -1586,7 +1586,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     else if (key.name === 'n') startNewChange();
     else if (key.name === 'b' && !key.ctrl) startNewChange('defect');
     else if (key.name === 'w') void draftNext();
-    else if (key.sequence === 'A' && next()?.actions.includes('archive') && selected()) void checkArchive(selected()!.name);
+    // Always an answer: archived, or why not yet.
+    else if (key.sequence === 'A' && props.input.archive && selected()) void checkArchive(selected()!.name);
     else if (key.name === 'o' && stopped()) openStop(stopped()!);
     else if (key.name === 's' && selectedSlice()) {
       const check = sliceCheck();

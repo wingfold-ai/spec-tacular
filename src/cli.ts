@@ -12,7 +12,7 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject, openSpecToolsInstalled } from './adapter/openspec.ts';
 import {
   buildPipeline,
@@ -58,7 +58,16 @@ import {
   type MatrixEntry,
 } from './core/formal/files.ts';
 import { matricesFor, matrixLines, requiredRows } from './core/formal/matrix.ts';
-import { allowSurvivors, componentHarness, connection, loadAllowed, loadCheck, runHarnessCheck, saveCheck } from './core/formal/harness.ts';
+import {
+  allowSurvivors,
+  componentHarness,
+  connection,
+  isHarnessItem,
+  loadAllowed,
+  loadCheck,
+  runHarnessCheck,
+  saveCheck,
+} from './core/formal/harness.ts';
 import { matrixConfig } from './core/formal/config.ts';
 import type { ReviewedItem } from './core/review.ts';
 
@@ -139,7 +148,7 @@ import {
 import { isRisk, unansweredRisks, unguardedRisks, unprovenGuards, type Risk } from './core/risks.ts';
 import { openSession, type ReviewSession } from './core/session.ts';
 import { clearStopReport, parseStop, readStopReport, saveStopReport, stopInstructions, type StopReport } from './core/stops.ts';
-import { loadReview, saveReview } from './core/review.ts';
+import { loadReview, saveReview, setState } from './core/review.ts';
 import { acceptDocument, loadSignoff, type Signoff } from './core/signoff.ts';
 import type { OpenSpecChangeStatus } from './adapter/types.ts';
 import { renderOverview } from './render/text.ts';
@@ -416,7 +425,9 @@ Usage:
                                             reaches the real code; --check
                                             runs coverage and mutants;
                                             --allow-survivors "<why>" allows
-                                            the changes no matrix caught
+                                            the changes no matrix caught;
+                                            --accept accepts the harness you
+                                            have read
   spec-tacular fret check [<change>]        Compare spec-tacular's reading of
                                             each FRETish requirement with FRET's
   spec-tacular fret export [<change>] [--out <dir>]
@@ -524,6 +535,8 @@ async function loadPipelines(
     // A matrix proves something only through a harness shown to reach the code.
     const unconnected = unconnectedItems(projectRoot, matrices, queue?.requirements ?? []);
     if (formalState && unconnected.components.length > 0) formalState.unconnected = unconnected.components;
+    const harnessOpen = (queue?.requirements ?? []).filter((r) => isHarnessItem(r.item) && r.state !== 'accepted').length;
+    if (formalState && harnessOpen > 0) formalState.harnessPending = harnessOpen;
     const evidence =
       verifying && queue
         ? summarizeEvidence(changeEvidence(projectRoot, status.changeName, queue.requirements, rows, unconnected.items, vacuousItems(matrices)))
@@ -1241,7 +1254,14 @@ async function archiveChange(
       (e) => e.state !== 'passing' && e.state !== 'excepted',
     );
     write.err(`\nRefused: ${open.length} item(s) of ${change} have no current evidence.\n`);
-    for (const e of open) write.err(`  - ${e.state}: ${e.item.id}\n`);
+    for (const e of open) write.err(`  - ${e.state}: ${e.item.id}${e.note ? ` — ${e.note.slice(0, 160)}` : ''}\n`);
+    // The one step only the developer can take, named where it blocks.
+    if (queue.requirements.some((r) => isHarnessItem(r.item) && r.state !== 'accepted')) {
+      write.err(
+        `\nIts harness is not reviewed yet: read it, then accept it in the review (enter on the overview)` +
+          ` or with \`spec-tacular harness ${change} --accept\`.\n`,
+      );
+    }
     write.err(`\nSee \`spec-tacular evidence ${change}\`; \`--run\` runs the tests.\n`);
     return false;
   }
@@ -1451,7 +1471,21 @@ async function runHarness(args: Args, adapter: OpenSpecAdapter): Promise<number>
   let open = 0;
   const done = new Set<string>();
   for (const status of target) {
-    const queue = loadChangeReview(args.cwd, status);
+    let queue = loadChangeReview(args.cwd, status);
+    // --accept: the developer read the harness and agrees each binding sets
+    // and reads what its variable means — the review's accept, from a shell.
+    if (args.accept) {
+      const open = queue.requirements.filter((r) => isHarnessItem(r.item) && r.state !== 'accepted');
+      if (open.length > 0) {
+        let review = loadReview(args.cwd, status.changeName);
+        for (const r of open) {
+          review = setState(review, r.item, 'accepted');
+          process.stdout.write(`Accepted ${r.item.name} (${relative(args.cwd, r.item.file)})\n`);
+        }
+        saveReview(args.cwd, review);
+        queue = loadChangeReview(args.cwd, status);
+      }
+    }
     const entries = changeMatrices(args.cwd, status.changeName, queue.requirements.map((r) => r.item), glossary);
     const components = [...new Set(entries.map((e) => slugify(e.matrix.component)))];
     for (const component of components) {
@@ -1474,8 +1508,13 @@ async function runHarness(args: Args, adapter: OpenSpecAdapter): Promise<number>
           process.stderr.write('--allow-survivors needs a reason: why may the code differ there?\n');
           return 1;
         }
-        const allowed = allowSurvivors(args.cwd, component, args.allowSurvivors.trim());
-        if (allowed) process.stdout.write(`Allowed ${allowed.survivors.length} surviving change(s) to ${component}: ${allowed.reason}\n`);
+        try {
+          const allowed = allowSurvivors(args.cwd, component, args.allowSurvivors.trim());
+          if (allowed) process.stdout.write(`Allowed ${allowed.survivors.length} surviving change(s) to ${component}: ${allowed.reason}\n`);
+        } catch (err) {
+          process.stderr.write(`Not allowed: ${(err as Error).message}\n`);
+          open++;
+        }
       }
       const c = connection(args.cwd, h, group.map((g) => g.matrix), states, undefined, config);
       const check = loadCheck(args.cwd, component);
@@ -1483,6 +1522,12 @@ async function runHarness(args: Args, adapter: OpenSpecAdapter): Promise<number>
         `${component}  ${c.connected ? 'connected' : 'NOT CONNECTED'}  (${h.kind}${h.path ? `: ${h.path}` : ''})\n` +
           (check ? `    last check ${check.at}: ${check.killed}/${check.mutants} mutants caught${check.unexecuted.length ? `, not executed: ${check.unexecuted.join(', ')}` : ''}\n` : ''),
       );
+      // Where the changes went, and which code no row reaches.
+      for (const [file, f] of Object.entries(check?.perFile ?? {})) {
+        process.stdout.write(`      ${f.killed}/${f.mutants} caught in ${file}\n`);
+      }
+      const unmutated = Object.keys(check?.production ?? {}).filter((f) => !check?.perFile?.[f]);
+      if (check?.perFile && unmutated.length > 0) process.stdout.write(`      no mutable operator executed in ${unmutated.join(', ')}\n`);
       for (const b of c.because) process.stdout.write(`    - ${b}\n`);
       const allowed = loadAllowed(args.cwd, component);
       if (allowed) process.stdout.write(`    allowed ${allowed.survivors.length} surviving change(s): ${allowed.reason}\n`);
