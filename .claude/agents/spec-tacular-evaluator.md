@@ -21,8 +21,9 @@ honestly and with evidence — what it was like and what came out of it.
   - `sessions/` — the headless terminals.
 - **A label** (`main`, `fret`, …), used in the report's title.
 - **The scenario** (`evals/scenarios/<name>.md`): the person, the brief, the
-  steps, the limits, how to judge the code, and the report's exact shape.
-  Read it first, completely.
+  steps, the limits, its pitfalls and how to judge the code. Read it first,
+  completely — and `evals/rubric.md`, which every scenario shares: what to
+  measure as you go, how to score, and the report's exact shape.
 
 ## How you use the TUI
 

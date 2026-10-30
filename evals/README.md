@@ -8,8 +8,12 @@ evidence, in the same shape every time so versions can be compared.
 
 ## What is here
 
-- `scenarios/` — what to build and as whom, the steps, the limits, how to
-  judge the code, and the report's shape. `time-tracker.md` is the first.
+- `scenarios/` — what to build and as whom, the steps, the limits, the
+  pitfalls a careful implementation avoids, and how to judge the code.
+  `time-tracker.md` (a CLI, time and dates) and `expense-splitter.md` (an
+  HTTP API, money arithmetic and invariants).
+- `rubric.md` — shared by every scenario: what to measure as you go, the
+  levels each score is given by, and the report's shape.
 - `../.claude/agents/spec-tacular-evaluator.md` — the evaluating agent.
 - `tools/tui.py` — a headless terminal (a pseudo-terminal and the `pyte`
   emulator) an agent drives one command at a time: start a program, read the
