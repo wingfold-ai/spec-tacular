@@ -416,6 +416,11 @@ asked: Does a deferred task count as open? — No; deferred tasks are excused.
 - A formula that cannot be read, names a variable the glossary does not have,
   or defines an output differently from another requirement holds up the
   design, with the combination where they differ.
+- Revising one with AI (`r`) can change the glossary with it: the agent
+  returns the entries its formula needs, shown above the diff
+  (`+ clock_behind (input, bool) — …`) and written into `glossary.yaml` on
+  accept, comments and all; a variable it still leaves undefined is named.
+  `g` on the card opens the glossary in `$EDITOR`.
 - A requirement without one is flagged for the words it leaves undefined:
   *promptly*, *large*, *gracefully*.
 

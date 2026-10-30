@@ -13,9 +13,9 @@
  * than demand tests for them.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { parse } from 'yaml';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { parse, parseDocument } from 'yaml';
 import { parseExpr, variablesOf, type Expr } from './expr.ts';
 
 export type Role = 'mode' | 'input' | 'output' | 'internal';
@@ -124,4 +124,82 @@ export function loadGlossary(projectRoot: string): Glossary | null {
 export function isEnumValue(variables: Map<string, Variable>, name: string): boolean {
   for (const v of variables.values()) if (v.type === 'enum' && v.values.includes(name)) return true;
   return false;
+}
+
+/**
+ * One glossary entry a revision adds or replaces, whole — what revising a
+ * formal requirement needs when its formula names a variable the glossary
+ * does not have, or one whose type or range is wrong.
+ */
+export interface GlossaryChange {
+  name: string;
+  role: string;
+  type: string;
+  meaning: string;
+  range?: [number, number];
+  values?: string[];
+  source?: string;
+}
+
+/** What is wrong with the changes, read as the glossary would read them. */
+export function glossaryChangeProblems(changes: GlossaryChange[]): string[] {
+  const vars = Object.fromEntries(changes.map((c) => [c.name, entryOf(c)]));
+  return readGlossary({ variables: vars }).problems;
+}
+
+function entryOf(c: GlossaryChange): Record<string, unknown> {
+  return {
+    role: c.role,
+    type: c.type,
+    meaning: c.meaning,
+    ...(c.range ? { range: c.range } : {}),
+    ...(c.values && c.values.length > 0 ? { values: c.values } : {}),
+    ...(c.source ? { source: c.source } : {}),
+  };
+}
+
+/** Reads the changes an agent returned; anything malformed is left out. */
+export function parseGlossaryChanges(raw: unknown): GlossaryChange[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((r): GlossaryChange[] => {
+    if (typeof r !== 'object' || r === null) return [];
+    const e = r as Record<string, unknown>;
+    const name = typeof e['name'] === 'string' ? e['name'].trim() : '';
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return [];
+    const range = Array.isArray(e['range']) && e['range'].length === 2 && e['range'].every((x) => typeof x === 'number')
+      ? (e['range'] as [number, number])
+      : undefined;
+    const values = Array.isArray(e['values']) ? e['values'].filter((v): v is string => typeof v === 'string') : undefined;
+    return [{
+      name,
+      role: String(e['role'] ?? '').trim(),
+      type: String(e['type'] ?? '').trim(),
+      meaning: String(e['meaning'] ?? '').trim(),
+      ...(range ? { range } : {}),
+      ...(values && values.length > 0 ? { values } : {}),
+      ...(typeof e['source'] === 'string' && e['source'].trim() ? { source: e['source'].trim() } : {}),
+    }];
+  });
+}
+
+/** One change as a reviewer reads it: `+ name (input, int 0–3) — meaning`. */
+export function describeGlossaryChange(c: GlossaryChange, existing: Glossary | null): string {
+  const kind = [c.type, c.range ? `${c.range[0]}–${c.range[1]}` : '', c.values?.length ? `{${c.values.join(', ')}}` : '']
+    .filter(Boolean)
+    .join(' ');
+  return `${existing?.variables.has(c.name) ? '~' : '+'} ${c.name} (${c.role}, ${kind}) — ${c.meaning}`;
+}
+
+/**
+ * Writes the changes into glossary.yaml: each entry added or replaced
+ * whole, everything else — other entries, constraints, comments — kept.
+ */
+export function applyGlossaryChanges(projectRoot: string, changes: GlossaryChange[]): void {
+  if (changes.length === 0) return;
+  const path = glossaryPath(projectRoot);
+  const doc = existsSync(path) ? parseDocument(readFileSync(path, 'utf8')) : parseDocument('variables: {}\n');
+  if (!doc.has('variables') || doc.get('variables') === null) doc.set('variables', doc.createNode({}));
+  for (const c of changes) doc.setIn(['variables', c.name], doc.createNode(entryOf(c)));
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, String(doc), 'utf8');
 }

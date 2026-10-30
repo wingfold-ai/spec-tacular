@@ -30,8 +30,10 @@ export interface RevisePanelProps {
   /** Why there is no agent to revise with, or null when there is one. */
   unavailable: string | null;
   propose: (turns: RefineTurn[], instruction: string) => Promise<Refinement>;
-  /** Writes the revision into the spec file. */
-  onAccept: (block: string) => { ok: true } | { ok: false; reason: string };
+  /** Writes the revision into the spec file — and, when it has any, its glossary changes. */
+  onAccept: (block: string, refinement?: Refinement) => { ok: true } | { ok: false; reason: string };
+  /** How a glossary change reads, for the lines above the diff. */
+  describeGlossary?: (refinement: Refinement) => string[];
   /** Closes the panel; the message says what happened to the requirement. */
   onClose: (message: string | null) => void;
   /** What is being revised, in messages: `requirement` unless said otherwise. */
@@ -162,7 +164,7 @@ export function RevisePanel(props: RevisePanelProps) {
   const accept = () => {
     const next = latest();
     if (!next) return;
-    const result = props.onAccept(next.block);
+    const result = props.onAccept(next.block, next);
     if (!result.ok) {
       setError(result.reason);
       setPhase('error');
@@ -308,6 +310,12 @@ export function RevisePanel(props: RevisePanelProps) {
         <For each={latest()!.warnings}>
           {(w) => <text style={{ fg: THEME.warn }}>{`! ${w}`}</text>}
         </For>
+        <Show when={latest()!.glossary?.length}>
+          <text style={{ fg: THEME.accent2 }}>glossary.yaml, written with it:</text>
+          <For each={props.describeGlossary?.(latest()!) ?? latest()!.glossary!.map((c) => `+ ${c.name} (${c.role}, ${c.type}) — ${c.meaning}`)}>
+            {(l) => <text style={{ fg: l.startsWith('~') ? THEME.warn : THEME.ok }}>{`  ${l}`}</text>}
+          </For>
+        </Show>
         <box style={{ flexDirection: 'column', border: ['left'], borderColor: THEME.border, paddingLeft: 1 }}>
           <For each={diff().slice(top(), top() + height())}>
             {(row) => <text style={{ fg: row.fg }}>{row.text || ' '}</text>}

@@ -40,7 +40,9 @@ export interface RefinePort {
   current: (item: Revisable) => { ok: true; block: string } | { ok: false; reason: string };
   propose: (item: Revisable, turns: RefineTurn[], instruction: string) => Promise<Refinement>;
   /** Writes an accepted revision; the session then shows it pending again. */
-  accept: (item: Revisable, block: string) => { ok: true } | { ok: false; reason: string };
+  accept: (item: Revisable, block: string, refinement?: Refinement) => { ok: true } | { ok: false; reason: string };
+  /** How the revision's glossary changes read. */
+  describeGlossary?: (refinement: Refinement) => string[];
 }
 
 /** An item as Markdown, for copying when its file cannot be read. */
@@ -74,6 +76,8 @@ export interface ReviewScreenProps {
   onEdit: () => void;
   /** Revising with the agent; without it, `e` opens the editor as `E` does. */
   refine?: RefinePort;
+  /** Opens the glossary — what a formal form names — in $EDITOR. */
+  onGlossary?: () => void;
   onMove: (delta: number) => void;
   onBack: () => void;
 }
@@ -255,6 +259,9 @@ export function ReviewScreen(props: ReviewScreenProps) {
       case 't':
         if (hasMatrix()) setShowMatrices((v) => !v);
         return;
+      case 'g':
+        if (props.formal && props.onGlossary) props.onGlossary();
+        return;
       case 'f':
         if (findings().length > FLAGS_SHOWN) setShowFlags((v) => !v);
         return;
@@ -297,8 +304,9 @@ export function ReviewScreen(props: ReviewScreenProps) {
               seed={item()?.state === 'rejected' && !item()?.drifted ? item()?.review.note : undefined}
               unavailable={props.refine?.unavailable ?? null}
               propose={(turns, instruction) => props.refine!.propose(revising()!.item, turns, instruction)}
-              onAccept={(block) => {
-                const result = props.refine!.accept(revising()!.item, block);
+              describeGlossary={props.refine?.describeGlossary}
+              onAccept={(block, refinement) => {
+                const result = props.refine!.accept(revising()!.item, block, refinement);
                 if (result.ok) setFlash('Revised and written — it is pending again: a accepts the new text');
                 return result;
               }}
@@ -449,7 +457,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
           <text style={{ fg: THEME.text }}>a accept · x reject (asks why) · d defer (asks what would verify it)</text>
           <text style={{ fg: THEME.text }}>r revise with AI: say what should change, see the diff, accept or ask again</text>
           <text style={{ fg: THEME.text }}>E or ctrl+e edit in $EDITOR · y copy it · s skip · n/p move · q back</text>
-          <text style={{ fg: THEME.text }}>pgdn/pgup or the wheel scroll a long card · t shows its matrices · f all specificity flags</text>
+          <text style={{ fg: THEME.text }}>pgdn/pgup or the wheel scroll a long card · t shows its matrices · f all specificity flags · g the glossary</text>
           <text style={{ fg: THEME.text }}>drag to select text, ctrl+c copies it · ctrl+v pastes into a prompt · any key closes</text>
         </box>
       </Show>
@@ -461,7 +469,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
               ? 'a accept · r revise with AI · x reject · ctrl+e editor · p promote to ADR · s skip · ? help · q back'
               : findings().length > 0
                 ? 'a accept · r revise with AI · x reject · d defer · ctrl+e editor · m mark example · s skip · ? help · q back'
-                : `a accept · r revise with AI · x reject · d defer · ctrl+e editor${hasMatrix() ? ` · t ${showMatrices() ? 'fold' : 'show'} matrices` : ''} · s skip · n/p move · pgdn scroll · ? help · q back`}
+                : `a accept · r revise with AI · x reject · d defer · ctrl+e editor${hasMatrix() ? ` · t ${showMatrices() ? 'fold' : 'show'} matrices` : ''}${props.formal && props.onGlossary ? ' · g glossary' : ''} · s skip · n/p move · pgdn scroll · ? help · q back`}
           </text>
         </box>
       </Show>

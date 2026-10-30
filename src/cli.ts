@@ -2258,7 +2258,7 @@ async function main(): Promise<number> {
         propose: async (change, item, turns, instruction) => {
           const root = statuses.get(change)?.changeRoot;
           if (!assistants?.refiner || !root) throw new Error(assistants?.advisorNote ?? `${change} is gone`);
-          return assistants.refiner.propose(refineContext(root, item), turns, instruction);
+          return assistants.refiner.propose(refineContext(root, item, args.cwd), turns, instruction);
         },
       },
       artifactFile: (change, artifact) => artifactFile(adapter, statuses, change, artifact),

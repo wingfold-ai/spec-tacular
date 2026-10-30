@@ -6,14 +6,14 @@
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeDriver } from '../src/agent/claude.ts';
 import { lintRequirement, withoutFormal } from '../src/core/concreteness.ts';
 import { changeEvidence, loadVerification, VERIFICATION_STARTER, type EvidenceRecord } from '../src/core/evidence.ts';
 import { formalOf } from '../src/core/formal/formal.ts';
-import { readGlossary } from '../src/core/formal/glossary.ts';
+import { applyGlossaryChanges, loadGlossary, readGlossary } from '../src/core/formal/glossary.ts';
 import { matricesFor, ruledOutBy } from '../src/core/formal/matrix.ts';
 import { DEFAULT_MATRIX_CONFIG } from '../src/core/formal/config.ts';
 import { allowSurvivors, codeUnderTest, parseLcov, spreadMutants } from '../src/core/formal/harness.ts';
@@ -302,5 +302,56 @@ describe('the specificity lint', () => {
     const findings = lintRequirement(r);
     expect(findings.map((f) => f.value)).toEqual(['entries.json']);
     expect(withoutFormal(r.text)).toHaveLength(r.text.length);
+  });
+});
+
+describe('revising a formal requirement with the agent', () => {
+  const SPEC = '## ADDED Requirements\n\n### Requirement: Start\nThe system SHALL start a timer.\n\n```formal\ndecision: started = NOT timer_running\n```\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n';
+  const GLOSSARY = '# what formal forms name\nvariables:\n  timer_running: { role: input, type: bool, meaning: a timer runs }\n  started: { role: output, type: bool, meaning: a timer was started }\nconstraints: []\n';
+
+  const setup = () => {
+    const d = root();
+    mkdirSync(join(d, 'spec-tacular'));
+    writeFileSync(join(d, 'spec-tacular', 'glossary.yaml'), GLOSSARY);
+    const file = join(d, 'spec.md');
+    writeFileSync(file, SPEC);
+    const r = parseSpecFile(SPEC, 'timer', file).requirements[0]!;
+    return { d, context: refineContext(d, r, d) };
+  };
+  const revised = SPEC.split('\n').slice(2).join('\n').replace('NOT timer_running', 'NOT timer_running AND NOT clock_behind').trim();
+
+  test('carries the glossary entries its formula needs, and says which are still missing', () => {
+    const { context } = setup();
+    expect(context.glossary).toContain('timer_running');
+    const without = parseRefinement({ requirement: revised, summary: '' }, context);
+    expect(without.warnings).toContain('not in the glossary, and not added: clock_behind');
+    const withEntry = parseRefinement(
+      { requirement: revised, summary: '', glossary: [{ name: 'clock_behind', role: 'input', type: 'bool', meaning: 'the clock is before the running start' }] },
+      context,
+    );
+    expect(withEntry.warnings).toEqual([]);
+    expect(withEntry.glossary).toHaveLength(1);
+  });
+
+  test('a glossary-only answer is a change', () => {
+    const { context } = setup();
+    const same = SPEC.split('\n').slice(2).join('\n').trim();
+    const r = parseRefinement({ requirement: same, summary: '', glossary: [{ name: 'timer_running', role: 'input', type: 'int', range: [0, 3], meaning: 'timers running' }] }, context);
+    expect(r.warnings).not.toContain('Nothing changed');
+  });
+
+  test('the entries are written into glossary.yaml, keeping the rest and its comments', () => {
+    const { d } = setup();
+    applyGlossaryChanges(d, [
+      { name: 'clock_behind', role: 'input', type: 'bool', meaning: 'the clock is behind' },
+      { name: 'timer_running', role: 'input', type: 'int', range: [0, 3], meaning: 'timers running' },
+    ]);
+    const text = readFileSync(join(d, 'spec-tacular', 'glossary.yaml'), 'utf8');
+    expect(text).toContain('# what formal forms name');
+    const g = loadGlossary(d)!;
+    expect(g.problems).toEqual([]);
+    expect(g.variables.get('clock_behind')!.role).toBe('input');
+    expect(g.variables.get('timer_running')!.range).toEqual([0, 3]);
+    expect(g.variables.get('started')!.type).toBe('bool');
   });
 });

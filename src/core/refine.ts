@@ -29,6 +29,18 @@ import { isRisk, parseRisks, RISK_HEADER, type Risk } from './risks.ts';
 import { setState, type ChangeReview } from './review.ts';
 import { currentItem, moveTo, refresh, type ReviewSession } from './session.ts';
 import { REVISION_RULES } from './revision.ts';
+import { formalOf } from './formal/formal.ts';
+import { variablesOf } from './formal/expr.ts';
+import { fretVariables } from './formal/fretish.ts';
+import {
+  glossaryChangeProblems,
+  glossaryPath,
+  isEnumValue,
+  parseGlossaryChanges,
+  readGlossary,
+  type GlossaryChange,
+} from './formal/glossary.ts';
+import { parse as parseYaml } from 'yaml';
 
 /**
  * What can be revised in conversation: a requirement, or a risk — each a
@@ -43,6 +55,11 @@ export interface RefineContext {
   spec: string;
   /** The change's proposal, when it has one: why the requirement exists. */
   proposal?: string;
+  /**
+   * The project's glossary.yaml as it is now, when it has one: what a formal
+   * form may name — and what a revision may add to or change in it.
+   */
+  glossary?: string;
 }
 
 /** One round: what was asked, and the requirement the agent answered with. */
@@ -58,6 +75,8 @@ export interface Refinement {
   summary: string;
   /** Worth knowing before accepting it, never blocking. */
   warnings: string[];
+  /** Glossary entries it adds or replaces, written with it on accept. */
+  glossary?: GlossaryChange[];
 }
 
 export const REFINE_SCHEMA = {
@@ -65,16 +84,34 @@ export const REFINE_SCHEMA = {
   properties: {
     requirement: { type: 'string' },
     summary: { type: 'string' },
+    glossary: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string' },
+          type: { type: 'string' },
+          meaning: { type: 'string' },
+          range: { type: 'array', items: { type: 'number' } },
+          values: { type: 'array', items: { type: 'string' } },
+          source: { type: 'string' },
+        },
+        required: ['name', 'role', 'type', 'meaning'],
+      },
+    },
   },
   required: ['requirement', 'summary'],
 } as const;
 
 /** Reads what the agent needs to know besides the requirement. */
-export function refineContext(changeRoot: string, requirement: Revisable): RefineContext {
+export function refineContext(changeRoot: string, requirement: Revisable, projectRoot?: string): RefineContext {
   const spec = readFileSync(requirement.file, 'utf8');
   const proposalPath = join(changeRoot, 'proposal.md');
   const proposal = existsSync(proposalPath) ? readFileSync(proposalPath, 'utf8') : undefined;
-  return { requirement, spec, ...(proposal ? { proposal } : {}) };
+  const g = projectRoot ? glossaryPath(projectRoot) : null;
+  const glossary = g && existsSync(g) ? readFileSync(g, 'utf8') : undefined;
+  return { requirement, spec, ...(proposal ? { proposal } : {}), ...(glossary !== undefined ? { glossary } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +177,12 @@ export function buildRefineParts(
       empty: '(nothing yet: this is the first request)',
     },
   );
+  if (context.glossary !== undefined) {
+    sections.push({
+      heading: "The project's glossary (spec-tacular/glossary.yaml): what a formal form may name",
+      lines: context.glossary.split('\n').map((l) => l.trimEnd()),
+    });
+  }
 
   const from = turns.length > 0 ? `your latest proposal, [${turns.length}]` : `the ${noun} as it is in the file now`;
   const task = [
@@ -151,7 +194,7 @@ export function buildRefineParts(
     'and in `summary` one short sentence saying what you changed.',
   ].join('\n');
 
-  if (risk) return { preamble: PREAMBLE.replace(/requirement/g, 'risk'), context: sections, task, rules: RISK_RULES };
+  if (risk) return { preamble: PREAMBLE.replace(/requirement/g, 'risk'), context: sections, task, rules: `${RISK_RULES}\n${GLOSSARY_RULES}` };
 
   const rules = [
     'Format — the requirement is written back into the spec file exactly as you',
@@ -166,10 +209,21 @@ export function buildRefineParts(
     ...(req.operation === 'MODIFIED'
       ? ['- Keep the name exactly: in a MODIFIED section the name says which', '  existing requirement this one replaces.']
       : []),
+    GLOSSARY_RULES,
   ].join('\n');
 
   return { preamble: PREAMBLE, context: sections, task, rules };
 }
+
+const GLOSSARY_RULES = [
+  'The glossary — written with the revision when it is accepted:',
+  '- A formal form names only glossary variables. When yours needs one the',
+  '  glossary lacks, or an entry is wrong (its type, its range), return it in',
+  '  `glossary`: each entry whole — name, role (mode | input | output |',
+  '  internal), type (bool | int | float | enum), meaning, and range [lo, hi]',
+  '  for a number or values for an enum. Leave out the entries you did not',
+  '  change. Never say you cannot change the glossary: this is how.',
+].join('\n');
 
 const RISK_RULES = [
   'Format — the risk is written back into the risks document exactly as you',
@@ -211,7 +265,9 @@ export function parseRefinement(raw: unknown, context: RefineContext): Refinemen
 
   const lines = block.split('\n');
   const mask = buildCodeFenceMask(lines);
-  if (isRisk(context.requirement)) return parseRiskRefinement(block, lines, mask, record, context.requirement, context.spec);
+  if (isRisk(context.requirement)) {
+    return withGlossary(parseRiskRefinement(block, lines, mask, record, context.requirement, context.spec), record, context);
+  }
   if (!REQUIREMENT_HEADER.test(lines[0]!)) {
     throw new Error('The revision does not start with "### Requirement:"');
   }
@@ -240,10 +296,40 @@ export function parseRefinement(raw: unknown, context: RefineContext): Refinemen
     );
   }
   if (revised.scenarios.length === 0) warnings.push('It has no scenario left');
-  if (revised.hash === original.hash) warnings.push('Nothing changed');
+  const glossaryChanged = parseGlossaryChanges(record['glossary']).length > 0;
+  if (revised.hash === original.hash && !glossaryChanged) warnings.push('Nothing changed');
 
   const summary = typeof record['summary'] === 'string' ? record['summary'].trim() : '';
-  return { block, summary, warnings };
+  return withGlossary({ block, summary, warnings }, record, context);
+}
+
+/**
+ * The glossary entries an answer carries, checked: malformed ones are
+ * named, and so is a variable the revised formula still leaves undefined.
+ */
+function withGlossary(r: Refinement, record: Record<string, unknown>, context: RefineContext): Refinement {
+  const changes = parseGlossaryChanges(record['glossary']);
+  const warnings = [...r.warnings];
+  for (const p of glossaryChangeProblems(changes)) warnings.push(`glossary: ${p}`);
+  if (context.glossary !== undefined) {
+    let current;
+    try {
+      current = readGlossary(parseYaml(context.glossary));
+    } catch {
+      current = null;
+    }
+    const form = formalOf({ ...context.requirement, text: r.block });
+    if (current && form) {
+      const names = new Set<string>();
+      for (const d of form.decisions) [d.output, ...variablesOf(d.expr)].forEach((v) => names.add(v));
+      for (const f of form.frets) fretVariables(f).forEach((v) => names.add(v));
+      const added = new Set(changes.map((c) => c.name));
+      const missing = [...names].filter((n) => !current!.variables.has(n) && !added.has(n) && !isEnumValue(current!.variables, n));
+      if (missing.length > 0) warnings.push(`not in the glossary, and not added: ${missing.join(', ')}`);
+    }
+  }
+  if (r.warnings.includes('Nothing changed') && changes.length > 0) warnings.splice(warnings.indexOf('Nothing changed'), 1);
+  return { ...r, warnings, ...(changes.length > 0 ? { glossary: changes } : {}) };
 }
 
 function parseRiskRefinement(

@@ -10,6 +10,8 @@
  */
 
 import { createCliRenderer } from '@opentui/core';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import {
@@ -22,7 +24,7 @@ import {
   staleArtifacts,
 } from '../core/gate.ts';
 import { reviewView } from '../core/formal/view.ts';
-import type { Glossary } from '../core/formal/glossary.ts';
+import { applyGlossaryChanges, describeGlossaryChange, glossaryPath, type Glossary } from '../core/formal/glossary.ts';
 import { specified, type ChangePipeline, type Stage, type StageState } from '../core/pipeline.ts';
 import {
   decide,
@@ -1474,6 +1476,21 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
   };
 
+  /** `g` on a card: the glossary in $EDITOR, at the end of its variables. */
+  const onGlossary = () => {
+    const path = glossaryPath(props.input.root);
+    if (!existsSync(path)) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, 'variables:\n', 'utf8');
+    }
+    const lines = readFileSync(path, 'utf8').split('\n');
+    const constraints = lines.findIndex((l) => /^constraints:/.test(l));
+    const result = openInEditor(renderer, path, constraints > 0 ? constraints : lines.length);
+    if (!result.ok) return setNotice(result.reason ?? 'Could not open an editor');
+    // Read again: the card's formal form is checked against it.
+    setSession((s) => (s ? { ...s } : s));
+  };
+
   const onEdit = () => {
     const current = session();
     const item = current ? currentItem(current) : null;
@@ -1498,14 +1515,26 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       unavailable: refine.unavailable,
       current: (item) => readRequirementBlock(item),
       propose: (item, turns, instruction) => refine.propose(session()!.change, item, turns, instruction),
-      accept: (item, block) => {
+      accept: (item, block, refinement) => {
         const current = session();
         if (!current) return { ok: false, reason: 'the review was closed' };
         const result = acceptRefinement(current, item, block, () => props.input.reparse(current.change));
         if (!result.ok) return result;
+        // Its glossary entries go with it: a formula naming a variable the
+        // glossary lacks would block the design.
+        if (refinement?.glossary?.length) {
+          try {
+            applyGlossaryChanges(props.input.root, refinement.glossary);
+          } catch (err) {
+            commit(result.session);
+            return { ok: false, reason: `written, but not the glossary: ${(err as Error).message}` };
+          }
+        }
         commit(result.session);
         return { ok: true };
       },
+      describeGlossary: (refinement) =>
+        (refinement.glossary ?? []).map((c) => describeGlossaryChange(c, props.input.glossary?.() ?? null)),
     };
   });
 
@@ -2089,6 +2118,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             onDefer={(deferReason) => commit(decide(session()!, 'deferred', { deferReason }))}
             onSkip={() => commit(skipItem(session()!))}
             onEdit={onEdit}
+            onGlossary={onGlossary}
             refine={refinePort()}
             onMove={(d) => commit(moveCursor(session()!, d))}
             findings={findings()}
