@@ -131,6 +131,8 @@ export interface TuiInput {
     { ok: true; where: string } | { ok: false };
   /** The changes being implemented in a session elsewhere right now. */
   implementing?: () => string[];
+  /** Regenerates a change's matrices and their tests, as `matrix --write` does. */
+  writeMatrices?: (change: string) => { ok: true; written: number } | { ok: false; reason: string };
   /**
    * Archives a change — or, with `dryRun`, says what archiving it would do,
    * or why it may not be archived yet. `text` is the command's own report.
@@ -1617,6 +1619,11 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     else if (key.name === 'w') void draftNext();
     // Always an answer: archived, or why not yet.
     else if (key.sequence === 'A' && props.input.archive && selected()) void checkArchive(selected()!.name);
+    else if (key.sequence === 'M' && props.input.writeMatrices && selected()) {
+      const result = props.input.writeMatrices(selected()!.name);
+      setNotice(result.ok ? `Regenerated ${result.written} matrix test file${result.written === 1 ? '' : 's'} for ${selected()!.name}` : result.reason);
+      void reload(selected()!.name);
+    }
     else if (key.name === 'o' && stopped()) openStop(stopped()!);
     else if (key.name === 's' && selectedSlice()) {
       const check = sliceCheck();

@@ -530,7 +530,7 @@ export function mergeSlices(slices: ProposedSlice[], index: number): ProposedSli
   const summary = [into.summary, from.summary].map((s) => s.trim().replace(/[.;]\s*$/, '')).filter(Boolean).join('; ');
   const merged: ProposedSlice = {
     ...into,
-    title: `${into.title} + ${from.title.charAt(0).toLowerCase()}${from.title.slice(1)}`,
+    title: `${into.title}, and ${/^[A-Z][a-z]/.test(from.title) ? from.title.charAt(0).toLowerCase() + from.title.slice(1) : from.title}`,
     summary: summary ? `${summary}.` : '',
     why: into.why,
     dependsOn: [...new Set([...into.dependsOn, ...from.dependsOn])].filter((d) => d !== into.id && d !== from.id),

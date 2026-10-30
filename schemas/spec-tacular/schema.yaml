@@ -27,6 +27,9 @@ artifacts:
       sets the change's consequence class, where the project has them: it is
       in the highest class it touches, so a boundary drawn wider than needed
       costs rigor, and one drawn too narrow is caught when the code is.
+      Include the tests the change writes, and — where requirements will
+      have formal forms — the harness directory (`test/support/harness/` by
+      default). The generated matrix tests never need naming.
 
       Read the project's ground rules in `spec-tacular/foundation/` and the
       accepted ADRs in `spec-tacular/decisions/` before writing. A proposal that
@@ -282,10 +285,12 @@ artifacts:
           **Scope: global** — an architectural rule the whole project should follow
 
       Global-scope decisions are candidates for promotion to project ADRs during
-      review. Err toward `global` for anything about layering, error handling,
-      persistence, authentication, API style, or dependency choice: a decision
-      wrongly marked local gets silently re-decided, differently, in the next
-      change.
+      review, each one an ADR a person reads. Mark a decision global only when
+      a later change must follow it — layering, error handling, persistence,
+      authentication, API style, a dependency — and only once: a rule the
+      ground rules or an accepted ADR already state is not decided again. How
+      this change's own code is shaped stays local. A first change decides
+      many things; a handful of them are the project's rules.
 
       Each decision carries the alternatives considered and why they lost.
 

@@ -69,9 +69,14 @@ export function withinBoundary(path: string, patterns: string[]): boolean {
  */
 const BOOKKEEPING = /^(openspec|spec-tacular|\.spec-tacular)\//;
 
-/** Changed files the boundary does not cover. */
-export function outsideBoundary(changed: string[], patterns: string[]): string[] {
-  return changed.filter((f) => !BOOKKEEPING.test(f) && !withinBoundary(f, patterns)).sort();
+/**
+ * Changed files the boundary does not cover. `generated` are files
+ * spec-tacular itself writes into the project — the matrix tests and their
+ * runner — which no change has to claim.
+ */
+export function outsideBoundary(changed: string[], patterns: string[], generated: string[] = []): string[] {
+  const isGenerated = (f: string) => generated.some((g) => f === g || f.startsWith(`${g.replace(/\/$/, '')}/`));
+  return changed.filter((f) => !BOOKKEEPING.test(f) && !isGenerated(f) && !withinBoundary(f, patterns)).sort();
 }
 
 function git(cwd: string, args: string[]): string | null {

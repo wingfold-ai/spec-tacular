@@ -12,14 +12,8 @@
 
 import { parseDecisions } from './decisions.ts';
 import { hashBlock } from './requirements.ts';
-import { SHOWN_RED_MARKER } from './risks.ts';
+import { NOTE, SHOWN_RED, stripMarkers } from './markers.ts';
 import { loadReview, saveReview, setState } from './review.ts';
-
-/**
- * `(note: <what>)` on a task: what the implementing agent wants the reader
- * to know — a deviation, a follow-up. Implementing, not changing the plan.
- */
-export const NOTE_MARKER = /\(note:\s*[^)\s][^)]*\)/i;
 
 /** Where a written document stands. */
 export interface Signoff {
@@ -31,18 +25,12 @@ export interface Signoff {
 
 /**
  * The hash a document is accepted under. Ticking a task off is implementing
- * the plan, not changing it, so checkboxes count as unticked — and so does
- * recording that a guard test was shown red (core/risks.ts).
+ * the plan, not changing it, so checkboxes count as unticked — and so do
+ * recording that a guard test was shown red and the agent's `(note: …)`
+ * on a task (core/markers.ts).
  */
 export function hashDocument(content: string): string {
-  return hashBlock(
-    content
-      .replace(/^(\s*[-*]\s+)\[[xX]\]/gm, '$1[ ]')
-      // A note on a line of its own goes with its line.
-      .replace(new RegExp(`^[ \\t]*${NOTE_MARKER.source}[ \\t]*\\n`, 'gim'), '')
-      .replace(new RegExp(`[ \\t]*${NOTE_MARKER.source}`, 'gi'), '')
-      .replace(new RegExp(`[ \\t]*${SHOWN_RED_MARKER.source}`, 'gi'), ''),
-  );
+  return hashBlock(stripMarkers(content.replace(/^(\s*[-*]\s+)\[[xX]\]/gm, '$1[ ]'), [NOTE, SHOWN_RED]));
 }
 
 /** Whether `artifact` of `change`, as `content` now reads, is accepted. */

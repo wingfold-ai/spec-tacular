@@ -71,7 +71,7 @@ const HELP_LINES = [
   '  ctrl+e         write the next artifact yourself, in $EDITOR',
   '  v              read the latest artifact — the specs, one requirement at a time',
   '  s              specify the next slice on the roadmap, once this one is specified',
-  '  A / b          archive an implemented change (shown first) / report a defect',
+  '  A / M / b      archive an implemented change / regenerate its matrices / report a defect',
   '  f              the ground rules: domain, stack, architecture, conventions',
   '  ctrl+j, ctrl+b background jobs, AI usage (model, cost, step) · h start screen · q quit',
   '',

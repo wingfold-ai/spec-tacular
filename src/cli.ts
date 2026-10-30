@@ -109,6 +109,12 @@ function unconnectedItems(
   return { items, components };
 }
 
+/** What spec-tacular writes into a project itself: never outside a change's boundary. */
+function generatedPaths(projectRoot: string): string[] {
+  const config = matrixConfig(projectRoot);
+  return [config.tests, config.runner];
+}
+
 /** Per item, why its matrix would show nothing even when every row passes. */
 function vacuousItems(entries: MatrixEntry[]): Map<string, string> {
   const out = new Map<string, string>();
@@ -510,7 +516,7 @@ async function loadPipelines(
             unanswered: design === null ? [] : unansweredRisks(accepted, design).map((r) => r.name),
             unguarded: tasksFile === null ? [] : unguardedRisks(accepted, tasksFile).map((r) => r.name),
             unproven: tasksFile === null ? [] : unprovenGuards(tasksFile).map((g) => g.risk),
-            outsideBoundary: boundary && changedNow ? outsideBoundary(changedNow, boundary) : [],
+            outsideBoundary: boundary && changedNow ? outsideBoundary(changedNow, boundary, generatedPaths(projectRoot)) : [],
             unmitigatedHigh: accepted
               .filter((r) => r.unmitigated && /^\s*(high|critical|catastrophic)\b/i.test(r.severity))
               .map((r) => r.name),
@@ -2200,6 +2206,18 @@ async function main(): Promise<number> {
       launch: (change, command) => openElsewhere(writeSessionScript(args.cwd, change, command), args.cwd),
       implementing: () => implementingNow(args.cwd),
       startNextSlice: (id) => startNextSlice(args, adapter, id),
+      writeMatrices: (change) => {
+        const status = statuses.get(change);
+        if (!status) return { ok: false, reason: `${change} is gone` };
+        try {
+          const entries = changeMatrices(args.cwd, change, loadChangeReview(args.cwd, status).requirements.map((r) => r.item), loadGlossary(args.cwd));
+          if (entries.length === 0) return { ok: false, reason: `${change} has no formal requirements yet` };
+          writeMatrices(args.cwd, entries);
+          return { ok: true, written: writeTests(args.cwd, entries).tests.length };
+        } catch (err) {
+          return { ok: false, reason: `Could not write the matrices: ${(err as Error).message}` };
+        }
+      },
       archive: async (change, dryRun) => {
         let text = '';
         const collect = (t: string) => {

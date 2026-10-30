@@ -168,8 +168,12 @@ export function VisionScreen(props: VisionScreenProps) {
     if (phase() === 'review' && rewording() !== null) {
       const at = rewording()!;
       if (isEnter(key)) {
+        // `Title — what it does`: both are reworded on the one line.
         const text = sliceLine.text().trim();
-        if (text) setSlices((all) => all.map((sl, i) => (i === at ? { ...sl, summary: text } : sl)));
+        const cut = text.indexOf(' — ');
+        const title = cut > 0 ? text.slice(0, cut).trim() : '';
+        const summary = cut > 0 ? text.slice(cut + 3).trim() : text;
+        if (text) setSlices((all) => all.map((sl, i) => (i === at ? { ...sl, ...(title ? { title } : {}), summary: summary || sl.summary } : sl)));
         setRewording(null);
         return;
       }
@@ -201,7 +205,8 @@ export function VisionScreen(props: VisionScreenProps) {
         });
         setHint(`Merged “${absorbed.title}” into this slice`);
       } else if (key.name === 'e') {
-        sliceLine.set(slices()[sliceSel()]!.summary);
+        const sl = slices()[sliceSel()]!;
+        sliceLine.set(`${sl.title} — ${sl.summary}`);
         setRewording(sliceSel());
       } else if (key.name === 'space' || key.name === 'x') {
         const id = slices()[sliceSel()]!.id;
@@ -260,7 +265,7 @@ export function VisionScreen(props: VisionScreenProps) {
           ['ctrl+c', 'back'],
         ];
       case 'review':
-        if (rewording() !== null) return [['enter', 'save the description'], ['esc', 'leave it as it was']];
+        if (rewording() !== null) return [['enter', 'save: title — what it does'], ['esc', 'leave it as it was']];
         return [
           ['↑↓', 'select'],
           ['space', 'keep / drop'],

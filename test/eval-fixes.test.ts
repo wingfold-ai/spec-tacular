@@ -14,10 +14,11 @@ import { lintRequirement, withoutFormal } from '../src/core/concreteness.ts';
 import { changeEvidence, loadVerification, VERIFICATION_STARTER, type EvidenceRecord } from '../src/core/evidence.ts';
 import { formalOf } from '../src/core/formal/formal.ts';
 import { applyGlossaryChanges, loadGlossary, readGlossary } from '../src/core/formal/glossary.ts';
-import { matricesFor, ruledOutBy } from '../src/core/formal/matrix.ts';
+import { checksHold, matricesFor, ruledOutBy } from '../src/core/formal/matrix.ts';
 import { DEFAULT_MATRIX_CONFIG } from '../src/core/formal/config.ts';
 import { allowSurvivors, codeUnderTest, parseLcov, spreadMutants } from '../src/core/formal/harness.ts';
 import { hazardState, type Hazard } from '../src/core/hazards.ts';
+import { hasMarker, markerSpans, NOTE, SHOWN_RED, stripMarkers } from '../src/core/markers.ts';
 import { currentItem, openSession } from '../src/core/session.ts';
 import { parseRefinement, refineContext } from '../src/core/refine.ts';
 import { parseSpecFile } from '../src/core/requirements.ts';
@@ -201,6 +202,7 @@ describe('the roadmap\'s slices', () => {
     const merged = mergeSlices(slices, 0);
     expect(merged.map((s) => s.id)).toEqual(['add-timer', 'add-totals']);
     expect(merged[0]!.summary).toBe('Start and stop a timer; List today\'s entries.');
+    expect(merged[0]!.title).toBe('Start and stop, and list today');
     expect(merged[1]!.dependsOn).toEqual(['add-timer']);
   });
 
@@ -353,5 +355,37 @@ describe('revising a formal requirement with the agent', () => {
     expect(g.variables.get('clock_behind')!.role).toBe('input');
     expect(g.variables.get('timer_running')!.range).toEqual([0, 3]);
     expect(g.variables.get('started')!.type).toBe('bool');
+  });
+});
+
+describe('markers on a task', () => {
+  test('are read with their parentheses balanced', () => {
+    const text = 'do it (note: the CLI half (stderr, exit 1) is in e2e) then more';
+    expect(markerSpans(text, NOTE)).toEqual([[6, 53]]);
+    expect(stripMarkers(text, [NOTE])).toBe('do it then more');
+  });
+
+  test('a qualified "shown red" counts, a bare mention does not', () => {
+    expect(hasMarker('(shown red as uid 1000: reverted it; 2 failures)', SHOWN_RED)).toBe(true);
+    expect(hasMarker('(shown red: reverted it)', SHOWN_RED)).toBe(true);
+    expect(hasMarker('Show it red: remove the check', SHOWN_RED)).toBe(false);
+    expect(hasMarker('(shown red:)', SHOWN_RED)).toBe(false);
+  });
+
+  test('a note on lines of its own leaves with them, and the plan keeps its hash', () => {
+    const plan = '- [ ] 1.1 Write the store\n- [ ] 1.2 Write the CLI\n';
+    const done = '- [x] 1.1 Write the store\n      (note: kept the (old) layout,\n      as agreed)\n- [x] 1.2 Write the CLI (shown red as uid 1000: removed it (1 failure))\n';
+    expect(hashDocument(done)).toBe(hashDocument(plan));
+  });
+});
+
+describe('an invariant\'s matrix', () => {
+  test('also runs long, and its self-test checks the whole run', () => {
+    const g = readGlossary({ variables: { running_count: { role: 'output', type: 'int', range: [0, 3], meaning: 'x' } } });
+    const r = req('fret: Tick shall always satisfy running_count <= 1');
+    const m = matricesFor(r, '[req:timer#r]', formalOf(r)!, g)[0]!;
+    expect(m.rows.map((row) => row.words.split(':')[0])).toEqual(['from the start', 'over a long run']);
+    expect(m.rows[1]!.steps.length).toBeGreaterThan(m.rows[0]!.steps.length * 3);
+    for (const t of m.selfTest) expect(checksHold(t.checks, t.response)).toBe(t.passes);
   });
 });

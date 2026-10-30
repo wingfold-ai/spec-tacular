@@ -10,6 +10,7 @@
  * mitigation (docs/proposals/add-change-risks.md).
  */
 
+import { hasMarker, SHOWN_RED } from './markers.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { buildCodeFenceMask, normalizeContent } from './markdown.ts';
 import { hashBlock, slugify, type ReviewItem } from './requirements.ts';
@@ -169,9 +170,9 @@ export const GUARD_MARKER = /\(guard:\s*([^)]+?)\s*\)/i;
 
 /**
  * `(shown red: <how>)`: the guard test was run with the mitigation removed,
- * and failed. A test that passes either way does not guard anything.
+ * and failed. A test that passes either way does not guard anything. Read
+ * with its parentheses balanced, and qualified or not (core/markers.ts).
  */
-export const SHOWN_RED_MARKER = /\(shown red:\s*[^)\s][^)]*\)/i;
 
 export interface GuardTask {
   risk: string;
@@ -197,7 +198,7 @@ export function guardTasks(content: string): GuardTask[] {
     }
     const guard = text.match(GUARD_MARKER);
     if (!guard?.[1]) continue;
-    out.push({ risk: guard[1], done: task[1] !== ' ', shownRed: SHOWN_RED_MARKER.test(text), text });
+    out.push({ risk: guard[1], done: task[1] !== ' ', shownRed: hasMarker(text, SHOWN_RED), text });
   }
   return out;
 }

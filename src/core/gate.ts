@@ -225,8 +225,10 @@ export function formalWarnings(pipeline: ChangePipeline): string[] {
   return [
     ...f.errors.map((e) => `formal form of "${e.item}": ${e.problems.join('; ')}`),
     ...f.conflicts,
-    ...(stale.length > 0
-      ? [`test matrix missing or out of date for ${stale.map((n) => `"${n}"`).join(', ')} — run \`spec-tacular matrix ${pipeline.name} --write\``]
+    // The implementing agent writes the matrices; before it starts, a
+    // missing one is not news. After, one out of date is: M regenerates it.
+    ...(stale.length > 0 && (pipeline.apply.tasks?.done ?? 0) > 0
+      ? [`test matrix out of date for ${stale.map((n) => `"${n}"`).join(', ')} — M regenerates it (\`spec-tacular matrix ${pipeline.name} --write\`)`]
       : []),
     // Said once implementing has started; before, every harness is missing.
     ...((pipeline.apply.tasks?.done ?? 0) > 0

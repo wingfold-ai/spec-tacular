@@ -475,8 +475,8 @@ function fretMatrix(f: Fretish, glossary: Glossary | null): Omit<Matrix, 'genera
   const off = cond.off ?? on;
   const mode = f.scope?.mode;
 
-  const build = (fires: number[], inScope = true): Record<string, Value>[] =>
-    Array.from({ length }, (_, i) => ({
+  const build = (fires: number[], inScope = true, steps = length): Record<string, Value>[] =>
+    Array.from({ length: steps }, (_, i) => ({
       ...(fires.includes(i) ? on : off),
       ...(mode ? { [mode]: f.scope!.kind === 'notin' ? !inScope : inScope } : {}),
       // A stop condition, where the timing has one, comes three steps in.
@@ -491,7 +491,12 @@ function fretMatrix(f: Fretish, glossary: Glossary | null): Omit<Matrix, 'genera
         { name: 'fires again while the first is pending', steps: build([0, 2]) },
         { name: 'fires late', steps: build([2]) },
       ]
-    : [{ name: 'from the start', steps: build([]) }];
+    // An invariant has no trigger to vary: what can vary is how long the
+    // system runs, and so how many states the harness walks it through.
+    : [
+        { name: 'from the start', steps: build([]) },
+        { name: 'over a long run', steps: build([], true, length * 4) },
+      ];
   if (f.scope && f.scope.kind !== 'before' && f.scope.kind !== 'after') {
     cases.push({ name: 'outside the scope', steps: build(resolved.condition ? [0] : [], false) });
   }
@@ -513,8 +518,9 @@ function fretMatrix(f: Fretish, glossary: Glossary | null): Omit<Matrix, 'genera
   const selfTest: SelfTest[] = [];
   for (const row of rows) {
     if (!row.checks || row.checks.length === 0) continue;
-    selfTest.push({ id: `${row.id}-meets`, response: meets(row.checks, length), checks: row.checks, passes: true });
-    selfTest.push({ id: `${row.id}-breaks`, response: violate(row.checks[0]!, length), checks: [row.checks[0]!], passes: false });
+    const steps = row.steps.length;
+    selfTest.push({ id: `${row.id}-meets`, response: meets(row.checks, steps), checks: row.checks, passes: true });
+    selfTest.push({ id: `${row.id}-breaks`, response: violate(row.checks[0]!, steps), checks: [row.checks[0]!], passes: false });
   }
 
   return {

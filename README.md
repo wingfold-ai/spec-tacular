@@ -185,7 +185,8 @@ question). It then proposes 3–8
 slices in build order, the first the smallest thing a user can do end to end.
 The selected slice is shown in full. Reshape them before anything is written:
 `space` drops one, `m` merges it with the next into one change, `shift+↑↓`
-moves it (never before a slice it builds on), `e` rewords what it does. The
+moves it (never before a slice it builds on), `e` rewords it — *Title —
+what it does* on one line. The
 rest become `spec-tacular/roadmap.yaml`;
 the vision and interview go to `spec-tacular/vision.md`, which every agent
 reads. The first slice becomes your first change, and the ground rules come
@@ -450,7 +451,8 @@ Matrix (3 conditions): alarm = armed & voltage > 9 & voltage < 20
   with checks over the response: at a step, at some, every or no step of a
   window. Responses that break the checks come with it, to test the checker.
 - `--write` writes the matrix to `spec-tacular/matrix/` (it outlives the
-  change), copies a dependency-free runner into the project, and writes a
+  change; `M` on the overview does the same once implementing has started,
+  when a revised formula leaves one out of date), copies a dependency-free runner into the project, and writes a
   table-driven test per matrix. The one part written by hand is the
   **harness**: how to set each input in the real code and read each output.
 - Each row is a test named `[req:…] [row:D7]`. Its consequence class decides
