@@ -15,6 +15,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildCodeFenceMask, normalizeContent, SECTION_HEADER } from './markdown.ts';
+import { withMarker } from './provenance.ts';
 import { hashBlock, slugify, type ReviewItem } from './requirements.ts';
 
 /** Where a decision applies. Global ones are candidates for promotion. */
@@ -219,7 +220,7 @@ export function promoteDecision(
     decision.body.replace(SCOPE_MARKER, '').trimStart(),
     '',
   ];
-  writeFileSync(file, lines.join('\n'), 'utf8');
+  writeFileSync(file, withMarker(lines.join('\n'), 'markdown'), 'utf8');
 
   if (options.supersedes) markSuperseded(projectRoot, options.supersedes, number);
 

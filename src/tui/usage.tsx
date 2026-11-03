@@ -42,6 +42,8 @@ export function UsageColumn(props: {
   model?: string;
   active: ActiveAI | null;
   onExpand: () => void;
+  /** The implementing sessions: tokens only, Claude Code reports no cost for them. */
+  implementing?: UsageTotals;
 }) {
   const requests = () =>
     `${props.totals.requests} request${props.totals.requests === 1 ? '' : 's'}`;
@@ -79,6 +81,15 @@ export function UsageColumn(props: {
         </text>
       </Show>
 
+      <Show when={props.implementing && props.implementing.requests > 0}>
+        <text>{' '}</text>
+        <text style={{ fg: THEME.text }}>{clip('+ implementing', USAGE_WIDTH - 3)}</text>
+        <text style={{ fg: THEME.dim }}>
+          {clip(`${formatTokens(totalInput(props.implementing!))} in · ${formatTokens(props.implementing!.outputTokens)} out`, USAGE_WIDTH - 3)}
+        </text>
+        <text style={{ fg: THEME.dim }}>{clip('cost not reported', USAGE_WIDTH - 3)}</text>
+      </Show>
+
       <box style={{ flexGrow: 1 }} />
 
       <Show
@@ -111,6 +122,7 @@ export function UsagePane(props: {
   model?: string;
   active: ActiveAI | null;
   jobs: JobUsage[];
+  implementing?: UsageTotals;
 }) {
   // In, split by what it cost: read from the cache is cheapest, written to it dearest.
   const tokenLine = () => {
@@ -129,6 +141,12 @@ export function UsagePane(props: {
         {`${driverLabel(props.driver)}${props.model ? ` · ${props.model}` : ''} — ${formatCost(props.totals.costUsd)} over ${props.totals.requests} request${props.totals.requests === 1 ? '' : 's'}`}
       </text>
       <text style={{ fg: THEME.text }}>{tokenLine()}</text>
+      <Show when={props.implementing && props.implementing.requests > 0}>
+        <text style={{ fg: THEME.text }}>
+          {`+ implementing: ${formatTokens(totalInput(props.implementing!))} in · ${formatTokens(props.implementing!.outputTokens)} out` +
+            ' — Claude Code reports no cost for an interactive session; its /cost command shows it there'}
+        </text>
+      </Show>
 
       <text>{' '}</text>
       <text style={{ fg: THEME.accent2 }}>

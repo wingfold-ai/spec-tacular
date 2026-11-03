@@ -7,3 +7,4 @@ temp/
 .claude/worktrees/
 .claude/settings.local.json
 target/
+__pycache__/

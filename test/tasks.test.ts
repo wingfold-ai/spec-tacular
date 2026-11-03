@@ -16,7 +16,7 @@ const TASKS = `## 1. Setup
 
 describe('task progress', () => {
   test('counts ticked, deferred and open tasks', () => {
-    expect(taskProgress(TASKS)).toEqual({ total: 4, done: 2, deferred: 1, open: 1, applied: false });
+    expect(taskProgress(TASKS)).toEqual({ total: 4, done: 2, deferred: 1, open: 1, unproven: 0, applied: false });
   });
 
   test('applied once all but the deferred ones are ticked', () => {
@@ -59,11 +59,18 @@ describe('implementing', () => {
     expect(nextStep(p, true).text).toBe('2 of 4 tasks ticked off. Carry on implementing — the agent opens right here.');
   });
 
+  test('a harness waiting for review is the next step: it is the developer\'s, not a task', () => {
+    const formal = { errors: [], conflicts: [], formal: 1, total: 1, harnessPending: 2 };
+    const p = planned({ tasks: taskProgress(TASKS), formal });
+    expect(nextStep(p, true)).toMatchObject({ actions: ['review'] });
+    expect(nextStep(p, true).text).toContain('Review the harness: 2 bindings waiting');
+  });
+
   test('all tasks ticked but the deferred: implemented', () => {
     const p = planned({ tasks: taskProgress(TASKS.replace('- [ ] 1.2', '- [x] 1.2')) });
     expect(p.apply.state).toBe('accepted');
     const step = nextStep(p, true);
-    expect(step.actions).toEqual([]);
+    expect(step.actions).toEqual(['archive']);
     expect(step.text).toContain('Implemented: all 3 tasks are ticked off.');
     expect(step.text).toContain('1 deferred until it is deployed');
   });

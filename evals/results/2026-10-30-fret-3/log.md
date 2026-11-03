@@ -1,0 +1,73 @@
+# Log fret-3
+- 11:54:11 start: read scenario, README first screens
+- 11:54:21 start screen; sidebar already shows $0.05 / 1 request before anything done (minor: what was that request?)
+- 11:54:32 Setup done instantly on Start; vision screen
+- 11:55:00 interview Q1 (project identity): answered own text: free-text name created on first use, no client, no rate
+- 11:58:23 interview: only ONE question asked, then slices generated automatically ($0.31, 5 requests). Roadmap 5 slices; slice1=start/stop only, list today in slice 2. Sam merges 1+2 with m.
+- 11:58:34 merged; merged text is naive concatenation ('...running one; Run `tick status`...'), title long. polish. Pressing enter to create roadmap
+- 11:58:51 Ground rules intro: 11 proposed. cost $0.38
+- 12:00:34 GR: confirmed domain, core terms (week Mon-Sun, local tz), language: TS strict on Bun current stable (Sam has bun 1.4.2)
+- 12:00:59 GR framework: ⇐ proposal lists subcommands today/report/edit which contradict roadmap (list/status) — minor inconsistency; ⇐ says none but ★ recommends Commander. Sam picks 'None, node:util parseArgs' option
+- 12:01:35 GR datastore: ⇐ and ★ both SQLite; Sam picks 'JSON file with schema version' (XDG path, TICK_FILE override, atomic rename, UTC ISO times)
+- 12:02:09 GR tools: confirmed bun, bun test, Biome, tsc --noEmit
+- 12:02:34 GR architecture: ⇐ proposal still says 'SQLite storage ... adapters' although Sam just chose JSON file -> stale proposal (minor/major). Choosing listed 'Hexagonal, ports and adapters' option instead
+  (the listed option text does mention JSON file store: only the pre-made ⇐ was stale)
+- 12:03:20 GR layers: confirmed ⇐ src/domain <- src/app(+ports) <- src/adapters <- src/main.ts
+- 12:03:55 GR business rules: confirmed ⇐ pure functions in src/domain, no Date.now in domain/app
+- 12:04:57 GR naming: ⇐ listed subcommands today/report; used ctrl+r revise ('match roadmap: start stop status list ...'); got clean diff, accepted with a. Good UX.
+- 12:05:28 GR follow-up: instants as epoch ms + IANA zone from Clock — confirmed
+- 12:05:44 GR tests: confirmed ⇐ layered test checklist (domain unit, app via memory adapters, midnight/DST/week edge cases, CLI exit codes, tsc+biome)
+- 12:06:07 GR done: 12 answered, $1.43 / 19 requests
+- 12:06:19 overview: change add-start-stop-timer created; pipeline proposal-specs-risks-design-tasks-apply. Press w to draft proposal
+- 12:07:36 proposal draft 1 read (good, 10 open questions). Redraft with feedback: same project running=no-op+message; names trimmed exact; entry belongs to day it started; durations floor to minute '1h 05m'; errors stderr exit 1
+- 12:08:30 proposal draft 2: all 5 answers incorporated precisely ($2.08). Accept (a).
+- 12:08:43 drafting specs (w)
+- 12:11:18 specs drafted: 19 requirements ($2.76)
+- 12:11:54 read all 3 spec files fully (timer 9 req, listing 4, storage 6). High quality, formal blocks with decision/asked. Plan: reject 'Entries persist' (untestable 'no data leaves machine'), 'Command outcome reporting' (vague 'any command fails' scenario)
+- 12:12:42 review: accepted R1 List today, R2 day-it-started; REJECTED R3 Running entry in listing ('empty or marked as running' leaves two behaviours open); accepted R4 Empty day
+- 12:13:07 REJECTED R5 Entries persist (untestable 'no data leaves machine', vague 'a command is refused'). R6 Data file location: shows 'Reads as', 2 matrices folded, 7 specificity flags (paths: are the contract here) -> accept
+- 12:13:24 accepted R7 missing file, R8 versioned format (polish: inline examples render as 'not part of this contract 1')
+- 12:13:44 accepted R9 atomic. REJECTED R10 Unreadable file: formal 'command_refused = NOT file_readable' reads 'exactly when' but stop-with-nothing-running is also refused -> wrong formula; caught via 'Reads as'
+- 12:14:07 R11 Start: 5-condition matrix (32 rows, most × by glossary constraints); constraints sensible. accept
+- 12:14:23 accepted R12 names, R13 switch (formula omits file_readable but constraint timer_running->file_readable covers it)
+- 12:14:42 R14 already-running accepted. R15 Stop: tool flags 'no row shows timer_running changing outcome: dead or coupled'. Sam revises with r
+- 12:15:18 R15 revised (formula -> entry_stopped = clock_after_start, relies on constraint; less readable but correct), accepted new text
+- 12:15:44 accepted R16 end-after-start, R17 status, R18 duration. R18 shows FALSE-POSITIVE flag '! undefined words: in time — how much, how soon' (matched 'in time zone')
+- 12:15:54 REJECTED R19 Command outcome reporting ('any command fails' scenario not concrete). flag 'undefined words: normal' shown
+- 12:16:44 R3 revised (end column shows 'running'), accepted. Now R5
+- 12:17:14 R5 revised (dropped untestable sentence; concrete scenario), accepted. Now R10
+- 12:17:45 R10 revised (output renamed file_error_reported, glossary entry added and shown above diff), accepted. Now R19
+- 12:18:24 R19 revised (concrete tick list corrupt-file scenario), accepted. 19/19 accepted; 5 rejected/revised total (R3,R5,R10,R19 rejected+revised; R15 revised w/o reject). $3.06. Review stays on last card after all accepted (no 'done' prompt) - minor
+- 12:18:36 drafting risks (w)
+- 12:20:21 risks drafted ($3.54): 6 risks, all concrete with hazard/boundary/causes/guard/check. Strong. Concurrency risk feels overkill for single-user CLI
+- 12:21:37 risks: accepted 5; concurrency revised to Unmitigated/low (Sam: single user) and accepted. 25/25. $3.59
+- 12:21:47 drafting design (w)
+- 12:25:58 design drafted: 566 lines ($4.66, ~6 min)
+- 12:26:10 design read fully: 16 decisions, answers every risk by name, Decide->Plan->Execute, architecture test. Thorough, a bit heavy for a timer CLI. D1 still names output 'command_refused' (renamed in R10 revision) -> stale reference (minor). Accept.
+- 12:26:25 design accepted (no ADR promotion step was offered, though design calls 9 decisions global/ADR candidates). drafting tasks (w)
+- 12:28:26 tasks drafted ($5.47)
+- 12:28:36 tasks read: 8 groups/~30 tasks, guard per risk w/ show-red method, matrix+harness first. Issues: 2.2 still uses 'command_refused' (no longer exists), 8.4 uses 'bun link' (writes outside project). Redraft with feedback.
+- 12:29:19 tasks redraft fixed both points precisely. Accept.
+- 12:29:34 tasks accepted ($5.81, 32 requests). Planning done. Press w: Implement it in Claude Code
+- 12:30:05 impl-1 opened. PROMPT #1: workspace trust dialog (default 'No, exit') -> approved Yes
+- 12:31:37 PROMPT #2 seen (survey bash). Started approver helper (approves in-project, denies sudo/global install/bun link/curl/home/system paths), logs to prompts.log. Prompt #1 trust handled by hand.
+- 12:33:13 helper prompt 2 approved: 'cat ../shims/spec-tacular' reads outside project (run dir shim) - read-only; Sam would probably allow, noted. Session is in 'accept edits on' mode
+- 12:41:20 implementing in progress; waiting with an idle-detector loop
+- 12:47:10 helper bug: identical repeated prompt (same text) was deduped and left pending 5 min (12:41-12:47); fixed helper to re-answer after 10s; this is harness-side delay
+  prompt 13 is likely the same pending prompt as 12 (enter possibly lost) -> count as one prompt
+- 12:56:27 implementing ~25 min in, 37 prompts so far, all in-project (bun test/tsc/biome/bun -e/sed/grep variants, each distinct pipe = new prompt)
+- 13:07:43 implementing DONE 13:06 (started 12:31, ~35 min). Agent: 35/35 tasks ticked, 189 tests, tsc+biome pass, harness check NOT CONNECTED pending my --accept and --allow-survivors. Prompts: 1 trust + 43 helper-logged (12/13 likely one) = 43 answered, 0 denied. Helper stopped.
+- 13:07:53 TUI overview after impl: sidebar shows '+ implementing 16.2M in · 126.2k out, cost not reported' (tokens yes, cost no). Warnings: guards 7.3/7.5 'ticked off without being shown red'; 2 files outside boundary; evidence 0/24; 3 harnesses not connected (need review). '33 of 35 tasks'
+- 13:08:11 cause of 'guard ticked without shown red' for 7.3/7.5: those tasks have sub-bullets + a paragraph (drafted that way by the tool's tasks agent); the (shown red: ...) note was put after them and the tool does not associate it. 7.1/7.2/7.4 (single paragraph) count. Tool bug (major). Sam asks the impl session to fix the note placement.
+- 13:10:16 after moving notes: guard warning gone, apply ✓. Prompts 44-45 (grep/sed). Now Review harness (enter)
+- 13:11:00 read all 3 harnesses (hand-written, drive real services via runTick/listToday, probe via startFacts/startedOnLocalDay). Accepted 3 bindings.
+- 13:11:37 harness --check (CLI): timer 26/32, entry-storage 17/32, entry-listing 2/6 caught; NOT CONNECTED until survivors allowed. Survivors include test doubles in src/adapters/memory (not excluded by the default patterns 'in-memory-', 'fakes/'), terminal wording, and logic other components' matrices catch. Sam allows with reason.
+- 13:12:28 BLOCKER-ish: 'spec-tacular harness add-start-stop-timer --allow-survivors "why"' (as README + overview say) prints the overview and does nothing (2 attempts: space and = syntax). CLI --help lists no harness/evidence/matrix commands. Also CLI overview says 'risks * / tasks * review unfinished, next: risks (review)' while TUI shows all ✓ (inconsistent). Attempt 3: TUI ? help
+- 13:13:15 BLOCKER: --allow-survivors does nothing (prints overview) in 4 variants (positional change, =, -c, plain reason). 'spec-tacular evidence <change>' also prints the overview instead of the matrix; 'evidence --run' works (all items passing). Next: try Archive (A) in TUI
+- 13:13:33 Archive (A) refused: 7 items not connected (harness survivors). Popup renders over old text (garbled overlay). Workaround attempt: evidence --waive
+- 13:13:51 WORKAROUND: waived 7 not-connected items via 'spec-tacular evidence --waive <item> --reason ...' (first waiver of timer#stop-the-running-timer was recorded by me with reason 'test' while checking syntax — my mistake; re-waived with the real reason; log is append-only)
+- 13:14:41 CORRECTION (my error, harness-side): the failing CLI calls (--allow-survivors x4, 'evidence <change>', overview showing 'risks */tasks *', --help without harness commands) were run WITHOUT sourcing env.sh, so they hit a different spec-tacular on PATH (~/.local/bin), not the version under test. Not a tool bug; retracted from friction. The calls that worked (--check, evidence --run, the first --waive 'test') had env.sh sourced. Side effect: one real waiver with reason 'test' was recorded for timer#stop-the-running-timer by the version under test.
+- 13:14:55 --allow-survivors (correct binary) worked: all 3 harnesses connected
+- 13:15:18 evidence: 23/24 verified, 1 excepted (my stray 'test' waiver on stop-the-running-timer persists over passing runs; no un-waive documented). Now Archive (A)
+- 13:15:56 ARCHIVED: 19 requirements merged into baseline, risks to hazard register. Change shows ✓ done. $5.81 planning + implementing tokens (cost not reported). Now judging code.
+- 13:17:02 judged code: 189 pass/0 fail, tsc 0, biome clean; all CLI scenarios behave per spec. Stopped impl-1, tui, helper.

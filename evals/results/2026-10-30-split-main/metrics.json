@@ -1,0 +1,172 @@
+{
+  "label": "eval-split-main",
+  "jobs": [
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T13:12:46.684Z",
+      "minutes": 0.6,
+      "cost_usd": 0.2902588,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T13:14:55.467Z",
+      "minutes": 0.78,
+      "cost_usd": 0.3469236,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T13:16:15.605Z",
+      "minutes": 0.62,
+      "cost_usd": 0.33355699999999994,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "specs",
+      "start": "2026-10-30T13:17:22.520Z",
+      "minutes": 1.94,
+      "cost_usd": 0.631535,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "design",
+      "start": "2026-10-30T13:27:42.550Z",
+      "minutes": 3.71,
+      "cost_usd": 0.9720913999999999,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "tasks",
+      "start": "2026-10-30T13:32:02.057Z",
+      "minutes": 1.53,
+      "cost_usd": 0.7246178000000001,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "tasks",
+      "start": "2026-10-30T13:34:01.237Z",
+      "minutes": 0.53,
+      "cost_usd": 0.3272664,
+      "status": "succeeded"
+    }
+  ],
+  "drafting": {
+    "jobs": 7,
+    "by_artifact": {
+      "design": 1,
+      "proposal": 3,
+      "specs": 1,
+      "tasks": 2
+    },
+    "minutes": 9.7,
+    "cost_usd": 3.63
+  },
+  "tui_sessions": null,
+  "implementing": {
+    "sessions": 1,
+    "minutes": 11.1,
+    "output_tokens": 60556,
+    "cache_read_tokens": 4571236,
+    "cache_write_tokens": 146276,
+    "permission_prompts": 1
+  },
+  "reported_cost_usd": 3.63,
+  "questions": {
+    "interview_asked": 0,
+    "interview_answered": 0,
+    "ground_rules_answered": 28,
+    "ground_rules_left_for_later": 16,
+    "roadmap_slices": 7
+  },
+  "review": {
+    "requirement": {
+      "items": 34,
+      "accepted": 34,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "documents accepted": 3
+  },
+  "phases": [
+    {
+      "phase": "setup",
+      "start": "14:00:25",
+      "end": "14:00:45",
+      "decisions": 0,
+      "minutes": 0,
+      "agent_minutes": 0.0
+    },
+    {
+      "phase": "vision",
+      "start": "14:00:45",
+      "end": "14:03:28",
+      "decisions": 3,
+      "minutes": 3,
+      "agent_minutes": 0.0
+    },
+    {
+      "phase": "ground-rules",
+      "start": "14:03:30",
+      "end": "14:12:30",
+      "decisions": 14,
+      "minutes": 9,
+      "agent_minutes": 0.0
+    },
+    {
+      "phase": "proposal",
+      "start": "14:12:43",
+      "end": "14:17:18",
+      "decisions": 14,
+      "minutes": 5,
+      "agent_minutes": 2.0
+    },
+    {
+      "phase": "specs",
+      "start": "14:17:18",
+      "end": "14:27:28",
+      "decisions": 41,
+      "minutes": 10,
+      "agent_minutes": 1.9
+    },
+    {
+      "phase": "design",
+      "start": "14:27:40",
+      "end": "14:31:58",
+      "decisions": 1,
+      "minutes": 4,
+      "agent_minutes": 3.7
+    },
+    {
+      "phase": "tasks",
+      "start": "14:31:58",
+      "end": "14:34:40",
+      "decisions": 2,
+      "minutes": 3,
+      "agent_minutes": 2.1
+    },
+    {
+      "phase": "implementing",
+      "start": "14:35:00",
+      "end": "14:46:40",
+      "decisions": 2,
+      "minutes": 11,
+      "agent_minutes": 11.1
+    },
+    {
+      "phase": "finishing",
+      "start": "14:46:40",
+      "end": "14:47:42",
+      "decisions": 1,
+      "minutes": 1,
+      "agent_minutes": 0.0
+    }
+  ],
+  "code": {
+    "source_lines": 876,
+    "test_lines": 1919,
+    "tests_pass": 167,
+    "tests_fail": 0,
+    "tests_skip": 0
+  }
+}

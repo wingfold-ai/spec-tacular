@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { CliRenderer } from '@opentui/core';
+import { DROPPED_ENV } from './tabs.ts';
 
 /** `+12 file` is understood by vim, nvim, nano, emacs and helix alike. */
 function argsFor(editor: string, file: string, line: number): string[] {
@@ -70,7 +71,9 @@ export function runInTerminal(
     const result = spawnSync(command.command, command.args, {
       stdio: 'inherit',
       cwd,
-      env: command.env ? { ...process.env, ...command.env } : process.env,
+      env: Object.fromEntries(
+        Object.entries({ ...process.env, ...command.env }).filter(([k]) => !DROPPED_ENV.includes(k)),
+      ),
     });
     if (result.error) return { ok: false, reason: result.error.message };
     return { ok: true };

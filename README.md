@@ -13,8 +13,10 @@ pipeline that is always visible.
 | OpenSpec today | spec-tacular |
 | --- | --- |
 | Artifact is "complete" when its file exists | Artifact is complete when a human **accepted** it |
-| `design` only requires `proposal` — both can be written at once | `design` requires **accepted** specs; strict `proposal → specs → design → tasks` |
-| Review = reading N spec files in your editor | Review = one requirement at a time: `a` accept / `x` reject / `d` defer, or revise it with AI (`r`) |
+| `design` only requires `proposal` — both can be written at once | `design` requires **accepted** specs and risks; strict `proposal → specs → risks → design → tasks` |
+| Risks are a prose section nobody accepts or tests | Each **risk** is reviewed on its own, answered by name in the design, and guarded by a test **shown to fail** without its mitigation |
+| Nothing says what a change may touch | The proposal declares a **boundary**; files changed outside it are flagged |
+| Review = reading N spec files in your editor | Review = one requirement (or risk) at a time: `a` accept / `x` reject / `d` defer, or revise it with AI (`r`) |
 | Design decisions stay local to a change | Cross-cutting decisions are **promoted to global ADRs** |
 | No project ground rules before the first change | A **Foundation** phase: stack, architecture style, conventions, ADRs |
 | Greenfield = 15 changes proposed at once | A **Roadmap** layer that sequences an idea into reviewable slices |
@@ -176,20 +178,35 @@ A new project starts from its vision rather than a change — there is nothing
 to change yet, and it comes before the ground rules. (If you answered the
 Domain question first, the description starts from that answer, so nothing is
 described twice: add to it or press enter.) The AI restates what
-it understood and asks one question at a time, with options, until it has
+it understood and asks one question at a time, with options — at least one,
+however complete the description — until it has
 enough or you say "done" (Skip, the first choice, tab or "skip" pass on a
 question). It then proposes 3–8
 slices in build order, the first the smallest thing a user can do end to end.
-Drop the ones you do not want, and the rest become `spec-tacular/roadmap.yaml`;
+The selected slice is shown in full. Reshape them before anything is written:
+`space` drops one, `m` merges it with the next into one change, `shift+↑↓`
+moves it (never before a slice it builds on), `e` rewords it — *Title —
+what it does* on one line. The
+rest become `spec-tacular/roadmap.yaml`;
 the vision and interview go to `spec-tacular/vision.md`, which every agent
 reads. The first slice becomes your first change, and the ground rules come
 next, proposed from the vision; its proposal is drafted once they are settled.
 
 Drafts are for reading. While an agent drafts, its progress streams into the
 change panel; when it lands, the draft opens: scroll through it, then
-accept it (`a`, which drafts the next artifact too), redraft it with feedback
-(`r`) — the agent revises it with what you typed — or edit it (ctrl+e). `v`
-reads it again later.
+accept it (`a`), redraft it with feedback (`r`) — the agent revises it with
+what you typed — or edit it (ctrl+e). Accepting starts nothing by itself: the
+next artifact waits on the overview until you draft it (`w`). `v` reads it
+again later.
+
+An agent stops rather than design around accepted requirements that
+contradict each other or leave the decision open. When it does, it writes a
+report instead of the artifact, and the TUI opens that report: each conflict
+or gap, with the full text of every requirement involved underneath, so you
+can see the contradiction for yourself. `s` opens the review on the first of
+those requirements to revise it, `r` answers the agent (say, which side to go
+with) and drafts again, and `w` simply tries again. Until the next draft, the
+overview keeps the warning up, and `o` reopens the report.
 
 The same interaction has the same key everywhere: `a` accepts, `r` revises
 with AI (ctrl+r on the screens where you type), ctrl+e opens `$EDITOR`, `y`
@@ -214,6 +231,335 @@ file untouched. A rejected requirement's prompt starts from why you rejected
 it. A revised requirement is pending again, cursor on it, for its new text to
 be accepted; the other requirements keep their decisions, a rename included.
 ctrl+e (or `E`) still opens it in `$EDITOR`, and `y` copies it.
+
+Once the specs are accepted, the change lists its **risks** in `risks.md`:
+what it could break, each with its hazard, the requirements it threatens,
+the situation it arises in, a severity, the guard that rules it out and how a
+test checks it. They are reviewed in the same queue, after the requirements,
+one at a time (`a` / `x` / `d`), and an edit sends one back to pending. A risk
+left knowingly unmitigated says why in an `Unmitigated:` line instead. Then each
+risk is followed through, and the overview names whichever one is not:
+
+```
+risks: 2/2 accepted
+! the design does not answer risk "Export leaks other users"
+! guard ticked off without being shown red: "Export leaks other users"
+! 1 file changed outside the boundary: lib/oops.ts
+```
+
+- The **design** must answer every risk by its name.
+- The **tasks** carry a guard task per risk, `(guard: <risk>)`, whose test
+  must be shown to fail with the mitigation removed. The agent records how,
+  `(shown red: …)`, and a guard ticked off without it still counts as open.
+  Recording it does not send the accepted tasks back to be read again.
+- The **proposal** names a `## Boundary`: the paths the change expects to
+  touch. Once implementing has started, files changed on the branch outside
+  it are listed. Advisory: only a person can tell whether reaching further was
+  right.
+
+Not every change deserves the same rigor. `spec-tacular/classes.yaml` sorts the
+code by what a failure would cost, P0 (highest) to P3, and a change is in the
+highest class it touches — by its boundary, and again by the files it actually
+changed, which are named if they raise it:
+
+```yaml
+default: P2                      # code no area names
+classes:
+  P0:
+    why: a wrong decision here lets unreviewed work through
+    paths: [src/core/gate.ts, src/auth/]
+tailoring:                       # a rule waived for a class, never without why
+  - class: P0
+    rule: diff-review
+    reason: one developer; every merge is pair-reviewed
+```
+
+Each class turns rules on. Today there are two:
+
+- **P0 — `diff-review`**: the agent wrote the code, so it cannot be the one to
+  certify it. Ticking the last task off is not the end: a person reads the
+  implementation diff (`v` on the overview, or `spec-tacular diff <change>`)
+  and accepts it (`a`, or `--accept`). Like every acceptance it holds for
+  that text — a later change to the code sends it back — and archiving is
+  refused until it is done.
+- **P0 and P1 — `guard-high-risks`**: a high-severity risk cannot be left
+  `Unmitigated:`; the design is refused until it has a guard.
+
+A waived rule is named wherever it would have applied, with its reason.
+`spec-tacular classes` prints the map, the rules and every change's class;
+agents read the same. Without a `classes.yaml` nothing changes: no change has
+a class, and no class rule applies.
+
+A ticked task is a claim; a passing test is **evidence**. Tests name what they
+verify in their own name — `[req:<capability>#<slug>]` for a requirement,
+`[risk:<change>#<slug>]` for a risk's guard — in any language. Tell
+spec-tacular how to run them, in `spec-tacular/verification.yaml` — `init`
+writes it with the lines for common runners commented out (evidence stays off
+until one is uncommented, and the tasks of a first change fill it in):
+
+```yaml
+command: bun test --reporter=junit --reporter-outfile=.spec-tacular/junit.xml
+report: .spec-tacular/junit.xml   # any JUnit XML: vitest, jest, pytest --junitxml, …
+```
+
+`spec-tacular evidence --run` runs them and appends what it found — per item,
+with the hash of the item's text and of the test's file — to
+`.spec-tacular/evidence/<change>.jsonl`. Nothing in it is ever rewritten. Then
+`spec-tacular evidence [<change>]` prints the verification matrix:
+
+```
+add-export  1/2 verified
+  passing  test          export#export-data  Export data
+           [req:export#export-data] exports the caller's data
+  missing  test          risks#export-leaks-other-users  Export leaks other users
+           name a test with [risk:add-export#export-leaks-other-users]
+```
+
+- **States** are kept apart: `missing`, `passing`, `failing`, `stale` (the
+  item's text or the test file changed since it passed) and `excepted`.
+- **Not everything is a test.** A requirement can say `**Verified by:**
+  analysis`, `inspection` or `demonstration`; a person records it with
+  `--sign <item> --method <m> --note "<what was checked>"`.
+- **Waiving** takes a reason: `--waive <item> --reason "<why>"`. A deferred
+  requirement is excepted by its deferral; a risk left `Unmitigated:` needs
+  none.
+- **Orphans**: a test naming a requirement or change that does not exist is
+  listed by `--run`.
+- **No-Go until proven**: with `verification.yaml` in place, archiving is
+  refused while any accepted requirement or risk is not passing or excepted,
+  and `spec-tacular evidence` exits non-zero — usable in CI.
+- The review flags a requirement whose scenarios are all the happy path: a
+  negative test needs a scenario that says what must not happen.
+
+Risks outlive their change. When a change is archived, each accepted risk
+joins the **hazard register** in `spec-tacular/hazards/` — one numbered file
+per hazard, like the ADRs: what must not happen, its causes, what it affects,
+the controls put in place and the guard tests that verify them. A later risk
+of the same hazard names it, `- **Known hazard:** HAZ-0003`, and updates that
+entry instead of adding a second. Every risks draft starts from the register.
+
+A hazard's status follows its guards, which keep running after their change
+is gone:
+
+```
+$ spec-tacular hazards
+HAZ-0001  open        high     Export leaks other users
+           guard failing: [risk:add-export#export-leaks-other-users]
+HAZ-0002  unmitigated low      Huge export
+           out of scope until pagination
+```
+
+*Mitigated* holds only while every guard passed its latest run; one never run
+leaves the hazard *unverified*, and a failing one makes it *open* again —
+said on every `--print` overview, and `spec-tacular hazards` exits non-zero.
+An entry not looked at for 90 days is listed as due for review;
+`spec-tacular hazards --reviewed HAZ-0001` records a look.
+
+Fixing something is a change of its own kind. `b` on the overview (or
+`spec-tacular defect <name> --description "…"`) asks what went wrong and
+creates a **defect change**, with its own schema — installed by `init` next
+to the main one — whose stages have the same names, so every review, gate and
+evidence rule applies:
+
+- **The report** (proposal) says what was observed, what was expected, how to
+  reproduce it — and first of all `**Whose bug:** code`, `requirement` or
+  `gap`. Most defects trace to a requirement that allowed what happened, so
+  the report decides this before anything is fixed.
+- **The specs** follow from the answer. A code bug repeats the violated
+  requirement unchanged, for a person to confirm it was right; a requirement
+  bug corrects it; a gap adds the missing one, with a scenario that is the
+  defect. The overview flags a spec that does not fit the report — *a code
+  bug changes no requirement, but this one changes "Export data"*.
+- **The risks** start with the defect itself, its guard the reproducer: a
+  test that fails on the code as it is. At archive it joins the hazard
+  register, or updates the hazard it is a recurrence of.
+- **The fix** (design) names the proximate cause, the root cause and the
+  contributing factors — and why the tests did not catch it.
+- **The tasks** begin with the reproducer, shown red before the fix.
+
+Prose can be read two ways. Where a requirement turns on a decision or on
+timing, it can carry a **formal form** — after its text, in a fenced block
+that is part of what is accepted:
+
+````markdown
+```formal
+decision: archive_allowed = tasks_applied AND specs_accepted AND NOT stop_open
+fret: upon request_sent Client shall within 3 ticks satisfy response | timeout_error
+asked: Does a deferred task count as open? — No; deferred tasks are excused.
+```
+````
+
+- `decision:` defines an output by a boolean condition (`AND`, `OR`, `NOT`,
+  `XOR`, `->`, `<->`, comparisons); `fret:` is NASA FRET's structured English
+  — scope, condition, component, timing, response.
+- Its variables come from `spec-tacular/glossary.yaml`: each with its role
+  (mode, input, output, internal), type, meaning, and where its value comes
+  from. `spec-tacular glossary` lists them, what uses each, and which have no
+  source and so cannot be observed. Its **constraints** say which
+  combinations cannot happen, so the matrix does not ask for tests of them:
+
+  ```yaml
+  variables:
+    timer_running: { role: input, type: bool, meaning: a timer is running, source: the data file }
+    same_project:  { role: input, type: bool, meaning: started on the running timer's project }
+    file_version:  { role: input, type: int, range: [1, 3], meaning: the data file's schema version }
+  constraints:
+    - same_project -> timer_running      # same project as the running one needs a running one
+  ```
+
+  Types are `bool`, `int`, `float` and `enum` (with `values:`); `boolean`,
+  `integer` and `number` are read as the first three.
+- The review reads it back in plain words, with what each variable means —
+  *archive_allowed is true exactly when tasks_applied and specs_accepted and
+  not stop_open* — so a wrong formula is caught as a wrong sentence.
+- `asked:` lines are the questions formalizing forced — an empty list: every
+  member, or refused? — and the agent's answer to each is only a proposal.
+  Each is a **question in the review**, right before its requirement: `a`
+  accepts the proposed answer, `r` gives yours, and the requirement is
+  revised with it. Writing the formula is what finds the question; deciding
+  it is yours. Their answers go into the prose, which stays what the specs
+  promise, and each gets a scenario of its own.
+- A formula that cannot be read, names a variable the glossary does not have,
+  or defines an output differently from another requirement holds up the
+  design, with the combination where they differ.
+- Revising one with AI (`r`) can change the glossary with it: the agent
+  returns the entries its formula needs, shown above the diff
+  (`+ clock_behind (input, bool) — …`) and written into `glossary.yaml` on
+  accept, comments and all; a variable it still leaves undefined is named.
+  `g` on the card opens the glossary in `$EDITOR`.
+- A requirement without one is flagged for the words it leaves undefined:
+  *promptly*, *large*, *gracefully*.
+
+A formal form's tests are not chosen; they are generated. `spec-tacular matrix
+<change>` derives its **test matrix**, shown in the review under the formula —
+folded to one line per matrix (*4 rows, 2 MC/DC · t shows them*) until `t`
+opens it; a card taller than the screen scrolls (`pgdn`/`pgup`, the wheel),
+and more than three specificity flags fold behind `f`:
+
+```
+Matrix (3 conditions): alarm = armed & voltage > 9 & voltage < 20
+  × D1   armed=F, voltage > 9=F, voltage < 20=F: cannot happen — no value of voltage makes …
+    D2   armed=F, voltage=9 → alarm=F
+  ◆ D6   armed=T, voltage=9 → alarm=F    [MC/DC: voltage > 9]
+  ◆ D8   armed=T, voltage=10 → alarm=T   [MC/DC: armed, voltage > 9, voltage < 20]
+    B4   armed=T, voltage=19 → alarm=T   (edge of voltage < 20)
+```
+
+- **A decision** gets every combination of its conditions, each made
+  concrete — a comparison at its boundary — with the output the formula
+  requires. Rows nothing can produce, or the glossary's constraints rule out,
+  are marked `×` and not run. `◆` marks the MC/DC rows, where one condition
+  alone changes the outcome; a condition with no such row is reported as dead
+  or coupled. Boundary rows walk each comparison across its edge.
+- **A FRETish requirement** gets step sequences — the trigger firing once,
+  never, held, again while the first is pending, late, outside its scope —
+  with checks over the response: at a step, at some, every or no step of a
+  window. Responses that break the checks come with it, to test the checker.
+- `--write` writes the matrix to `spec-tacular/matrix/` (it outlives the
+  change; `M` on the overview does the same once implementing has started,
+  when a revised formula leaves one out of date), copies a dependency-free runner into the project, and writes a
+  table-driven test per matrix. The one part written by hand is the
+  **harness**: how to set each input in the real code and read each output.
+- Each row is a test named `[req:…] [row:D7]`. Its consequence class decides
+  which rows must pass for the requirement to count as verified: every row
+  for P0, MC/DC and boundary rows for P1. A matrix whose formula or glossary
+  changed is out of date, and the overview says so.
+- **Only where it pays.** Matrices, their harness and its check are for the
+  code whose failure costs most: changes in class P0 or P1. Elsewhere — and
+  in a project without consequence classes — a formal form still specifies,
+  is read back, checked for conflicts and asks its questions, and its
+  requirement is tested like any other, with a tagged test per scenario;
+  the tasks plan no harness. `matrix.verify` in `verification.yaml` makes it
+  `always` or `never` instead of `auto`. In evaluation runs of two small
+  apps, the matrices and the harness cost most of a change's extra time and
+  caught little the ordinary tests did not.
+
+A green matrix proves nothing if the harness answers for the code, or reads
+the wrong place. So a matrix's results count only once its harness is
+**connected**:
+
+- **A mapping, not code, where it can be.** `<component>.mapping.yaml` binds
+  each variable to an export or a field of the production module — data,
+  which cannot compute an answer:
+
+  ```yaml
+  module: src/archive/decide.ts
+  inputs:
+    tasks_applied: { arg: tasksApplied }
+  outputs:
+    archive_allowed: { call: archiveAllowed }
+  ```
+
+  Harness code is the fallback, and must import production code and never
+  the matrix.
+- **Inputs read back.** With a `probe`, every input is read back after each
+  drive; a drive that moved another input fails the row, which would
+  otherwise pass for the wrong reason.
+- **`spec-tacular harness <change> --check`** runs the matrix tests with
+  coverage — they must execute the code the harness names — and then with
+  **mutants** of the code they ran (`&&` → `||`, a `!` dropped, `>` → `>=`,
+  …), each of which some row must catch. What is mutated is every source
+  file the coverage report shows executed, not only what the harness
+  imports — the decision logic is usually a layer further in — and only its
+  executed lines; test files and test doubles (`test-support/`, `fakes/`,
+  `in-memory-…`) never, nor what `matrix.exclude` in `verification.yaml`
+  lists. The budget (`matrix.mutants`, 32) is shared out over the files, and
+  the check reports per file how many changes it got and how many were
+  caught. Mutants run in a scratch copy; the real
+  source is never written. A harness that computes the answer itself passes
+  every row and catches no mutant:
+
+  ```
+  archive  NOT CONNECTED  (code: test/support/harness/archive.ts)
+      - the matrix tests never execute src/archive/decide.ts
+      - 3 of 3 changes to the code went unnoticed — the matrix does not reach
+        that code, or the requirements allow what the change does …
+  ```
+
+  A surviving mutant is a question about the requirements as much as the
+  harness: a client that always "responded" met *within 3 ticks satisfy
+  response*, which is how a missing requirement shows up. It is one finding
+  for the component, settled once: add the requirement, or — where the code
+  is free to differ, say a CLI flag no requirement is about — allow it with
+  `spec-tacular harness <change> --allow-survivors "<why>"`, recorded with
+  the survivors it allowed (new ones are asked again). A matrix that caught
+  none of its changes cannot be allowed: its harness does not reach the code.
+- **Each matrix by its own tests.** Every item's matrix tests must themselves
+  catch some mutant the others catch; one matrix with a harness that answers
+  for the code does not make its neighbours *not connected*.
+- **Each binding is reviewed** in the change's review queue — once the
+  harness is written, the overview's next step is reviewing it; from a
+  shell, `spec-tacular harness <change> --accept` — beside what its
+  variable means — *tasks_applied: every task ticked or deferred · Set by:
+  arg tasksApplied in src/archive/decide.ts* — and an edit sends it back.
+
+Until all of it holds, and still holds for the harness and the code as they
+are now, the requirement's evidence is *not connected* rather than passing,
+and archiving waits for it.
+
+spec-tacular reads FRETish with its own semantics, and every matrix inherits
+that reading — so it is checked against **NASA FRET** itself:
+
+- `spec-tacular fret check [<change>]` takes FRET's own finite-trace formula
+  for each FRETish requirement (`fretcli formalize -l ft-fin`) and compares
+  it with spec-tacular's verdict on the matrix's sequences and thousands of
+  seeded random traces, naming any trace they disagree on. Set `fret.cli` in
+  `verification.yaml` to the command before `formalize` (for example
+  `npm run --silent --prefix ~/fret/fret-electron start-cli --`); its answers
+  are cached in `spec-tacular/fret/formulas.json`, so once committed the
+  check also runs where FRET is not installed.
+- `spec-tacular fret export [<change>]` writes the FRETish requirements and
+  the glossary — as FRET's Mode/Input/Output/Internal variables — for FRET's
+  realizability checking, simulator and test generation;
+  `spec-tacular fret realizability <project> <component>` runs FRET's own
+  check on them.
+- `spec-tacular monitor <run.jsonl> [<change>]` checks a recorded run — one
+  JSON object of variable values per step, from an end-to-end test or
+  production — against every formal requirement, decisions and FRETish
+  alike, whose variables it records: the offline half of runtime
+  verification. Requirements that could not be monitored on a running system
+  (an unbounded *eventually*) are flagged.
+
 
 Copy and paste work like elsewhere, within what a terminal allows:
 
@@ -290,6 +636,34 @@ acceptEdits` and read-only `openspec` commands allowed — headless, nobody is
 there to approve a tool call, so without it every write is denied. To allow
 more (running tests during `apply`), add flags with `SPECTACULAR_CLAUDE_ARGS`.
 
+**What goes into git.** The review decisions are what spec-tacular adds to
+OpenSpec, so they are kept where the rest of the change is:
+
+- Every change carries `openspec/changes/<id>/review.md`. It lists what was:
+  - accepted, with the questions' answers;
+  - rejected, with why;
+  - deferred, with what it waits for;
+  - allowed or waived.
+
+  It is rewritten from the review state on every decision and once more
+  before archiving, so `openspec archive` moves it with the change. It reads
+  the same without spec-tacular, and hand edits to it are overwritten.
+- `spec-tacular/` holds the ground rules, the vision, the roadmap, the ADRs,
+  the glossary and the hazard register. All of it is meant to be committed.
+- `init` writes `.spec-tacular/.gitignore`. It keeps this machine's state out
+  of git: jobs, usage, sessions, test reports and the evidence log. The
+  review decisions (`review/`) and the surviving mutants you allowed
+  (`harness/*.allowed.json`) stay committed. If git ignores any of these
+  records, `init` says so.
+
+Every file spec-tacular writes itself starts with the line
+`<!-- generated-by: spec-tacular <version> -->`, or `# generated-by: …` in
+YAML:
+- The version is the one that created the file, and is never rewritten.
+- The marker is not content: adding it never re-opens a signed-off document.
+- The proposal, specs, design and tasks the agents draft are left as they
+  wrote them.
+
 Everything the TUI does is also a command:
 
 ```bash
@@ -348,7 +722,11 @@ through the setup's questions and the vision interview too — once the
 terminal is wide enough (130 columns), so it never squeezes them; on a narrower
 terminal `ctrl+b` still opens the details full width. Cost and tokens come
 from the agents themselves — Claude reports actual USD, opencode its own cost
-— so there is no price table to keep current.
+— so there is no price table to keep current. The total is kept in
+`.spec-tacular/usage.jsonl`, so a restart does not reset it. The implementing
+session runs in Claude Code itself, which reports no cost for an interactive
+session: its tokens are read from its transcript and shown as *+ implementing*
+— its `/cost` there says what it cost.
 
 Premature specificity gets questioned. A requirement naming an endpoint, a
 column or a class it has not earned is flagged during review, and `m` marks a
@@ -387,6 +765,10 @@ needs a running environment and the change archives without it: the verified
 requirements merge into `openspec/specs/`, the deferred one waits in
 `spec-tacular/pending-validation.md` with what would verify it.
 
+In the TUI, a change whose tasks are all ticked off offers **Archive it**
+(`A`): it shows what archiving would do — or why it may not be archived yet —
+and archives on enter.
+
 ```
 $ spec-tacular archive add-export
 1 requirement(s) merge into the baseline
@@ -402,7 +784,10 @@ Greenfield gets sequenced. `spec-tacular/roadmap.yaml` holds the vision and an
 ordered list of slices; one is being specified at a time, so the review queue
 never exceeds a single change. Once a slice's proposal and specs are accepted,
 the next one can be specified (`s` in the TUI) — without waiting for anything
-to be built. Its design, tasks and implementing wait until the slices before it
+to be built. It need not be the next in line: the slices without a change
+follow the changes in the TUI's list, so ↓ (or a click) picks any of them to
+read its summary and what it depends on, and `s` starts it — or it says why it
+cannot yet, such as a dependency not specified. Its design, tasks and implementing wait until the slices before it
 are applied, since they build on that code: applied means every task ticked
 off, except those marked `(defer: …)` that need a deployment to verify. An
 applied slice turns ✓ on its own.
@@ -411,8 +796,13 @@ Implementing is your agent's own session. *Implement it* opens Claude Code (or
 opencode) on the change's apply instructions in a new tab — tmux, kitty,
 WezTerm, GNOME Terminal, Konsole, iTerm — or, in a terminal that cannot open
 tabs (an IDE's), a new window of the desktop's terminal. It is exactly as if
-you had started it yourself: it runs the project's commands and asks before it
-does. spec-tacular stays open, shows the change being implemented, and follows
+you had started it yourself — in your own permission mode (auto, accept
+edits, or ask) — with one addition: the project's test commands (from
+`verification.yaml`), its typechecker and linter, spec-tacular's own checks,
+OpenSpec's read-only commands and the commands output is read through (`grep`,
+`head`, …) never ask. So what it does ask about is worth reading. It is told
+to write files with its edit tools, to run checks as plain commands, and to
+use the installed toolchain. spec-tacular stays open, shows the change being implemented, and follows
 the tasks as they are ticked off. Only when no tab or window can be opened does
 the agent take over spec-tacular's own terminal until it exits.
 

@@ -137,7 +137,7 @@ async function mount(options: {
               const r = await answer(turns, instruction);
               return parseRefinement({ requirement: r.block, summary: r.summary }, context);
             },
-            accept: (item: Requirement, block) => {
+            accept: (item, block) => {
               const result = acceptRefinement(session(), item, block, parse);
               if (result.ok) setSession(result.session);
               return result;

@@ -16,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse, stringify } from 'yaml';
+import { readPrevious, withMarker } from './provenance.ts';
 
 export type SliceStatus = 'planned' | 'active' | 'done';
 
@@ -80,7 +81,7 @@ export function loadRoadmap(projectRoot: string): Roadmap | null {
 export function saveRoadmap(projectRoot: string, roadmap: Roadmap): void {
   const path = roadmapPath(projectRoot);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, stringify(roadmap, { lineWidth: 80 }), 'utf8');
+  writeFileSync(path, withMarker(stringify(roadmap, { lineWidth: 80 }), 'yaml', readPrevious(path)), 'utf8');
 }
 
 export const ROADMAP_TEMPLATE: Roadmap = {

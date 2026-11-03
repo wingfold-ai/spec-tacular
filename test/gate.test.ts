@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { buildPipeline, type ReviewByArtifact } from '../src/core/pipeline.ts';
-import { gateFor, staleArtifacts } from '../src/core/gate.ts';
+import { buildPipeline, buildsOnCode, type ReviewByArtifact } from '../src/core/pipeline.ts';
+import { gateFor, riskWarnings, staleArtifacts } from '../src/core/gate.ts';
 import type { OpenSpecArtifact, OpenSpecChangeStatus } from '../src/adapter/types.ts';
 import type { ReviewSummary } from '../src/core/review.ts';
 
@@ -239,5 +239,44 @@ describe('the Foundation gate', () => {
     const gate = foundationGate(root());
     expect(gate.allowed).toBe(true);
     expect(gate.warnings[0]).toContain('no Foundation yet');
+  });
+});
+
+describe('risks in the pipeline', () => {
+  const WITH_RISKS = [
+    a('proposal', 'done'),
+    a('specs', 'done', ['proposal']),
+    a('risks', 'done', ['specs']),
+    a('design', 'ready', ['specs', 'risks']),
+    a('tasks', 'blocked', ['specs', 'risks', 'design']),
+  ];
+
+  test('design waits for every risk to be accepted, and says risks', () => {
+    const p = buildPipeline(status(WITH_RISKS), {
+      specs: summary(),
+      risks: summary({ total: 3, accepted: 1, pending: 2, complete: false }),
+    });
+    const gate = gateFor(p, 'design');
+    expect(gate.allowed === false && gate.blockers).toEqual(['risks: 2 pending of 3 risks']);
+  });
+
+  test('the risks may be written ahead, like the specs; the design may not', () => {
+    const p = buildPipeline(status(WITH_RISKS), { specs: summary() }, {}, { waitingOn: ['before'] });
+    expect(buildsOnCode(p, 'risks')).toBe(false);
+    expect(buildsOnCode(p, 'design')).toBe(true);
+  });
+
+  test('names what the design and the tasks leave open', () => {
+    const p = buildPipeline(status(WITH_RISKS), { specs: summary(), risks: summary() }, {}, {
+      risks: { unanswered: ['A'], unguarded: ['A', 'B'], unproven: ['C'], outsideBoundary: ['x', 'y', 'z', 'w'], unmitigatedHigh: [] },
+    });
+    expect(gateFor(p, 'tasks').warnings).toContain('the design does not answer risk "A"');
+    expect(gateFor(p, 'apply').warnings).toContain('no guard task for 2 risks: "A", "B"');
+    expect(riskWarnings(p)).toEqual([
+      'the design does not answer risk "A"',
+      'no guard task for 2 risks: "A", "B"',
+      'guard ticked off without being shown red: "C"',
+      '4 files changed outside the boundary: x, y, z and 1 more',
+    ]);
   });
 });

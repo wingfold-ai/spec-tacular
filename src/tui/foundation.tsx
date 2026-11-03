@@ -28,7 +28,7 @@ import { mergeOptions } from '../core/presets.ts';
 import { wrap } from '../render/requirement.ts';
 import { THEME } from './theme.ts';
 import { useContentWidth } from './layout.ts';
-import { editLine, isCancel, isEnter } from './input.ts';
+import { createLine, isCancel, isEnter } from './input.ts';
 import { usePasteInto } from './copy-paste.ts';
 import { Button, clip, DraftText, KeyBar, Panel, ScrollArea, Spinner } from './widgets.tsx';
 import { RevisePanel } from './revise.tsx';
@@ -128,7 +128,9 @@ export function FoundationScreen(props: FoundationScreenProps) {
   const [cursorId, setCursorId] = createSignal<string | null>(
     (props.questions.find((q) => !q.answered) ?? props.questions[0])?.item.id ?? null,
   );
-  const [draft, setDraft] = createSignal('');
+  const line = createLine();
+  const draft = line.text;
+  const setDraft = line.set;
   const [error, setError] = createSignal<string | null>(null);
   const [showDone, setShowDone] = createSignal(false);
   /** Skipped this session, so "next" does not come straight back to them. */
@@ -403,7 +405,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
     intro() || showDone() || waiting() || helping() || revising() || !current()
       ? null
       : (text: string) => {
-          setDraft((d) => d + text);
+          line.insert(text);
           setError(null);
           setSel(ownRow());
           setPicked({ kind: 'own' });
@@ -442,8 +444,9 @@ export function FoundationScreen(props: FoundationScreenProps) {
     if (isEnter(key)) return submit();
     if (key.name === 'tab') return skip();
     if (key.sequence === '?' && draft() === '') return help();
-    if (key.name === 'left') return go(index() - 1);
-    if (key.name === 'right') return go(index() + 1);
+    // Arrows move between questions until there is an answer to move along.
+    if (key.name === 'left' && draft() === '') return go(index() - 1);
+    if (key.name === 'right' && draft() === '') return go(index() + 1);
     if (key.name === 'up' || key.name === 'down') {
       const n = rows().length;
       setSel((s) => (s + (key.name === 'up' ? -1 : 1) + n) % n);
@@ -462,9 +465,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
       return;
     }
 
-    const next = editLine(draft(), key);
-    if (next !== null) {
-      setDraft(next);
+    if (line.edit(key)) {
       setError(null);
       // Typing is choosing to write your own.
       setSel(ownRow());
@@ -490,7 +491,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
     k.push(['enter', draft() ? 'save' : row === 'skip' ? 'skip' : row === 'option' ? 'pick' : current()?.answered ? 'keep' : 'save']);
     if (props.onHelp) k.push(['?', 'not sure']);
     if (props.revise && (row === 'option' || draft().trim() !== '' || current()?.answered)) k.push(['ctrl+r', 'revise with AI']);
-    k.push(['tab', 'skip'], ['←→', 'questions'], ['ctrl+e', 'editor']);
+    k.push(['tab', 'skip'], ['←→', draft() ? 'move cursor' : 'questions'], ['ctrl+e', 'editor']);
     if (currentMeta().parent || currentMeta().helps) k.push(['ctrl+d', 'not relevant']);
     k.push(['ctrl+f', 'done — rest later'], ['ctrl+c', 'back']);
     return k;
@@ -819,7 +820,7 @@ export function FoundationScreen(props: FoundationScreenProps) {
               }
             >
               {/* Inside a panel and this box: two borders and two paddings a side. */}
-              <DraftText draft={draft()} width={contentWidth() - 8} />
+              <DraftText draft={draft()} cursor={line.cursor()} width={contentWidth() - 8} />
             </Show>
           </box>
           <Show when={error()}>

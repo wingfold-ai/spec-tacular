@@ -1,0 +1,179 @@
+name: spec-tacular-defect
+version: 1
+description: >-
+  Fixing a defect: report → specs → risks → fix → tasks. The report decides
+  whose bug it is — the code's, the requirement's, or a gap no requirement
+  covered — and the specs follow from that answer. A reproducer, a test that
+  fails on the code as it is, comes before the fix. The defect itself joins
+  the hazard register when the change is archived.
+
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: The defect report — what went wrong, and whose bug it is
+    template: proposal.md
+    instruction: |
+      Report the defect. Keep it short and exact.
+
+      Sections, in this order:
+      - Observed: what happened, as a user or a caller saw it.
+      - Expected: what should have happened instead, and on what grounds.
+      - Reproduce: the steps or inputs that make it happen, as precisely as
+        they are known.
+      - Whose bug: the one line `**Whose bug:** code`, `requirement` or `gap`,
+        then why.
+      - Violated requirement: for a code or requirement bug, the line
+        `**Violated requirement:** <capability>#<requirement-slug>`.
+      - Boundary: the paths the fix expects to touch, in backticks, one per
+        bullet.
+
+      Deciding whose bug it is comes first, and it is the most important line
+      of the report. Read the accepted specs (`openspec list --specs`, then
+      `openspec show <spec> --type spec`) and the requirement closest to the
+      behaviour:
+      - **code** — the requirement, read literally, rules out what was
+        observed. The requirement was right; the code is wrong.
+      - **requirement** — the requirement allows what was observed, or can be
+        read to: it is ambiguous, or says the wrong thing. Most defects in
+        critical systems are this kind; do not settle for "code" because the
+        fix is in code.
+      - **gap** — no requirement covers the behaviour at all.
+
+      Read `spec-tacular/hazards/`: if the defect is a known hazard coming
+      back, say which.
+
+      No fix yet. That is the design's job, two phases from now.
+    requires: []
+
+  - id: specs
+    generates: "specs/**/*.md"
+    description: The requirement the fix is measured against
+    template: spec.md
+    instruction: |
+      Write the requirement the fix will be verified against, as a spec delta
+      at `specs/<capability>/spec.md`, in the same format as any change:
+      `### Requirement: <name>`, SHALL/MUST, and `#### Scenario:` blocks with
+      WHEN/THEN bullets.
+
+      What goes in depends on the report's `Whose bug`:
+      - **code** — under `## MODIFIED Requirements`, the violated requirement
+        copied from the accepted spec exactly, byte for byte. Nothing about it
+        changes; a person reviews it again and confirms it was right. If you
+        find you want to change it, the report is wrong: it is a requirement
+        bug — stop and say so.
+      - **requirement** — under `## MODIFIED Requirements`, the corrected
+        requirement in full: the ambiguity resolved, the wrong statement
+        fixed. Add a scenario that is exactly the defect, saying it must not
+        happen.
+      - **gap** — under `## ADDED Requirements`, the requirement that was
+        missing, with a scenario that is exactly the defect.
+
+      Every requirement has a scenario that says what must not happen. Stay
+      abstract, as in any spec: mark undecided concrete values
+      `{{example: ...}}`.
+    requires:
+      - proposal
+
+  - id: risks
+    generates: risks.md
+    description: The defect as a risk, and what else the fix could break
+    template: risks.md
+    instruction: |
+      The first risk is the defect itself: its hazard is what was observed,
+      its guard the corrected behaviour, its check the reproducer — the test
+      that fails on the code as it is now and passes once fixed. If the
+      register has the hazard already, name it: `- **Known hazard:** HAZ-NNNN`.
+
+      Then what else the fix could break: callers relying on the wrong
+      behaviour, data written while the defect was live, neighbouring
+      behaviour sharing the faulty code, the same mistake elsewhere.
+
+      Format, exactly, as for any change:
+
+          ### Risk: <name>
+          - **Hazard:** what must not happen, as an observable outcome
+          - **Affects:** the requirements and capabilities it threatens
+          - **Boundary:** the situation it arises in
+          - **Causes:** what brought it about
+          - **Severity:** high | medium | low
+          - **Guard:** the property that rules it out
+          - **Check:** how a test shows the guard holds
+
+      A risk knowingly left unmitigated has `- **Unmitigated:** <why>`
+      instead of a guard and a check. The defect itself never does.
+    requires:
+      - specs
+
+  - id: design
+    generates: design.md
+    description: The cause, and the fix
+    template: design.md
+    instruction: |
+      Explain the cause and the fix. Treat the accepted specs and risks as
+      fixed input; if the fix reveals they are wrong, stop and say so.
+
+      Sections: Cause · Fix · Risks / Trade-offs · Open Questions.
+
+      Cause, in three parts, because stopping at the first is how a defect
+      comes back:
+      - Proximate cause: the line or condition that produced the wrong
+        behaviour.
+      - Root cause: why that was possible — the misread requirement, the
+        missing check, the assumption that did not hold.
+      - Contributing factors: what made it likelier or worse, and why the
+        existing tests did not catch it.
+
+      Fix: what changes, and why it addresses the root cause, not only the
+      proximate one.
+
+      Risks / Trade-offs: answer every risk without an `Unmitigated:` line BY
+      ITS EXACT NAME.
+
+      Read `spec-tacular/foundation/` and the accepted ADRs in
+      `spec-tacular/decisions/` first; the fix conforms to them.
+    requires:
+      - specs
+      - risks
+
+  - id: tasks
+    generates: tasks.md
+    description: Reproducer first, then the fix
+    template: tasks.md
+    instruction: |
+      The first task writes the reproducer, and it is the guard task of the
+      defect's risk:
+
+          - [ ] 1.1 (guard: <defect risk name>) Reproducer: a test named
+                [req:<capability>#<requirement-slug>] [risk:<change>#<risk-slug>]
+                that fails on the code as it is
+
+      It is done before any fix, and it must fail then. Then the fix, then a
+      guard task per remaining risk, each naming its risk the same way.
+
+      Format, as for any change: `## <n>. <Group>` headings, `- [ ] <n>.<m>`
+      tasks, ordered by dependency, each saying how to verify it.
+    requires:
+      - specs
+      - risks
+      - design
+
+apply:
+  requires: [tasks]
+  tracks: tasks.md
+  instruction: |
+    Fix the defect, reproducer first.
+
+    1. Write the reproducer test, with the tags its task names. Run it on the
+       code as it is: it MUST fail. If it passes, it does not reproduce the
+       defect — find out why before going on. Record it on the task:
+
+           - [x] 1.1 (guard: …) Reproducer …
+                 (shown red: failed on the unfixed code — 1 failure)
+
+    2. Fix the code. Run the reproducer again: it passes. Run the rest of the
+       tests: they pass.
+    3. Work through the remaining tasks, guard tasks shown red the same way.
+
+    A guard ticked without `(shown red: …)` still counts as open. Stay inside
+    the report's Boundary, and within the accepted specs and design; if the fix
+    shows either is wrong, stop and say so.

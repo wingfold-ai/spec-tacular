@@ -374,12 +374,47 @@ export class StreamJsonSession implements StructuredSession {
   }
 }
 
+/** What an implementing session may run without asking: it only looks. */
+const READ_ONLY_TOOLS = [
+  'Bash(openspec list:*)',
+  'Bash(openspec show:*)',
+  'Bash(openspec status:*)',
+  'Bash(openspec validate:*)',
+  'Bash(ls:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git log:*)',
+  // What a test run's output is read through.
+  'Bash(grep:*)',
+  'Bash(head:*)',
+  'Bash(tail:*)',
+  'Bash(wc:*)',
+  'Bash(sort:*)',
+  'Bash(cat:*)',
+];
+
 export const claudeDriver: AgentDriver = {
   id: 'claude',
   label: 'Claude Code',
 
-  interactive(prompt: string): AgentCommand {
-    return { command: 'claude', args: [prompt] };
+  interactive(prompt: string, allow: string[] = [], sessionId?: string): AgentCommand {
+    // The developer's own session, in the permission mode they use — auto,
+    // accept edits, ask — never one chosen for them: overriding auto mode
+    // turned an unattended session into 22 prompts. What is added only
+    // widens it: the project's tests and checks, and commands that only
+    // look, so a test run piped into grep does not ask either.
+    return {
+      command: 'claude',
+      // The prompt first: --allowedTools takes every argument after it.
+      args: [
+        prompt,
+        ...(sessionId ? ['--session-id', sessionId] : []),
+        '--allowedTools',
+        ...READ_ONLY_TOOLS,
+        ...allow.map((prefix) => `Bash(${prefix}:*)`),
+        ...extraArgs(),
+      ],
+    };
   },
 
   build(request: AgentRequest): AgentCommand {

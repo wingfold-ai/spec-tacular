@@ -7,6 +7,10 @@
  * without any price table of our own.
  */
 
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
 export interface Usage {
   /** The driver id: `claude` or `opencode`. */
   driver: string;
@@ -122,4 +126,89 @@ export function shortModel(model: string | undefined): string | undefined {
 /** How a driver is named on screen. */
 export function driverLabel(driver: string): string {
   return driver === 'claude' ? 'Claude Code' : driver === 'opencode' ? 'opencode' : driver;
+}
+
+// ---------------------------------------------------------------------------
+// Kept across runs
+
+/** What the TUI's own sessions cost, one request per line: a restart keeps the total. */
+export function usageLogPath(projectRoot: string): string {
+  return join(projectRoot, '.spec-tacular', 'usage.jsonl');
+}
+
+export function appendUsageLog(projectRoot: string, usage: Usage): void {
+  try {
+    mkdirSync(dirname(usageLogPath(projectRoot)), { recursive: true });
+    appendFileSync(usageLogPath(projectRoot), `${JSON.stringify({ at: new Date().toISOString(), ...usage })}\n`, 'utf8');
+  } catch {
+    // A total that does not survive a restart is not worth failing a request over.
+  }
+}
+
+export function loadUsageLog(projectRoot: string): Usage[] {
+  try {
+    return readFileSync(usageLogPath(projectRoot), 'utf8')
+      .split('\n')
+      .filter((l) => l.trim() !== '')
+      .flatMap((l) => {
+        try {
+          return [JSON.parse(l) as Usage];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The implementing session
+
+/**
+ * Where Claude Code keeps a session's transcript: under the project's path,
+ * every character other than a letter or digit a dash.
+ */
+export function claudeTranscriptPath(cwd: string, sessionId: string, home = homedir()): string {
+  return join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
+}
+
+/**
+ * The tokens an interactive Claude Code session used, from its transcript.
+ * Interactive sessions report no cost, and spec-tacular keeps no price
+ * table: the usage carries tokens and the model, never a guessed cost.
+ * Null when there is no transcript (yet).
+ */
+export function claudeSessionUsage(transcript: string): Usage | null {
+  let text: string;
+  try {
+    text = readFileSync(transcript, 'utf8');
+  } catch {
+    return null;
+  }
+  // One assistant message is logged once per content block: count it once.
+  const seen = new Set<string>();
+  const usage: Usage = { driver: 'claude', inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0 };
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let entry: { type?: string; message?: { id?: string; model?: string; usage?: Record<string, number> } };
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const m = entry.message;
+    if (entry.type !== 'assistant' || !m?.usage) continue;
+    if (m.id) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+    }
+    usage.inputTokens! += m.usage['input_tokens'] ?? 0;
+    usage.outputTokens! += m.usage['output_tokens'] ?? 0;
+    usage.cacheReadTokens! += m.usage['cache_read_input_tokens'] ?? 0;
+    usage.cacheWriteTokens! += m.usage['cache_creation_input_tokens'] ?? 0;
+    usage.turns! += 1;
+    if (m.model && !m.model.startsWith('<')) usage.model = m.model;
+  }
+  return usage.turns ? usage : null;
 }

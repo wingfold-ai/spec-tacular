@@ -7,7 +7,15 @@
  * afterthought.
  */
 
-import { staleArtifacts } from '../core/gate.ts';
+import {
+  classWarnings,
+  defectLabel,
+  defectWarnings,
+  evidenceWarnings,
+  formalWarnings,
+  riskWarnings,
+  staleArtifacts,
+} from '../core/gate.ts';
 import type { ChangePipeline, Stage, StageState } from '../core/pipeline.ts';
 
 const MARK: Record<StageState, string> = {
@@ -74,6 +82,25 @@ export function renderOverview(
       ? `next: ${p.current.id}${p.current.state === 'written' ? ' (review)' : ''}`
       : 'planning complete — ready to apply';
     out.push(`${' '.repeat(width)}  ${paint(next, DIM, color)}`);
+    const label = defectLabel(p);
+    if (label) out.push(`${' '.repeat(width)}  ${paint(label, DIM, color)}`);
+    if (p.formal && p.formal.formal > 0) {
+      out.push(`${' '.repeat(width)}  ${paint(`formal: ${p.formal.formal}/${p.formal.total} requirements`, DIM, color)}`);
+    }
+    if (p.consequence?.class) {
+      const rules = p.consequence.rules.length > 0 ? ` — ${p.consequence.rules.join(', ')}` : '';
+      out.push(`${' '.repeat(width)}  ${paint(`class ${p.consequence.class}${rules}`, DIM, color)}`);
+    }
+    if (p.evidence && p.evidence.total > 0) {
+      const e = p.evidence;
+      const bits = [`${e.passing}/${e.total} verified`];
+      if (e.excepted) bits.push(`${e.excepted} excepted`);
+      if (e.failing) bits.push(`${e.failing} failing`);
+      if (e.stale) bits.push(`${e.stale} stale`);
+      if (e.unconnected) bits.push(`${e.unconnected} not connected`);
+      if (e.missing) bits.push(`${e.missing} missing`);
+      out.push(`${' '.repeat(width)}  ${paint(`evidence: ${bits.join(' · ')}`, e.complete ? GREEN : DIM, color)}`);
+    }
 
     for (const stage of p.stages) {
       const r = stage.review;
@@ -100,6 +127,18 @@ export function renderOverview(
         `${' '.repeat(width)}  ` +
           paint(`! ${stale.artifact} may be stale — ${stale.because.join('; ')}`, YELLOW, color),
       );
+    }
+
+    // What the risks still lack, files changed outside the boundary, and
+    // what the change's class still asks for.
+    for (const warning of [
+      ...riskWarnings(p),
+      ...classWarnings(p),
+      ...evidenceWarnings(p),
+      ...defectWarnings(p),
+      ...formalWarnings(p),
+    ]) {
+      out.push(`${' '.repeat(width)}  ${paint(`! ${warning}`, YELLOW, color)}`);
     }
 
     for (const g of p.gaps) {

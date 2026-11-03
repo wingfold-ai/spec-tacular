@@ -22,7 +22,9 @@
 **Conforms to:** <!-- ADR numbers this follows, or "supersedes ADR-000N" -->
 
 ## Risks / Trade-offs
-<!-- [Risk] → Mitigation -->
+<!-- Every risk in risks.md without an Unmitigated line, by its exact name:
+     **<Risk name>** → the mitigating decision, and what its guard test checks.
+     Then any trade-offs of the design itself. -->
 
 ## Migration Plan
 <!-- Deploy steps, rollback. Omit if not applicable. -->

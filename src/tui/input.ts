@@ -7,6 +7,7 @@
  */
 
 import type { KeyEvent } from '@opentui/core';
+import { createSignal } from 'solid-js';
 
 /** A key that contributes a character to a prompt, as opposed to a command. */
 export function isPrintable(key: KeyEvent): boolean {
@@ -33,17 +34,98 @@ export function isEnter(key: KeyEvent): boolean {
   return key.name === 'return' || key.name === 'enter';
 }
 
+/** A line being typed, and where in it the cursor is (0 to `text.length`). */
+export interface Line {
+  text: string;
+  cursor: number;
+}
+
+/** `text` with the cursor at its end, where typing continues. */
+export function lineOf(text: string): Line {
+  return { text, cursor: text.length };
+}
+
+/** Inserts `s` at the cursor, leaving the cursor after it. */
+export function insertAt(line: Line, s: string): Line {
+  return {
+    text: line.text.slice(0, line.cursor) + s + line.text.slice(line.cursor),
+    cursor: line.cursor + s.length,
+  };
+}
+
+/** One character back or forward, never splitting a surrogate pair. */
+function step(text: string, at: number, by: -1 | 1): number {
+  const next = Math.min(Math.max(at + by, 0), text.length);
+  const isLow = (i: number) => /[\uDC00-\uDFFF]/.test(text[i] ?? '');
+  if (by < 0 && next > 0 && isLow(next)) return next - 1;
+  if (by > 0 && next < text.length && isLow(next)) return next + 1;
+  return next;
+}
+
+/** The start of the word before `at`, as ctrl+w and alt+left find it. */
+function wordBefore(text: string, at: number): number {
+  return text.slice(0, at).replace(/\S+\s*$|\s+$/, '').length;
+}
+
+/** The end of the word after `at`, as alt+right finds it. */
+function wordAfter(text: string, at: number): number {
+  const m = /^\s*\S+/.exec(text.slice(at));
+  return at + (m ? m[0].length : text.length - at);
+}
+
 /**
  * Applies a key to a line being typed. Returns null when the key is not
  * editing, so the caller can treat it as a command.
+ *
+ * Home and end stay within the current row of a multi-line draft.
  */
-export function editLine(draft: string, key: KeyEvent): string | null {
-  if (key.name === 'backspace') return draft.slice(0, -1);
-  // The readline chords everyone's fingers know: clear the line, drop a word.
-  if (key.ctrl && key.name === 'u') return '';
-  if (key.ctrl && key.name === 'w') return draft.replace(/\S+\s*$/, '');
-  if (isPrintable(key)) return draft + key.sequence;
+export function editLine(line: Line, key: KeyEvent): Line | null {
+  const { text, cursor } = line;
+  const at = (c: number): Line => ({ text, cursor: c });
+  const cut = (from: number, to: number): Line => ({ text: text.slice(0, from) + text.slice(to), cursor: from });
+  const byWord = key.ctrl === true || key.meta === true || key.option === true;
+  if (key.name === 'left') return at(byWord ? wordBefore(text, cursor) : step(text, cursor, -1));
+  if (key.name === 'right') return at(byWord ? wordAfter(text, cursor) : step(text, cursor, 1));
+  if (key.name === 'home' || (key.ctrl && key.name === 'a')) return at(text.lastIndexOf('\n', cursor - 1) + 1);
+  if (key.name === 'end') {
+    const eol = text.indexOf('\n', cursor);
+    return at(eol === -1 ? text.length : eol);
+  }
+  if (key.name === 'backspace') return cut(step(text, cursor, -1), cursor);
+  if (key.name === 'delete') return cut(cursor, step(text, cursor, 1));
+  // The readline chords everyone's fingers know: clear to the start or the
+  // end of the line, drop a word.
+  if (key.ctrl && key.name === 'u') return cut(0, cursor);
+  if (key.ctrl && key.name === 'k') return cut(cursor, text.length);
+  if (key.ctrl && key.name === 'w') return cut(wordBefore(text, cursor), cursor);
+  if (isPrintable(key)) return insertAt(line, key.sequence);
   return null;
+}
+
+/**
+ * A line being typed, as a screen holds it: `set` replaces the text and puts
+ * the cursor at its end, `put` replaces both, `insert` types (or pastes) at
+ * the cursor, and `edit` applies a key, returning whether it was editing.
+ */
+export function createLine(initial = '') {
+  const [line, setLine] = createSignal<Line>(lineOf(initial));
+  return {
+    text: () => line().text,
+    cursor: () => line().cursor,
+    set: (text: string) => setLine(lineOf(text)),
+    put: (next: Line) => setLine(next),
+    insert: (s: string) => setLine((l) => insertAt(l, s)),
+    edit: (key: KeyEvent): boolean => {
+      const next = editLine(line(), key);
+      if (next !== null) setLine(next);
+      return next !== null;
+    },
+  };
+}
+
+/** `text` with a cursor drawn at `cursor` — at its end when none is given. */
+export function withCursor(text: string, cursor = text.length, mark = '▏'): string {
+  return text.slice(0, cursor) + mark + text.slice(cursor);
 }
 
 /**
