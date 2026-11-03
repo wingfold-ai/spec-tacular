@@ -255,6 +255,18 @@ describe('the next step for a change', () => {
     expect(nextStep(p, true)).toMatchObject({ artifact: 'design', actions: ['draft', 'write'] });
   });
 
+  test('a draft that stopped without writing it sends you to read why, first', () => {
+    const p = buildPipeline(
+      change([a('proposal', 'done'), a('specs', 'done', ['proposal']), a('design', 'ready', ['specs'])]),
+      { specs: summary({ pending: 0, accepted: 3, complete: true }) },
+    );
+    const step = nextStep(p, true, 'design');
+    expect(step).toMatchObject({ artifact: 'design', actions: ['stopped', 'draft', 'write'] });
+    expect(step.text).toContain('stopped before writing it');
+    // A stop on another artifact says nothing about this one.
+    expect(nextStep(p, true, 'tasks').actions).toEqual(['draft', 'write']);
+  });
+
   test('finished planning offers the implementation', () => {
     const p = buildPipeline(change([a('proposal', 'done'), a('tasks', 'done', ['proposal'])]));
     expect(nextStep(p, true)).toMatchObject({ artifact: 'apply', actions: ['draft'] });

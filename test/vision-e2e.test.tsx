@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Ask } from '../src/core/advisor.ts';
 import { loadRoadmap } from '../src/core/roadmap.ts';
-import { mountApp } from './support/app-harness.tsx';
+import { changeWith, mountApp } from './support/app-harness.tsx';
 
 const mounted: { destroy: () => void }[] = [];
 afterEach(() => {
@@ -363,6 +363,62 @@ describe('an agent’s draft', () => {
     await ui.press('return');
     await ui.settle(50);
     expect(ui.dispatched.at(-1)).toBe('book-rooms/proposal (mention cancellations)');
+  });
+
+  test('one that stopped without writing it says why, and how to get to a draft', async () => {
+    const ui = await mountApp({ baseline: true, changes: [changeWith('book-rooms', ['proposal', 'specs'], ['proposal', 'specs'])] });
+    mounted.push(ui);
+    await ui.press('return');
+    ui.settleGroundRules();
+    await ui.press('c', { ctrl: true });
+
+    await ui.press('w'); // ✦ Let an agent draft the design
+    expect(ui.dispatched).toEqual(['book-rooms/design']);
+    ui.stopJob('book-rooms', 'design', '## The ambiguity\n\nMay a digit sit next to a number?\n\n- Option A: yes\n- Option B: no');
+    await ui.settle(2300); // the job poll
+
+    expect(ui.frame()).toContain('The agent stopped before writing the design');
+    expect(ui.frame()).toContain('May a digit sit next to a number?');
+    expect(ui.frame()).toContain('• Option A: yes');
+    expect(ui.frame()).toContain('↩ Fix the specs  b');
+    expect(ui.frame()).toContain('↻ Draft the design again  w');
+    expect(ui.frame()).toContain('✎ Write it myself  ctrl+e');
+
+    // Back on the overview, the stop is the next step, and enter reads it again.
+    await ui.press('q');
+    expect(ui.frame()).toContain('The last draft of the design stopped before writing it');
+    expect(ui.frame()).toContain('▶ Why it stopped');
+    expect(ui.frame()).not.toContain('is drafted');
+    await ui.press('return');
+    expect(ui.frame()).toContain('May a digit sit next to a number?');
+
+    // The answer goes to the specs, with what the agent raised.
+    await ui.press('b');
+    expect(ui.frame()).toContain('Your answer to what it raised, if you have one.');
+    await ui.type('Option A');
+    await ui.press('return');
+    await ui.settle(50);
+    const sent = ui.dispatched.at(-1)!;
+    expect(sent).toStartWith('book-rooms/specs (The design could not be written against the specs.');
+    expect(sent).toContain('May a digit sit next to a number?');
+    expect(sent).toContain("The developer's decision: Option A");
+    expect(ui.frame()).toContain('Claude Code is drafting the specs');
+  });
+
+  test('one that stopped can be drafted again as it is — the answer is optional', async () => {
+    const ui = await mountApp({ baseline: true, changes: [changeWith('book-rooms', ['proposal', 'specs'], ['proposal', 'specs'])] });
+    mounted.push(ui);
+    await ui.press('return');
+    ui.settleGroundRules();
+    await ui.press('c', { ctrl: true });
+    await ui.press('w');
+    ui.stopJob('book-rooms', 'design', 'Tell me A or B.');
+    await ui.settle(2300);
+
+    await ui.press('w');
+    await ui.press('return'); // nothing typed
+    await ui.settle(50);
+    expect(ui.dispatched.at(-1)).toBe('book-rooms/design');
   });
 
   test('accepting it ticks it off and waits to draft the next artifact, and v reads it again', async () => {

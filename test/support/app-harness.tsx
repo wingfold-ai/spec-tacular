@@ -12,6 +12,7 @@ import { projectStage } from '../../src/core/guide.ts';
 import type { Job } from '../../src/core/jobs.ts';
 import { buildPipeline, type ChangePipeline } from '../../src/core/pipeline.ts';
 import { loadRoadmap } from '../../src/core/roadmap.ts';
+import { parseStop } from '../../src/core/stops.ts';
 import { finalizeVision, isGreenfield, VisionInterviewer } from '../../src/core/vision.ts';
 import { App, type TuiInput } from '../../src/tui/app.tsx';
 
@@ -109,6 +110,8 @@ export async function mountApp(
   const dispatched: string[] = [];
   const jobs: Job[] = [];
   const docs = new Map<string, string>();
+  /** What each job's agent said last, by job id. */
+  const reports = new Map<string, string>();
   /** Documents accepted, per change: `acceptDocument` adds, a redraft removes. */
   const accepted = new Map<string, Set<string>>();
   const acceptedIn = (change: string) => accepted.get(change) ?? accepted.set(change, new Set()).get(change)!;
@@ -183,7 +186,11 @@ export async function mountApp(
     modelFor: options.modelFor,
     onUsage: options.onUsage,
     jobUsage: options.jobUsage,
-    stopReport: options.stopReport,
+    // As the real one does without a report file: the job's last words.
+    stopReport: options.stopReport ?? ((change, artifact, job) => {
+      const said = job ? reports.get(job.id) : undefined;
+      return said === undefined ? null : parseStop(said, [], { change, artifact, source: 'message' });
+    }),
     warm: (target) => warmed.push(target),
     greenfield: () => isGreenfield(root),
     roadmap: () => loadRoadmap(root),
@@ -231,10 +238,12 @@ export async function mountApp(
       acceptedIn(change).delete(artifact);
       if (i >= 0) changes[i] = changeWith(change, done, [...acceptedIn(change)]);
     },
-    /** Pretends an agent finished on `artifact` of `change` without writing it. */
-    stopJob: (change: string, artifact: string) => {
+    /** Pretends an agent finished without writing `artifact`, saying `message` last, if anything. */
+    stopJob: (change: string, artifact: string, message?: string) => {
       const job = jobs.find((j) => j.change === change && j.artifact === artifact && j.status === 'running');
-      if (job) job.status = 'succeeded';
+      if (!job) throw new Error(`no running job for ${change}/${artifact}`);
+      job.status = 'succeeded';
+      if (message !== undefined) reports.set(job.id, message);
     },
     /** Answers every ground-rule question, as if the setup were done. */
     settleGroundRules: () => {

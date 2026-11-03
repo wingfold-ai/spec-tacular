@@ -25,6 +25,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentCommand } from '../agent/driver.ts';
+import type { ChangePipeline } from './pipeline.ts';
 
 export type JobStatus =
   | 'running'
@@ -324,6 +325,33 @@ export function tailJob(job: Job, limit = 200): string[] {
   const lines = content.split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
   return lines.slice(-limit);
+}
+
+/** A job's whole log, or '' when there is none. */
+export function readJobLog(job: Job): string {
+  try {
+    return readFileSync(job.logPath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The draft that stopped short on a change, if its latest job is one.
+ *
+ * Exit 0 is not proof of work: an agent can finish without writing the file —
+ * on purpose, as the design does when the specs it is built on are wrong or
+ * ambiguous. Derived rather than recorded, so it survives a restart, and only
+ * from the change's latest job: once anything else ran on it — the specs
+ * redrafted with what the agent raised, say — the stop has been dealt with.
+ */
+export function stoppedDraft(jobs: readonly Job[], pipeline: ChangePipeline): Job | null {
+  const latest = jobs
+    .filter((j) => j.change === pipeline.name)
+    .reduce<Job | null>((a, j) => (a === null || j.startedAt > a.startedAt ? j : a), null);
+  if (!latest || latest.status !== 'succeeded') return null;
+  const stage = pipeline.stages.find((s) => s.id === latest.artifact);
+  return stage && (stage.state === 'ready' || stage.state === 'blocked') ? latest : null;
 }
 
 /** Removes finished jobs and their logs. Running ones are never touched. */

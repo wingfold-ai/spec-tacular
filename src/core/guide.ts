@@ -118,7 +118,8 @@ function hasArchived(projectRoot: string): boolean {
 export interface NextStep {
   text: string;
   /** Keys the overview offers for this step. */
-  actions: ('review' | 'read' | 'draft' | 'write' | 'foundation' | 'archive')[];
+  /** `stopped`: read why the last draft of `artifact` ended without writing it. */
+  actions: ('review' | 'read' | 'draft' | 'write' | 'foundation' | 'archive' | 'stopped')[];
   /** The artifact `read`/`draft`/`write` act on. */
   artifact?: string;
 }
@@ -134,7 +135,12 @@ function reviewNoun(stage: Stage): string {
  * One step, not a list: the point is to never leave someone choosing between
  * five commands they have not learnt yet.
  */
-export function nextStep(pipeline: ChangePipeline, foundationSettled: boolean): NextStep {
+export function nextStep(
+  pipeline: ChangePipeline,
+  foundationSettled: boolean,
+  /** The artifact whose last draft stopped without writing it (core/jobs.ts: stoppedDraft). */
+  stopped?: string,
+): NextStep {
   const stage = pipeline.current;
 
   if (!stage) {
@@ -242,6 +248,16 @@ export function nextStep(pipeline: ChangePipeline, foundationSettled: boolean): 
 
   const gate = gateFor(pipeline, stage.id);
   if (!gate.allowed) return { text: `Blocked: ${gate.blockers.join('; ')}.`, actions: [] };
+
+  // Drafting it again as if nothing happened would most likely stop the same
+  // way: what the agent raised has to be answered first.
+  if (stopped === stage.id) {
+    return {
+      text: `The last draft of the ${stage.id} stopped before writing it — the agent said why. Read it, then answer it.`,
+      actions: ['stopped', 'draft', 'write'],
+      artifact: stage.id,
+    };
+  }
 
   const what = stage.id === 'proposal'
     ? 'Write the proposal: why this change, and what it changes.'

@@ -168,6 +168,7 @@ import {
   cancelJob,
   JobConflictError,
   listJobs,
+  readJobLog,
   startJob,
   tailJob,
 } from './core/jobs.ts';
@@ -746,16 +747,19 @@ async function composePrompt(
 ): Promise<string> {
   const base = await adapter.instructions(artifact, change);
   const status = (await adapter.statusAll()).changes.find((c) => c.changeName === change);
-  const output = status?.artifactPaths[artifact]?.resolvedOutputPath;
+  const written = status?.artifacts.find((a) => a.id === artifact)?.status === 'done';
   const stopped = readStopReport(args.cwd, change, artifact);
   const quoted = (text: string) => `> ${text.trim().replace(/\n/g, '\n> ')}`;
   const instructions = !feedback
     ? base
-    : stopped !== null && !(output && !output.includes('*') && existsSync(output))
-      // An answer: the last attempt stopped, and the developer replied to it.
-      ? `${base}\n\n# Your last attempt stopped\n\nIt stopped instead of writing this artifact, with this report:\n\n${quoted(stopped)}\n\nThe developer read it and answered:\n\n${quoted(feedback)}\n\nGo with their answer. If the requirements still cannot be reconciled with it, stop again the same way.\n`
+    : written
       // A redraft: the developer read the draft and said what to change.
-      : `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n${quoted(feedback)}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`;
+      ? `${base}\n\n# Revision requested\n\nA draft of this artifact already exists. The developer read it and asked for\nthese changes:\n\n${quoted(feedback)}\n\nRevise the existing file in place. Keep what they did not ask to change.\n`
+      : stopped !== null
+        // An answer: the last attempt stopped with a report, and the developer replied to it.
+        ? `${base}\n\n# Your last attempt stopped\n\nIt stopped instead of writing this artifact, with this report:\n\n${quoted(stopped)}\n\nThe developer read it and answered:\n\n${quoted(feedback)}\n\nGo with their answer. If the requirements still cannot be reconciled with it, stop again the same way.\n`
+        // A retry: an earlier attempt stopped without writing it, and they answered.
+        : `${base}\n\n# Before you start\n\nAn earlier attempt at this artifact stopped without writing it. The developer\nread why and answered:\n\n${quoted(feedback)}\n\nTake that as settled and write the artifact.\n`;
   const reviewed = status ? loadChangeReview(args.cwd, status).requirements : [];
   // What the developer said the change is for, when they created it. OpenSpec
   // keeps it in the change's README but does not put it in the instructions.
@@ -2250,7 +2254,7 @@ async function main(): Promise<number> {
           } catch {
             return null;
           }
-          text = driver.finalMessage?.(tailJob(job, 20000)) ?? null;
+          text = driver.finalMessage?.(readJobLog(job)) ?? null;
           if (text === null) return null;
           saveStopReport(args.cwd, change, artifact, text);
         }

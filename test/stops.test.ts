@@ -152,10 +152,10 @@ describe('an agent’s last words', () => {
       JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'I stopped: they conflict.' }] } }),
       'not json',
     ];
-    expect(claudeDriver.finalMessage!(lines)).toBe('I stopped: they conflict.');
+    expect(claudeDriver.finalMessage!(lines.join('\n'))).toBe('I stopped: they conflict.');
     lines.push(JSON.stringify({ type: 'result', result: 'I stopped: they conflict, in full.' }));
-    expect(claudeDriver.finalMessage!(lines)).toBe('I stopped: they conflict, in full.');
-    expect(claudeDriver.finalMessage!([])).toBeNull();
+    expect(claudeDriver.finalMessage!(lines.join('\n'))).toBe('I stopped: they conflict, in full.');
+    expect(claudeDriver.finalMessage!('')).toBeNull();
   });
 
   test('opencode: the text of its last step', () => {
@@ -167,6 +167,6 @@ describe('an agent’s last words', () => {
       JSON.stringify({ type: 'text', part: { text: 'They conflict.' } }),
       JSON.stringify({ type: 'step_finish', part: {} }),
     ];
-    expect(opencodeDriver.finalMessage!(lines)).toBe('I stopped.\n\nThey conflict.');
+    expect(opencodeDriver.finalMessage!(lines.join('\n'))).toBe('I stopped.\n\nThey conflict.');
   });
 });

@@ -338,6 +338,25 @@ export class OpencodeSession implements StructuredSession {
   }
 }
 
+/**
+ * What the agent said last in a `run --format json` log: the text of its last
+ * step, after its last tool call — one reply can arrive as several text events.
+ */
+export function finalMessageFromRun(log: string): string | null {
+  let texts: string[] = [];
+  for (const line of log.split('\n')) {
+    let event: RunEvent;
+    try {
+      event = JSON.parse(line.trim()) as RunEvent;
+    } catch {
+      continue;
+    }
+    if (event.type === 'text' && event.part?.text?.trim()) texts.push(event.part.text.trim());
+    else if (event.type === 'step_start' || event.type === 'tool' || event.type === 'tool_use' || event.type === 'tool_call') texts = [];
+  }
+  return texts.length > 0 ? texts.join('\n\n') : null;
+}
+
 // ---------------------------------------------------------------------------
 // The driver
 
@@ -389,25 +408,7 @@ export const opencodeDriver: AgentDriver = {
     }
   },
 
-  finalMessage(lines: string[]): string | null {
-    // The text of the last step: what it said after its last tool call.
-    let step: string[] = [];
-    let last: string[] = [];
-    for (const line of lines) {
-      let event: RunEvent;
-      try {
-        event = JSON.parse(line.trim()) as RunEvent;
-      } catch {
-        continue;
-      }
-      if (event.type === 'step_start') step = [];
-      if (event.type === 'text' && event.part?.text?.trim()) {
-        step.push(event.part.text.trim());
-        last = step;
-      }
-    }
-    return last.length > 0 ? last.join('\n\n') : null;
-  },
+  finalMessage: finalMessageFromRun,
 
   parseUsage(line: string): Usage | null {
     let event: RunEvent;

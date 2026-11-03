@@ -40,7 +40,7 @@ import { openInEditor, runInTerminal } from './editor.ts';
 import { JobPane, summarizeJobs } from './jobs.tsx';
 import { ReviewScreen } from './review.tsx';
 import { THEME } from './theme.ts';
-import type { Job } from '../core/jobs.ts';
+import { stoppedDraft, type Job } from '../core/jobs.ts';
 import { lintRequirement, type LintConfig } from '../core/concreteness.ts';
 import { markExampleInFile } from '../core/mark.ts';
 import type { Decision } from '../core/decisions.ts';
@@ -533,21 +533,34 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   // Not the stage alone: a new project's vision comes before its ground
   // rules, so on the vision they are still open.
   const foundationSettled = createMemo(() => stage().kind !== 'foundation' && questions().every((q) => q.answered));
+  /** The selected change's last draft, when it stopped without writing anything. */
+  const stoppedJob = createMemo(() => {
+    const p = selected();
+    return p ? stoppedDraft(jobs(), p) : null;
+  });
   const next = createMemo<NextStep | null>(() => {
     const p = selected();
-    return p ? nextStep(p, foundationSettled()) : null;
+    return p ? nextStep(p, foundationSettled(), stoppedJob()?.artifact) : null;
   });
 
   /**
-   * Why the agent last stopped instead of drafting the next step, while that
-   * step is still to draft. Re-read when the jobs or the pipelines change.
+   * Why a job stopped without writing its artifact: the report it left, else
+   * its last words — and when it said nothing, a report that says so.
    */
+  const reportFor = (job: Job): StopReport =>
+    props.input.stopReport?.(job.change, job.artifact, job) ?? {
+      change: job.change,
+      artifact: job.artifact,
+      text: '',
+      source: 'message',
+      summary: '',
+      issues: [],
+      named: [],
+    };
+  /** Why the selected change's last draft stopped, while it is the latest job. */
   const stopped = createMemo<StopReport | null>(() => {
-    const p = selected();
-    const step = next();
-    jobs();
-    if (!p || !step?.actions.includes('draft') || !step.artifact || step.artifact === 'apply') return null;
-    return props.input.stopReport?.(p.name, step.artifact) ?? null;
+    const job = stoppedJob();
+    return job ? reportFor(job) : null;
   });
   /** The report on screen, when reading one. */
   const [stopView, setStopView] = createSignal<StopReport | null>(null);
@@ -783,21 +796,22 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       // Exit 0 is not proof of work: an agent can finish without writing the
       // file (denied, confused, out of turns). Say so rather than showing the
       // same next step again as if nothing had happened.
+      // What was drafted — or why nothing was — is what you want to see
+      // next, unless you are busy with something else: then it waits behind
+      // its button.
+      const idle = screen() === 'overview' && session() === null && !jobsOpen() && asking() === null;
       const stage = pipelines().find((p) => p.name === last.change)?.stages.find((s) => s.id === last.artifact);
       if (last.status === 'succeeded' && stage && (stage.state === 'ready' || stage.state === 'blocked')) {
-        const report = props.input.stopReport?.(last.change, last.artifact, last) ?? null;
-        if (!report) {
-          setNotice(`The agent finished but did not write the ${last.artifact} — ctrl+j shows what it did`);
-          return;
+        const report = reportFor(last);
+        const why = report.text ? `: ${stopHeadline(report)}` : '';
+        if (idle && selected()?.name === last.change) {
+          setNotice(`⚠ The agent stopped before writing the ${last.artifact} of ${last.change}${why}`);
+          openStop(report);
+        } else {
+          setNotice(`⚠ The agent stopped before writing the ${last.artifact} of ${last.change}${why} — select it, enter reads why`);
         }
-        setNotice(`⚠ The agent stopped instead of writing the ${last.artifact}: ${stopHeadline(report)}`);
-        const idle = screen() === 'overview' && session() === null && !jobsOpen() && asking() === null;
-        if (idle && selected()?.name === last.change) openStop(report);
         return;
       }
-      // What was drafted is what you want to see next — unless you are busy
-      // with something else, in which case it waits behind its button.
-      const idle = screen() === 'overview' && session() === null && !jobsOpen() && asking() === null;
       if (last.status === 'succeeded' && idle && selected()?.name === last.change) {
         void openDoc(last.change, last.artifact, true);
       }
@@ -968,15 +982,38 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     setScreen('overview');
   };
 
-  /** Revise the requirements first — the agent was right to stop — or try again. */
+  /** Dispatches from the stop, which it then leaves: the answer is on its way. */
+  const dispatchFromStop = async (change: string, artifact: string, feedback?: string) => {
+    closeStop();
+    const result = await props.input.dispatch(change, artifact, feedback);
+    setJobs(props.input.listJobs());
+    setNotice(result.message);
+  };
+
+  /**
+   * What answering a stopped draft offers. An agent stops on purpose when
+   * what it builds on is wrong or ambiguous (the schema tells the design to),
+   * and the fix belongs there — so that comes first: revising the
+   * requirements it names in the review, or redrafting what it was drafted
+   * against. Answering it here and drafting again is for when it is the
+   * developer's call, not the spec's.
+   */
   const stopActions = createMemo((): DocumentAction[] => {
     const report = stopView();
     if (!report) return [];
+    const said = report.text || '(it said nothing at the end — ctrl+j shows its log)';
+    const p = pipelines().find((c) => c.name === report.change);
+    const stage = p?.stages.find((s) => s.id === report.artifact);
+    // The nearest prerequisite: what it was drafted against.
+    const back = [...(stage?.requires ?? [])]
+      .reverse()
+      .map((id) => p?.stages.find((s) => s.id === id))
+      .find((s) => s && (s.state === 'written' || s.state === 'accepted'));
     const out: DocumentAction[] = [];
     const first = report.named[0];
     if (first) {
       out.push({
-        label: `▶ Revise them in the review`,
+        label: '▶ Revise them in the review',
         key: 's',
         run: () => {
           closeStop();
@@ -984,28 +1021,40 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
         },
       });
     }
+    if (back) {
+      out.push({
+        label: `↩ Fix the ${back.id}`,
+        key: 'b',
+        ask: `Your answer to what it raised, if you have one. The agent redrafts the ${back.id} with its report and this; you review the result.`,
+        run: (answer) =>
+          void dispatchFromStop(
+            report.change,
+            back.id,
+            `The ${report.artifact} could not be written against the ${back.id}. The agent drafting it stopped and reported:\n\n` +
+              `${said}\n\n` +
+              (answer
+                ? `The developer's decision: ${answer}`
+                : `Resolve what it raised in the ${back.id}, and nothing else.`),
+          ),
+      });
+    }
     out.push({
-      label: '✦ Draft it again',
+      label: `↻ Draft the ${report.artifact} again`,
       key: 'w',
+      ask: 'What should it go with — your answer to what it raised? Leave it empty to try again as it is.',
+      // The prompt quotes the report itself, next to the answer.
+      run: (answer) => void dispatchFromStop(report.change, report.artifact, answer || undefined),
+    });
+    out.push({
+      label: '✎ Write it myself',
+      key: 'ctrl+e',
       run: () => {
         closeStop();
-        void props.input.dispatch(report.change, report.artifact).then((result) => {
-          setJobs(props.input.listJobs());
-          setNotice(result.message);
-        });
+        void writeNext();
       },
     });
     return out;
   });
-
-  const answerStop = async (answer: string) => {
-    const report = stopView();
-    if (!report) return;
-    closeStop();
-    const result = await props.input.dispatch(report.change, report.artifact, answer);
-    setJobs(props.input.listJobs());
-    setNotice(result.message);
-  };
 
   // --- the vision -----------------------------------------------------------
 
@@ -1324,15 +1373,17 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
     const actions = next()?.actions ?? [];
     const out: { label: string; key: string; run: () => void }[] = [];
-    const report = stopped();
-    if (report) out.push({ label: '⚠ Why the agent stopped', key: 'o', run: () => openStop(report) });
     if (actions.includes('review')) out.push({ label: '▶ Review', key: 'enter', run: () => enterReview() });
     const toRead = actions.includes('read') ? next()?.artifact : undefined;
     if (toRead && selected()) {
       const change = selected()!.name;
       out.push({ label: `▶ Read the ${toRead}`, key: 'enter', run: () => void openDoc(change, toRead) });
     }
-    if (actions.includes('draft')) {
+    const halted = actions.includes('stopped') ? stopped() : null;
+    if (halted) out.push({ label: '▶ Why it stopped', key: 'enter', run: () => openStop(halted) });
+    // Drafting it again is offered with what it stopped on, where it can be
+    // answered; w still does it as it is.
+    if (actions.includes('draft') && !halted) {
       out.push({
         label: next()?.artifact === 'apply'
           ? props.input.implement ? `▶ Implement it in ${driverLabel(props.input.driver ?? 'claude')}` : '▶ Start implementing'
@@ -1818,12 +1869,9 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
 
       <Show when={screen() === 'stopped' && stopView()}>
         <DocumentView
-          title={`${stopView()!.change} › ${stopView()!.artifact} › why the agent stopped`}
-          content={renderStop(stopView()!)}
+          title={`The agent stopped before writing the ${stopView()!.artifact}`}
+          content={stopView()!.text ? renderStop(stopView()!) : 'It said nothing at the end. ctrl+j on the overview shows its whole log.'}
           actions={stopActions()}
-          redraftLabel="↻ Answer it and draft again"
-          redraftPrompt={`What should the agent go with? It drafts the ${stopView()!.artifact} again with this.`}
-          onRedraft={(answer) => void answerStop(answer)}
           onClose={closeStop}
         />
       </Show>

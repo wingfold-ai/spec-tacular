@@ -2,6 +2,7 @@
  * An agent that stops instead of writing an artifact, in the whole app: what
  * it found opens straight away with the text of every requirement it names,
  * the overview keeps saying so, and `s` opens the review on the first of them.
+ * With no report at all, the stop is still shown, with the ways on.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { answerFoundation, guidedQuestions } from '../src/core/foundation.ts';
@@ -76,26 +77,27 @@ describe('when the agent stops instead of writing the design', () => {
   test('its report opens, each conflicting requirement quoted under it', async () => {
     const ui = await stoppedDesign((root) => saveStopReport(root, 'add-feed', 'design', REPORT));
     const frame = ui.frame();
-    expect(frame).toContain('add-feed › design › why the agent stopped');
+    expect(frame).toContain('The agent stopped before writing the design');
     expect(frame).toContain('The agent stopped instead of writing the design');
     expect(frame).toContain('Conflict: Opponent goals must and must not name a scorer');
     expect(frame).toContain('goal-recording › Goals are recorded for either side of a fixture');
     expect(frame).toContain("goal-recording › Scorer is picked from the team's squad by name");
     expect(frame).toContain('│ A goal for the opponent SHALL NOT name a scorer.');
     expect(frame).toContain('│ Each goal SHALL name a scorer from the squad.');
-    expect(frame).toContain('▶ Revise them in the review  s');
-    expect(frame).toContain('✦ Draft it again  w');
-    expect(frame).toContain('↻ Answer it and draft again  r');
+    // Five actions: their labels wrap inside the buttons.
+    expect(frame).toContain('▶ Revise them in the');
+    expect(frame).toContain('↩ Fix the');
+    expect(frame).toContain('↻ Draft the design');
   });
 
   test('the overview keeps saying so, and s opens the review on the first requirement it names', async () => {
     const ui = await stoppedDesign((root) => saveStopReport(root, 'add-feed', 'design', REPORT));
     await ui.press('q');
-    expect(ui.frame()).toContain('⚠ The agent stopped instead of writing the design: 1 conflict in the requirements');
-    expect(ui.frame()).toContain('⚠ Why the agent');
+    expect(ui.frame()).toContain('⚠ The agent stopped before writing the design of add-feed: 1 conflict in the');
+    expect(ui.frame()).toContain('▶ Why it stopped');
 
     await ui.press('o');
-    expect(ui.frame()).toContain('why the agent stopped');
+    expect(ui.frame()).toContain('The agent stopped before writing the design');
     await ui.press('s');
     expect(ui.frame()).toContain('add-feed › review');
     expect(ui.frame()).toContain('Requirement: Goals are recorded for either side of a fixture');
@@ -104,8 +106,8 @@ describe('when the agent stops instead of writing the design', () => {
 
   test('answering it drafts again with the answer', async () => {
     const ui = await stoppedDesign((root) => saveStopReport(root, 'add-feed', 'design', REPORT));
-    await ui.press('r');
-    expect(ui.frame()).toContain('What should the agent go with?');
+    await ui.press('w');
+    expect(ui.frame()).toContain('What should it go with');
     await ui.type('opponent goals get no video');
     await ui.press('return');
     await ui.settle(50);
@@ -120,10 +122,12 @@ describe('when the agent stops instead of writing the design', () => {
     expect(ui.frame()).toContain('│ Each goal SHALL name a scorer from the squad.');
   });
 
-  test('without any report it says only that nothing was written', async () => {
+  test('without any report it says that it said nothing, and still offers the ways on', async () => {
     const ui = await stoppedDesign(() => {});
-    expect(ui.frame()).toContain('The agent finished but did not write the design');
-    expect(ui.frame()).not.toContain('Why the agent stopped');
+    expect(ui.frame()).toContain('The agent stopped before writing the design');
+    expect(ui.frame()).toContain('It said nothing at the end');
+    expect(ui.frame()).toContain('↻ Draft the design');
+    expect(ui.frame()).not.toContain('Revise them in the');
   });
 });
 
