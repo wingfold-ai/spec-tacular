@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { appendEvidence, loadEvidence, tagFor, tagsIn, type EvidenceRecord, type TestResult } from './evidence.ts';
 import { slugify } from './requirements.ts';
 import type { Risk } from './risks.ts';
+import { readPrevious, withMarker } from './provenance.ts';
 
 /** What the entry claims. `mitigated` is checked against the evidence. */
 export type StatedStatus = 'open' | 'mitigated' | 'unmitigated' | 'closed';
@@ -220,7 +221,7 @@ export function promoteRisks(projectRoot: string, change: string, risks: Risk[])
         history: [event],
       };
     }
-    writeFileSync(file, renderHazard(entry, id), 'utf8');
+    writeFileSync(file, withMarker(renderHazard(entry, id), 'markdown', readPrevious(file)), 'utf8');
 
     // The guard's latest results, carried over under the hazard.
     const runs = evidence.filter((r): r is Extract<EvidenceRecord, { kind: 'run' }> => r.kind === 'run' && r.item === risk.id);
@@ -321,7 +322,7 @@ export function markReviewed(projectRoot: string, id: string, note?: string): Ha
     reviewed: today(),
     history: [...hazard.history, `${today()} reviewed${note ? `: ${note}` : ''}`],
   };
-  writeFileSync(hazard.file, renderHazard(updated, hazard.id), 'utf8');
+  writeFileSync(hazard.file, withMarker(renderHazard(updated, hazard.id), 'markdown', readPrevious(hazard.file)), 'utf8');
   return updated;
 }
 

@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'node:path';
 import { normalizeContent, SECTION_HEADER } from './markdown.ts';
 import { buildCodeFenceMask } from './markdown.ts';
+import { withMarker } from './provenance.ts';
 import { hashBlock, slugify, type ReviewItem } from './requirements.ts';
 
 export function foundationDir(projectRoot: string): string {
@@ -227,7 +228,7 @@ export function scaffoldFoundation(
         '',
       ]),
     ];
-    writeFileSync(file, body.join('\n'), 'utf8');
+    writeFileSync(file, withMarker(body.join('\n'), 'markdown'), 'utf8');
     created.push(doc.name);
   }
   return { created, skipped };

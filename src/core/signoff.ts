@@ -13,6 +13,7 @@
 import { parseDecisions } from './decisions.ts';
 import { hashBlock } from './requirements.ts';
 import { NOTE, SHOWN_RED, stripMarkers } from './markers.ts';
+import { stripMarker } from './provenance.ts';
 import { loadReview, saveReview, setState } from './review.ts';
 
 /** Where a written document stands. */
@@ -27,10 +28,11 @@ export interface Signoff {
  * The hash a document is accepted under. Ticking a task off is implementing
  * the plan, not changing it, so checkboxes count as unticked — and so do
  * recording that a guard test was shown red and the agent's `(note: …)`
- * on a task (core/markers.ts).
+ * on a task (core/markers.ts). The generated-by marker is not content either
+ * (core/provenance.ts).
  */
 export function hashDocument(content: string): string {
-  return hashBlock(stripMarkers(content.replace(/^(\s*[-*]\s+)\[[xX]\]/gm, '$1[ ]'), [NOTE, SHOWN_RED]));
+  return hashBlock(stripMarkers(stripMarker(content).replace(/^(\s*[-*]\s+)\[[xX]\]/gm, '$1[ ]'), [NOTE, SHOWN_RED]));
 }
 
 /** Whether `artifact` of `change`, as `content` now reads, is accepted. */

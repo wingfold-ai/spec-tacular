@@ -8,6 +8,7 @@
  * instruction wording for abstraction, example marking and deferral.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,7 @@ import { VERIFICATION_STARTER, verificationPath } from './evidence.ts';
 import { scaffoldFoundation } from './foundation.ts';
 import { DEFECT_SCHEMA_FILES, SCHEMA_FILES } from './schema-files.ts';
 import { isGreenfield } from './vision.ts';
+import { withMarker } from './provenance.ts';
 
 export const SCHEMA_NAME = 'spec-tacular';
 /** The schema a defect change uses instead (`spec-tacular defect`). */
@@ -79,6 +81,59 @@ export function setProjectSchema(projectRoot: string, schema: string): boolean {
   return true;
 }
 
+/**
+ * What of `.spec-tacular/` belongs in git: the review decisions and the
+ * surviving mutants a developer allowed, with their reasons. Everything else
+ * there is this machine's state — jobs, usage, sessions, test reports, the
+ * evidence log (summarised in each change's review record instead).
+ */
+export const STATE_GITIGNORE = withMarker(
+  [
+    "# This machine's state, kept out of git. Kept in: what a person decided.",
+    '*',
+    '!.gitignore',
+    '!review/',
+    '!review/*.json',
+    '!harness/',
+    '!harness/*.allowed.json',
+    '',
+  ].join('\n'),
+  'yaml',
+);
+
+export function stateGitignorePath(projectRoot: string): string {
+  return join(projectRoot, '.spec-tacular', '.gitignore');
+}
+
+/** Writes `.spec-tacular/.gitignore` unless there is one: a project's own is kept. */
+export function writeStateGitignore(projectRoot: string): boolean {
+  const path = stateGitignorePath(projectRoot);
+  if (existsSync(path)) return false;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, STATE_GITIGNORE, 'utf8');
+  return true;
+}
+
+/**
+ * The files spec-tacular writes for the repository that git would ignore,
+ * as paths relative to the project. Empty outside a git repository.
+ */
+export function ignoredRecords(projectRoot: string): string[] {
+  const probes = ['spec-tacular/vision.md', 'openspec/changes/a-change/review.md', '.spec-tacular/review/a-change.json'];
+  try {
+    const out = execFileSync('git', ['check-ignore', '--no-index', ...probes], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+  } catch (err) {
+    // Exit 1: nothing ignored. Anything else: not a repository, no git.
+    const stdout = (err as { stdout?: string }).stdout ?? '';
+    return stdout.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+  }
+}
+
 export function initProject(
   projectRoot: string,
   options: { setSchema?: boolean } = {},
@@ -116,6 +171,17 @@ export function initProject(
   if (!existsSync(verification)) {
     mkdirSync(dirname(verification), { recursive: true });
     writeFileSync(verification, VERIFICATION_STARTER, 'utf8');
+  }
+
+  // Local state stays local; the decisions are committed (core/review-record.ts).
+  writeStateGitignore(projectRoot);
+  const ignored = ignoredRecords(projectRoot);
+  if (ignored.length > 0) {
+    notes.push(
+      `git ignores ${ignored.join(', ')}. The review decisions are kept in those files;` +
+        ' ignored, they are lost with this machine. Keep spec-tacular/, openspec/changes/' +
+        ' and .spec-tacular/review/ in git.',
+    );
   }
 
   const configUpdated = options.setSchema === false ? false : setProjectSchema(projectRoot, SCHEMA_NAME);

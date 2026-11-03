@@ -21,6 +21,7 @@ import { guidedQuestions } from './foundation.ts';
 import { renderPrompt, type PromptParts } from '../agent/prompt.ts';
 import { validateChangeName } from './guide.ts';
 import { unique } from './naming.ts';
+import { readPrevious, withMarker } from './provenance.ts';
 import { promoteSlice, saveRoadmap, type Roadmap, type Slice } from './roadmap.ts';
 
 export interface InterviewQuestion {
@@ -394,7 +395,7 @@ export function finalizeVision(
 ): Slice | null {
   const path = join(projectRoot, 'spec-tacular', 'vision.md');
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, renderVision(vision, session), 'utf8');
+  writeFileSync(path, withMarker(renderVision(vision, session), 'markdown', readPrevious(path)), 'utf8');
 
   // A dropped slice cannot be depended on.
   const ids = new Set(kept.map((s) => s.id));

@@ -16,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse, parseDocument } from 'yaml';
+import { withMarker } from '../provenance.ts';
 import { parseExpr, variablesOf, type Expr } from './expr.ts';
 
 export type Role = 'mode' | 'input' | 'output' | 'internal';
@@ -201,5 +202,7 @@ export function applyGlossaryChanges(projectRoot: string, changes: GlossaryChang
   if (!doc.has('variables') || doc.get('variables') === null) doc.set('variables', doc.createNode({}));
   for (const c of changes) doc.setIn(['variables', c.name], doc.createNode(entryOf(c)));
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, String(doc), 'utf8');
+  // A glossary the developer wrote by hand is theirs: only a new one is marked.
+  const created = !existsSync(path);
+  writeFileSync(path, created ? withMarker(String(doc), 'yaml') : String(doc), 'utf8');
 }

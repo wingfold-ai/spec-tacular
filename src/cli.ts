@@ -149,8 +149,10 @@ import {
   tagFor,
   verificationPath,
   type EvidenceRecord,
+  type ItemEvidence,
   type Method,
 } from './core/evidence.ts';
+import { writeReviewRecord } from './core/review-record.ts';
 import { isRisk, unansweredRisks, unguardedRisks, unprovenGuards, type Risk } from './core/risks.ts';
 import { openSession, type ReviewSession } from './core/session.ts';
 import { clearStopReport, parseStop, readStopReport, saveStopReport, stopInstructions, type StopReport } from './core/stops.ts';
@@ -1063,6 +1065,8 @@ async function runDiff(args: Args, adapter: OpenSpecAdapter): Promise<number> {
     return 0;
   }
   acceptDocument(args.cwd, args.change, 'implementation', text);
+  const status = (await adapter.statusAll()).changes.find((c) => c.changeName === args.change);
+  if (status) recordReview(args.cwd, status);
   process.stdout.write(`Accepted the implementation diff of ${args.change}. A later change to the code sends it back.\n`);
   return 0;
 }
@@ -1222,6 +1226,18 @@ async function runArchive(args: Args, adapter: OpenSpecAdapter): Promise<number>
  * it reports goes to `out`, refusals to `err`; true once it is archived (or,
  * on a dry run, once it could be).
  */
+/**
+ * Writes the change's review record (core/review-record.ts). A record that
+ * cannot be written never fails the decision it records: the sidecar holds it.
+ */
+function recordReview(root: string, status: OpenSpecChangeStatus, evidence?: ItemEvidence[]): string | null {
+  try {
+    return writeReviewRecord(root, status, evidence ? { evidence } : {});
+  } catch {
+    return null;
+  }
+}
+
 async function archiveChange(
   args: Args,
   adapter: OpenSpecAdapter,
@@ -1273,16 +1289,18 @@ async function archiveChange(
   // No-Go until proven: where the project runs tests for evidence, every
   // accepted requirement and risk must be verified or waived. Silence is
   // not consent.
-  if (pipeline?.evidence && !pipeline.evidence.complete) {
+  const evidence = (() => {
+    if (!pipeline?.evidence) return undefined;
     const cls = pipeline.consequence?.class ?? null;
     const matrices = matrixVerified(cls, matrixConfig(args.cwd))
       ? changeMatrices(args.cwd, change, queue.requirements.map((r) => r.item), loadGlossary(args.cwd))
       : [];
     const rows = rowsRequired(matrices, cls);
     const unconnected = unconnectedItems(args.cwd, matrices, queue.requirements).items;
-    const open = changeEvidence(args.cwd, change, queue.requirements, rows, unconnected, vacuousItems(matrices)).filter(
-      (e) => e.state !== 'passing' && e.state !== 'excepted',
-    );
+    return changeEvidence(args.cwd, change, queue.requirements, rows, unconnected, vacuousItems(matrices));
+  })();
+  if (pipeline?.evidence && !pipeline.evidence.complete) {
+    const open = (evidence ?? []).filter((e) => e.state !== 'passing' && e.state !== 'excepted');
     write.err(`\nRefused: ${open.length} item(s) of ${change} have no current evidence.\n`);
     for (const e of open) write.err(`  - ${e.state}: ${e.item.id}${e.note ? ` — ${e.note.slice(0, 160)}` : ''}\n`);
     // The one step only the developer can take, named where it blocks.
@@ -1300,6 +1318,11 @@ async function archiveChange(
     write.out('\nDry run — nothing written.\n');
     return true;
   }
+
+  // The decisions travel with the change: written now, while the deferred
+  // requirements are still in its specs, and moved by `openspec archive`.
+  const record = recordReview(args.cwd, status, evidence);
+  if (record) write.out(`  wrote ${relative(args.cwd, record)}\n`);
 
   try {
     const prepared = prepareArchive(args.cwd, change, queue.requirements);
@@ -1513,6 +1536,7 @@ async function runHarness(args: Args, adapter: OpenSpecAdapter): Promise<number>
           process.stdout.write(`Accepted ${r.item.name} (${relative(args.cwd, r.item.file)})\n`);
         }
         saveReview(args.cwd, review);
+        recordReview(args.cwd, status);
         queue = loadChangeReview(args.cwd, status);
       }
     }
@@ -2140,6 +2164,8 @@ async function main(): Promise<number> {
       saveSession: (session) => {
         const { documents } = loadReview(args.cwd, session.review.change);
         saveReview(args.cwd, { ...session.review, ...(documents ? { documents } : {}) });
+        const status = statuses.get(session.review.change);
+        if (status) recordReview(args.cwd, status);
       },
       lintConfig: loadLintConfig(args.cwd),
       glossary: () => loadGlossary(args.cwd),
@@ -2260,6 +2286,8 @@ async function main(): Promise<number> {
       acceptDocument: (change, artifact, content) => {
         try {
           acceptDocument(args.cwd, change, artifact, content);
+          const status = statuses.get(change);
+          if (status) recordReview(args.cwd, status);
           return { ok: true };
         } catch (err) {
           return { ok: false, reason: `Could not record it: ${(err as Error).message}` };

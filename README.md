@@ -636,6 +636,34 @@ acceptEdits` and read-only `openspec` commands allowed — headless, nobody is
 there to approve a tool call, so without it every write is denied. To allow
 more (running tests during `apply`), add flags with `SPECTACULAR_CLAUDE_ARGS`.
 
+**What goes into git.** The review decisions are what spec-tacular adds to
+OpenSpec, so they are kept where the rest of the change is:
+
+- Every change carries `openspec/changes/<id>/review.md`. It lists what was:
+  - accepted, with the questions' answers;
+  - rejected, with why;
+  - deferred, with what it waits for;
+  - allowed or waived.
+
+  It is rewritten from the review state on every decision and once more
+  before archiving, so `openspec archive` moves it with the change. It reads
+  the same without spec-tacular, and hand edits to it are overwritten.
+- `spec-tacular/` holds the ground rules, the vision, the roadmap, the ADRs,
+  the glossary and the hazard register. All of it is meant to be committed.
+- `init` writes `.spec-tacular/.gitignore`. It keeps this machine's state out
+  of git: jobs, usage, sessions, test reports and the evidence log. The
+  review decisions (`review/`) and the surviving mutants you allowed
+  (`harness/*.allowed.json`) stay committed. If git ignores any of these
+  records, `init` says so.
+
+Every file spec-tacular writes itself starts with the line
+`<!-- generated-by: spec-tacular <version> -->`, or `# generated-by: …` in
+YAML:
+- The version is the one that created the file, and is never rewritten.
+- The marker is not content: adding it never re-opens a signed-off document.
+- The proposal, specs, design and tasks the agents draft are left as they
+  wrote them.
+
 Everything the TUI does is also a command:
 
 ```bash
