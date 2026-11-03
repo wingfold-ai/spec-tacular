@@ -1,0 +1,22 @@
+#!/bin/sh
+# A stand-in for tmux, for evaluations: spec-tacular opens an implementing
+# session with `tmux new-window -c <dir> <script>` when $TMUX is set. Here
+# that session goes into another headless terminal (tui.py), under
+# $EVAL_SESSIONS/impl-<n>, where the evaluating agent can watch and answer it
+# — instead of a window popping up on a desktop nobody is looking at.
+set -eu
+[ "${1:-}" = "new-window" ] || { echo "tmux shim: only new-window is supported" >&2; exit 1; }
+shift
+cwd=$PWD
+while [ $# -gt 1 ]; do
+  case "$1" in
+    -c) cwd=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+script=$1
+n=1
+while [ -e "$EVAL_SESSIONS/impl-$n" ]; do n=$((n + 1)); done
+cd "$cwd"
+"$EVAL_PYTHON" "$EVAL_TOOLS/tui.py" start "$EVAL_SESSIONS/impl-$n" --cols 160 --rows 50 -- "$script" >/dev/null
+echo "$EVAL_SESSIONS/impl-$n" >> "$EVAL_SESSIONS/implementing.log"

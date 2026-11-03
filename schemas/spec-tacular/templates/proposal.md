@@ -16,3 +16,8 @@
 
 ## Impact
 <!-- Affected code, APIs, dependencies, systems. -->
+
+## Boundary
+<!-- The areas of the code this change expects to touch, one per bullet, in
+     backticks: `src/export/`, `test/export.test.ts`, `src/**/*.sql`. Files
+     changed outside them are flagged for review. -->

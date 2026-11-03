@@ -14,7 +14,7 @@ import type { RefineTurn, Refinement } from '../core/refine.ts';
 import { lineDiff, type DiffLine } from '../render/diff.ts';
 import { wrap } from '../render/requirement.ts';
 import { useCopy, usePasteInto } from './copy-paste.ts';
-import { editLine, isAccept, isCancel, isEnter, isRevise } from './input.ts';
+import { createLine, insertAt, isAccept, isCancel, isEnter, isRevise, withCursor } from './input.ts';
 import { useContentWidth } from './layout.ts';
 import { THEME } from './theme.ts';
 import { KeyBar, Spinner } from './widgets.tsx';
@@ -30,8 +30,10 @@ export interface RevisePanelProps {
   /** Why there is no agent to revise with, or null when there is one. */
   unavailable: string | null;
   propose: (turns: RefineTurn[], instruction: string) => Promise<Refinement>;
-  /** Writes the revision into the spec file. */
-  onAccept: (block: string) => { ok: true } | { ok: false; reason: string };
+  /** Writes the revision into the spec file — and, when it has any, its glossary changes. */
+  onAccept: (block: string, refinement?: Refinement) => { ok: true } | { ok: false; reason: string };
+  /** How a glossary change reads, for the lines above the diff. */
+  describeGlossary?: (refinement: Refinement) => string[];
   /** Closes the panel; the message says what happened to the requirement. */
   onClose: (message: string | null) => void;
   /** What is being revised, in messages: `requirement` unless said otherwise. */
@@ -79,7 +81,9 @@ export function RevisePanel(props: RevisePanelProps) {
   const contentWidth = useContentWidth();
   const copy = useCopy();
   const [phase, setPhase] = createSignal<RevisePhase>(props.unavailable ? 'unavailable' : 'prompt');
-  const [draft, setDraft] = createSignal(props.seed ?? '');
+  const line = createLine(props.seed ?? '');
+  const draft = line.text;
+  const setDraft = line.set;
   const [turns, setTurns] = createSignal<RefineTurn[]>([]);
   const [latest, setLatest] = createSignal<Refinement | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -108,8 +112,11 @@ export function RevisePanel(props: RevisePanelProps) {
     setTop((t) => Math.min(Math.max(t + delta, 0), Math.max(diff().length - height(), 0)));
 
   const draftRows = createMemo(() => {
-    const rows = `${draft()}▏`.split('\n').flatMap((line) => (line === '' ? [''] : wrap(line, width() - 4)));
-    return rows.slice(-8);
+    const rows = withCursor(draft(), line.cursor()).split('\n').flatMap((l) => (l === '' ? [''] : wrap(l, width() - 4)));
+    // The last rows, unless the cursor is further up.
+    const at = Math.max(rows.findIndex((row) => row.includes('▏')), 0);
+    const start = Math.min(Math.max(rows.length - 8, 0), at);
+    return rows.slice(start, start + 8);
   });
 
   /** What is being revised, in full: on screen until the first proposal replaces it with a diff. */
@@ -157,7 +164,7 @@ export function RevisePanel(props: RevisePanelProps) {
   const accept = () => {
     const next = latest();
     if (!next) return;
-    const result = props.onAccept(next.block);
+    const result = props.onAccept(next.block, next);
     if (!result.ok) {
       setError(result.reason);
       setPhase('error');
@@ -166,7 +173,7 @@ export function RevisePanel(props: RevisePanelProps) {
     props.onClose(null);
   };
 
-  usePasteInto(() => (phase() === 'prompt' ? (text: string) => setDraft((d) => d + text) : null), { multiline: true });
+  usePasteInto(() => (phase() === 'prompt' ? (text: string) => line.insert(text) : null), { multiline: true });
 
   useKeyboard((key) => {
     switch (phase()) {
@@ -180,8 +187,11 @@ export function RevisePanel(props: RevisePanelProps) {
 
       case 'prompt': {
         if (isCancel(key)) return back(`Revision cancelled — the ${noun()} is unchanged`);
-        if (isNewline(key, draft())) {
-          setDraft((d) => (d.endsWith('\\') ? d.slice(0, -1) : d) + '\n');
+        const beforeCursor = draft().slice(0, line.cursor());
+        if (isNewline(key, beforeCursor)) {
+          // A backslash before the cursor asked for the newline; it is not text.
+          const at = line.cursor() - (beforeCursor.endsWith('\\') ? 1 : 0);
+          line.put(insertAt({ text: draft().slice(0, at) + draft().slice(line.cursor()), cursor: at }, '\n'));
           return;
         }
         if (isEnter(key)) {
@@ -201,8 +211,7 @@ export function RevisePanel(props: RevisePanelProps) {
         // Page keys scroll the text being revised; arrows stay with the input.
         if (!latest() && key.name === 'pagedown') return scrollCurrent(currentHeight() - 2);
         if (!latest() && key.name === 'pageup') return scrollCurrent(-(currentHeight() - 2));
-        const next = editLine(draft(), key);
-        if (next !== null) setDraft(next);
+        line.edit(key);
         return;
       }
 
@@ -301,6 +310,12 @@ export function RevisePanel(props: RevisePanelProps) {
         <For each={latest()!.warnings}>
           {(w) => <text style={{ fg: THEME.warn }}>{`! ${w}`}</text>}
         </For>
+        <Show when={latest()!.glossary?.length}>
+          <text style={{ fg: THEME.accent2 }}>glossary.yaml, written with it:</text>
+          <For each={props.describeGlossary?.(latest()!) ?? latest()!.glossary!.map((c) => `+ ${c.name} (${c.role}, ${c.type}) — ${c.meaning}`)}>
+            {(l) => <text style={{ fg: l.startsWith('~') ? THEME.warn : THEME.ok }}>{`  ${l}`}</text>}
+          </For>
+        </Show>
         <box style={{ flexDirection: 'column', border: ['left'], borderColor: THEME.border, paddingLeft: 1 }}>
           <For each={diff().slice(top(), top() + height())}>
             {(row) => <text style={{ fg: row.fg }}>{row.text || ' '}</text>}

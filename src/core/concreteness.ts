@@ -198,8 +198,17 @@ export function lintRequirement(
   requirement: Requirement,
   config: LintConfig = EMPTY_CONFIG,
 ): Finding[] {
-  const parts = [requirement.text, ...requirement.scenarios.flatMap((s) => s.body)];
+  const parts = [withoutFormal(requirement.text), ...requirement.scenarios.flatMap((s) => s.body)];
   return parts.flatMap((part) => lintText(part, config));
+}
+
+/**
+ * The text with its ```formal blocks blanked: a formula names glossary
+ * variables by design — that is not premature concreteness. Blanked rather
+ * than cut, so every other finding keeps its offset.
+ */
+export function withoutFormal(text: string): string {
+  return text.replace(/^```formal[^\n]*\n[\s\S]*?^```[ \t]*$/gm, (block) => block.replace(/[^\n]/g, ' '));
 }
 
 

@@ -54,6 +54,8 @@ export function createAssistants(options: {
   driver: string;
   registry?: DriverRegistry;
   env?: NodeJS.ProcessEnv;
+  /** Every turn's usage, as it is reported: kept, so a restart keeps the total. */
+  record?: (usage: Usage) => void;
 }): Assistants {
   const { cwd } = options;
   const env = options.env ?? process.env;
@@ -71,6 +73,7 @@ export function createAssistants(options: {
   let pool: StructuredPool | null = null;
   const usageListeners = new Set<(usage: Usage) => void>();
   const reportUsage = (usage: Usage) => {
+    options.record?.(usage);
     for (const listener of usageListeners) listener(usage);
   };
   const sessions = () => (pool ??= new StructuredPool(driver!, cwd, { onUsage: reportUsage }));

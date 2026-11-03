@@ -9,6 +9,7 @@ import { createEffect, createSignal, For, onCleanup, Show, type JSX } from 'soli
 import type { ScrollBoxRenderable } from '@opentui/core';
 import { THEME } from './theme.ts';
 import { wrap } from '../render/requirement.ts';
+import { withCursor } from './input.ts';
 
 /** A bordered panel with its title set into the top edge. */
 export function Panel(props: {
@@ -61,6 +62,8 @@ export function ScrollArea(props: {
    * and the first thing to give way when there is not room for it all.
    */
   grow?: boolean;
+  /** Hands over the scroll box, for keys that scroll it (pgup/pgdn). */
+  onReady?: (box: ScrollBoxRenderable) => void;
 }) {
   let ref: ScrollBoxRenderable | undefined;
   createEffect(() => {
@@ -69,7 +72,10 @@ export function ScrollArea(props: {
   });
   return (
     <scrollbox
-      ref={(r: ScrollBoxRenderable) => (ref = r)}
+      ref={(r: ScrollBoxRenderable) => {
+        ref = r;
+        props.onReady?.(r);
+      }}
       // Rows around it keep their height: it takes only the room left over,
       // or, sized to its content, gives up room before anything else does.
       style={
@@ -157,16 +163,19 @@ export function KeyBar(props: { keys: [key: string, action: string][]; right?: s
 
 /**
  * What the developer is typing, with its cursor, wrapped to `width` columns
- * (the `› ` prompt included) and kept to the last `maxLines` lines.
+ * (the `› ` prompt included) and kept to `maxLines` lines — the last ones,
+ * unless the cursor is further up.
  *
  * One text, not one per line: rows that reflow on every keystroke, each its
  * own node, are laid out stale — a new line drawn over the one above it.
  */
-export function DraftText(props: { draft: string; width: number; maxLines?: number }) {
+export function DraftText(props: { draft: string; cursor?: number; width: number; maxLines?: number }) {
   const text = () => {
-    const lines = wrap(`${props.draft}▏`, Math.max(props.width - 2, 10));
+    const lines = wrap(withCursor(props.draft, props.cursor), Math.max(props.width - 2, 10));
+    const at = Math.max(lines.findIndex((line) => line.includes('▏')), 0);
+    const start = props.maxLines ? Math.min(Math.max(lines.length - props.maxLines, 0), at) : 0;
     return lines
-      .slice(props.maxLines ? -props.maxLines : 0)
+      .slice(start, props.maxLines ? start + props.maxLines : undefined)
       .map((line, i) => `${i === 0 ? '› ' : '  '}${line}`)
       .join('\n');
   };

@@ -1,0 +1,111 @@
+{
+  "label": "eval-fret2",
+  "jobs": [
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T07:27:10.425Z",
+      "minutes": 0.6,
+      "cost_usd": 0.3073158,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "proposal",
+      "start": "2026-10-30T07:29:07.617Z",
+      "minutes": 0.51,
+      "cost_usd": 0.2801498,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "specs",
+      "start": "2026-10-30T07:31:04.219Z",
+      "minutes": 3.11,
+      "cost_usd": 0.8668970000000001,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "risks",
+      "start": "2026-10-30T07:50:57.010Z",
+      "minutes": 1.38,
+      "cost_usd": 0.49738600000000005,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "design",
+      "start": "2026-10-30T08:01:54.233Z",
+      "minutes": 3.87,
+      "cost_usd": 1.1020949999999998,
+      "status": "succeeded"
+    },
+    {
+      "artifact": "tasks",
+      "start": "2026-10-30T08:06:34.641Z",
+      "minutes": 2.54,
+      "cost_usd": 1.0288396000000002,
+      "status": "succeeded"
+    }
+  ],
+  "drafting": {
+    "jobs": 6,
+    "by_artifact": {
+      "design": 1,
+      "proposal": 2,
+      "risks": 1,
+      "specs": 1,
+      "tasks": 1
+    },
+    "minutes": 12.0,
+    "cost_usd": 4.08
+  },
+  "tui_sessions": {
+    "requests": 28,
+    "cost_usd": 1.87,
+    "output": 40470,
+    "cache_write": 113119,
+    "cache_read": 574025
+  },
+  "implementing": {
+    "sessions": 0,
+    "minutes": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "permission_prompts": 0
+  },
+  "reported_cost_usd": 5.95,
+  "questions": {
+    "interview_asked": 2,
+    "interview_answered": 2,
+    "ground_rules_answered": 12,
+    "ground_rules_left_for_later": 26,
+    "roadmap_slices": 6
+  },
+  "review": {
+    "requirement": {
+      "items": 22,
+      "accepted": 22,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "risk": {
+      "items": 6,
+      "accepted": 6,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "decision": {
+      "items": 16,
+      "accepted": 16,
+      "deferred": 0,
+      "rejected": 0
+    },
+    "documents accepted": 3
+  },
+  "phases": [],
+  "code": {
+    "source_lines": 628,
+    "test_lines": 2037,
+    "tests_pass": 241,
+    "tests_fail": 0,
+    "tests_skip": 0
+  }
+}

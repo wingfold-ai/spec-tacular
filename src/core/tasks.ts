@@ -6,7 +6,13 @@
  * schema's own escape hatch (schemas/spec-tacular/schema.yaml): they wait
  * for the archive, where they go to the pending register, and must not hold
  * up the next slice meanwhile.
+ *
+ * A guard task — `(guard: <risk>)` — counts as done only once it also records
+ * `(shown red: …)`: a test that passes with the mitigation removed guards
+ * nothing, so ticking it off is not finishing it.
  */
+
+import { unprovenGuards } from './risks.ts';
 
 export interface TaskProgress {
   total: number;
@@ -14,8 +20,13 @@ export interface TaskProgress {
   done: number;
   /** Not ticked, and marked `(defer: …)`: waiting for a deployment. */
   deferred: number;
-  /** Not ticked, and nothing excuses it. */
+  /**
+   * Not ticked, and nothing excuses it — or a guard task ticked without a
+   * record that its test failed with the mitigation removed (core/risks.ts).
+   */
   open: number;
+  /** Guard tasks ticked off without having been shown red. Counted in `open`. */
+  unproven: number;
   /** Every task ticked or deferred — and there is at least one. */
   applied: boolean;
 }
@@ -34,6 +45,8 @@ export function taskProgress(content: string): TaskProgress {
     if (task[1] !== ' ') done++;
     else if (DEFERRED.test(task[2]!)) deferred++;
   }
+  const unproven = unprovenGuards(content).length;
+  done -= unproven;
   const open = total - done - deferred;
-  return { total, done, deferred, open, applied: total > 0 && open === 0 };
+  return { total, done, deferred, open, unproven, applied: total > 0 && open === 0 };
 }

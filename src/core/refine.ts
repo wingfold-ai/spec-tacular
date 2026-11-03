@@ -25,17 +25,41 @@ import {
   SECTION_HEADER,
 } from './markdown.ts';
 import { hashBlock, parseSpecFile, slugify, type Requirement, type ReviewItem } from './requirements.ts';
+import { isRisk, parseRisks, RISK_HEADER, type Risk } from './risks.ts';
 import { setState, type ChangeReview } from './review.ts';
 import { currentItem, moveTo, refresh, type ReviewSession } from './session.ts';
 import { REVISION_RULES } from './revision.ts';
+import { formalOf } from './formal/formal.ts';
+import { variablesOf } from './formal/expr.ts';
+import { fretVariables } from './formal/fretish.ts';
+import {
+  glossaryChangeProblems,
+  glossaryPath,
+  isEnumValue,
+  parseGlossaryChanges,
+  readGlossary,
+  type GlossaryChange,
+} from './formal/glossary.ts';
+import { parse as parseYaml } from 'yaml';
+
+/**
+ * What can be revised in conversation: a requirement, or a risk — each a
+ * block in its file that is written back in place.
+ */
+export type Revisable = Requirement | Risk;
 
 /** What the agent is shown besides the requirement itself. */
 export interface RefineContext {
-  requirement: Requirement;
+  requirement: Revisable;
   /** The spec file the requirement is in, as it is now. */
   spec: string;
   /** The change's proposal, when it has one: why the requirement exists. */
   proposal?: string;
+  /**
+   * The project's glossary.yaml as it is now, when it has one: what a formal
+   * form may name — and what a revision may add to or change in it.
+   */
+  glossary?: string;
 }
 
 /** One round: what was asked, and the requirement the agent answered with. */
@@ -51,6 +75,8 @@ export interface Refinement {
   summary: string;
   /** Worth knowing before accepting it, never blocking. */
   warnings: string[];
+  /** Glossary entries it adds or replaces, written with it on accept. */
+  glossary?: GlossaryChange[];
 }
 
 export const REFINE_SCHEMA = {
@@ -58,16 +84,34 @@ export const REFINE_SCHEMA = {
   properties: {
     requirement: { type: 'string' },
     summary: { type: 'string' },
+    glossary: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string' },
+          type: { type: 'string' },
+          meaning: { type: 'string' },
+          range: { type: 'array', items: { type: 'number' } },
+          values: { type: 'array', items: { type: 'string' } },
+          source: { type: 'string' },
+        },
+        required: ['name', 'role', 'type', 'meaning'],
+      },
+    },
   },
   required: ['requirement', 'summary'],
 } as const;
 
 /** Reads what the agent needs to know besides the requirement. */
-export function refineContext(changeRoot: string, requirement: Requirement): RefineContext {
+export function refineContext(changeRoot: string, requirement: Revisable, projectRoot?: string): RefineContext {
   const spec = readFileSync(requirement.file, 'utf8');
   const proposalPath = join(changeRoot, 'proposal.md');
   const proposal = existsSync(proposalPath) ? readFileSync(proposalPath, 'utf8') : undefined;
-  return { requirement, spec, ...(proposal ? { proposal } : {}) };
+  const g = projectRoot ? glossaryPath(projectRoot) : null;
+  const glossary = g && existsSync(g) ? readFileSync(g, 'utf8') : undefined;
+  return { requirement, spec, ...(proposal ? { proposal } : {}), ...(glossary !== undefined ? { glossary } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +155,8 @@ export function buildRefineParts(
   instruction: string,
 ): PromptParts {
   const req = context.requirement;
+  const risk = isRisk(req);
+  const noun = risk ? 'risk' : 'requirement';
   const current = readBlockFrom(context.spec, req);
   const sections: ContextSection[] = [];
   if (context.proposal) {
@@ -118,11 +164,11 @@ export function buildRefineParts(
   }
   sections.push(
     {
-      heading: `The spec it is part of (capability ${req.capability})`,
+      heading: risk ? "The change's risks document it is part of" : `The spec it is part of (capability ${req.capability})`,
       lines: normalizeContent(context.spec).split('\n').map((l) => l.trimEnd()),
     },
     {
-      heading: 'The requirement, as it is in the file now',
+      heading: `The ${noun}, as it is in the file now`,
       lines: (current.ok ? current.block : '').split('\n'),
     },
     {
@@ -131,16 +177,24 @@ export function buildRefineParts(
       empty: '(nothing yet: this is the first request)',
     },
   );
+  if (context.glossary !== undefined) {
+    sections.push({
+      heading: "The project's glossary (spec-tacular/glossary.yaml): what a formal form may name",
+      lines: context.glossary.split('\n').map((l) => l.trimEnd()),
+    });
+  }
 
-  const from = turns.length > 0 ? `your latest proposal, [${turns.length}]` : 'the requirement as it is in the file now';
+  const from = turns.length > 0 ? `your latest proposal, [${turns.length}]` : `the ${noun} as it is in the file now`;
   const task = [
-    `The developer asks you to change the requirement "${req.name}":`,
+    `The developer asks you to change the ${noun} "${req.name}":`,
     '',
     instruction.trim(),
     '',
-    `Start from ${from}. Return the whole revised requirement in \`requirement\`,`,
+    `Start from ${from}. Return the whole revised ${noun} in \`requirement\`,`,
     'and in `summary` one short sentence saying what you changed.',
   ].join('\n');
+
+  if (risk) return { preamble: PREAMBLE.replace(/requirement/g, 'risk'), context: sections, task, rules: `${RISK_RULES}\n${GLOSSARY_RULES}` };
 
   const rules = [
     'Format — the requirement is written back into the spec file exactly as you',
@@ -155,10 +209,39 @@ export function buildRefineParts(
     ...(req.operation === 'MODIFIED'
       ? ['- Keep the name exactly: in a MODIFIED section the name says which', '  existing requirement this one replaces.']
       : []),
+    GLOSSARY_RULES,
+    '- When the developer answers a question an `asked:` line records, their',
+    '  answer replaces the one there, and the prose, the formula and the',
+    '  scenarios change to agree with it — with a scenario for the case the',
+    '  question is about.',
   ].join('\n');
 
   return { preamble: PREAMBLE, context: sections, task, rules };
 }
+
+const GLOSSARY_RULES = [
+  'The glossary — written with the revision when it is accepted:',
+  '- A formal form names only glossary variables. When yours needs one the',
+  '  glossary lacks, or an entry is wrong (its type, its range), return it in',
+  '  `glossary`: each entry whole — name, role (mode | input | output |',
+  '  internal), type (bool | int | float | enum), meaning, and range [lo, hi]',
+  '  for a number or values for an enum. Leave out the entries you did not',
+  '  change. Never say you cannot change the glossary: this is how.',
+].join('\n');
+
+const RISK_RULES = [
+  'Format — the risk is written back into the risks document exactly as you',
+  'return it:',
+  '- It starts with `### Risk: <name>` and is one risk: no other heading.',
+  '- Then one bullet per field, `- **Field:** text`, in this order: Hazard,',
+  '  Affects, Boundary, Causes (optional), Severity (high | medium | low),',
+  '  Guard, Check — or, for a risk knowingly left unmitigated, Unmitigated',
+  '  (why) instead of Guard and Check — and Known hazard (HAZ-NNNN) when it',
+  '  is an instance of a register entry.',
+  '- A formal form, when it has one, stays in its ```formal fence after the',
+  '  fields; keep it consistent with what you changed.',
+  '- No code fence around it and no commentary inside it.',
+].join('\n');
 
 /** Strips a code fence the agent put around the whole answer anyway. */
 function unfence(text: string): string {
@@ -186,6 +269,9 @@ export function parseRefinement(raw: unknown, context: RefineContext): Refinemen
 
   const lines = block.split('\n');
   const mask = buildCodeFenceMask(lines);
+  if (isRisk(context.requirement)) {
+    return withGlossary(parseRiskRefinement(block, lines, mask, record, context.requirement, context.spec), record, context);
+  }
   if (!REQUIREMENT_HEADER.test(lines[0]!)) {
     throw new Error('The revision does not start with "### Requirement:"');
   }
@@ -214,8 +300,68 @@ export function parseRefinement(raw: unknown, context: RefineContext): Refinemen
     );
   }
   if (revised.scenarios.length === 0) warnings.push('It has no scenario left');
-  if (revised.hash === original.hash) warnings.push('Nothing changed');
+  const glossaryChanged = parseGlossaryChanges(record['glossary']).length > 0;
+  if (revised.hash === original.hash && !glossaryChanged) warnings.push('Nothing changed');
 
+  const summary = typeof record['summary'] === 'string' ? record['summary'].trim() : '';
+  return withGlossary({ block, summary, warnings }, record, context);
+}
+
+/**
+ * The glossary entries an answer carries, checked: malformed ones are
+ * named, and so is a variable the revised formula still leaves undefined.
+ */
+function withGlossary(r: Refinement, record: Record<string, unknown>, context: RefineContext): Refinement {
+  const changes = parseGlossaryChanges(record['glossary']);
+  const warnings = [...r.warnings];
+  for (const p of glossaryChangeProblems(changes)) warnings.push(`glossary: ${p}`);
+  if (context.glossary !== undefined) {
+    let current;
+    try {
+      current = readGlossary(parseYaml(context.glossary));
+    } catch {
+      current = null;
+    }
+    const form = formalOf({ ...context.requirement, text: r.block });
+    if (current && form) {
+      const names = new Set<string>();
+      for (const d of form.decisions) [d.output, ...variablesOf(d.expr)].forEach((v) => names.add(v));
+      for (const f of form.frets) fretVariables(f).forEach((v) => names.add(v));
+      const added = new Set(changes.map((c) => c.name));
+      const missing = [...names].filter((n) => !current!.variables.has(n) && !added.has(n) && !isEnumValue(current!.variables, n));
+      if (missing.length > 0) warnings.push(`not in the glossary, and not added: ${missing.join(', ')}`);
+    }
+  }
+  if (r.warnings.includes('Nothing changed') && changes.length > 0) warnings.splice(warnings.indexOf('Nothing changed'), 1);
+  return { ...r, warnings, ...(changes.length > 0 ? { glossary: changes } : {}) };
+}
+
+function parseRiskRefinement(
+  block: string,
+  lines: string[],
+  mask: boolean[],
+  record: Record<string, unknown>,
+  original: Risk,
+  document: string,
+): Refinement {
+  if (!RISK_HEADER.test(lines[0]!)) throw new Error('The revision does not start with "### Risk:"');
+  if (lines.some((l, i) => i > 0 && !mask[i] && /^#{1,3}\s/.test(l))) {
+    throw new Error('The revision has a heading in it, which would split the risks document');
+  }
+  const parsed = parseRisks(block, original.file);
+  if (parsed.length !== 1) throw new Error(`The revision holds ${parsed.length} risks, not one`);
+  const revised = parsed[0]!;
+  const warnings: string[] = [];
+  if (revised.name !== original.name) {
+    const others = parseRisks(document, original.file).filter((r) => r.line !== original.line);
+    if (others.some((r) => slugify(r.name) === slugify(revised.name))) {
+      throw new Error(`The revision renames it to "${revised.name}", which another risk already uses`);
+    }
+    warnings.push(`Renames it to "${revised.name}" — the design and the tasks refer to it by name`);
+  }
+  if (!revised.hazard) warnings.push('It has no Hazard left');
+  if (!revised.unmitigated && (!revised.guard || !revised.check)) warnings.push('It has no Guard and Check, and is not marked Unmitigated');
+  if (revised.hash === original.hash) warnings.push('Nothing changed');
   const summary = typeof record['summary'] === 'string' ? record['summary'].trim() : '';
   return { block, summary, warnings };
 }
@@ -251,7 +397,7 @@ interface Located {
  * Located in the raw text, not a normalized copy, because it is written back
  * into the raw text: normalizing would rewrite a CRLF file's every line.
  */
-function locate(content: string, requirement: Requirement): Located | { reason: string } {
+function locate(content: string, requirement: Revisable): Located | { reason: string } {
   // A lone CR is a line break to the parser but not to `split('\n')`, so
   // the line numbers would disagree.
   if (/\r(?!\n)/.test(content)) return { reason: 'the spec file uses bare CR line endings; edit it with E' };
@@ -260,27 +406,31 @@ function locate(content: string, requirement: Requirement): Located | { reason: 
   const normalized = lines.map((_, i) => plain(i));
   const mask = buildCodeFenceMask(normalized);
 
+  const risk = isRisk(requirement);
   const start = requirement.line - 1;
   const header = normalized[start];
-  const match = header === undefined || mask[start] ? null : REQUIREMENT_HEADER.exec(header);
-  if (!match?.[1] || normalizeRequirementName(match[1]) !== requirement.name) {
-    return { reason: 'the spec file changed since it was read — reopen the review' };
+  const match = header === undefined || mask[start] ? null : (risk ? RISK_HEADER : REQUIREMENT_HEADER).exec(header);
+  const name = risk ? match?.[1]?.trim() : match?.[1] && normalizeRequirementName(match[1]);
+  if (!name || name !== requirement.name) {
+    return { reason: `the ${risk ? 'risks document' : 'spec file'} changed since it was read — reopen the review` };
   }
+  // A risk ends at any heading of its level or above, as risks.ts reads it.
+  const ends = (line: string) => (risk ? /^#{1,3}\s/.test(line) : REQUIREMENT_HEADER.test(line) || SECTION_HEADER.test(line));
   let end = normalized.length;
   for (let i = start + 1; i < normalized.length; i++) {
-    if (!mask[i] && (REQUIREMENT_HEADER.test(normalized[i]!) || SECTION_HEADER.test(normalized[i]!))) {
+    if (!mask[i] && ends(normalized[i]!)) {
       end = i;
       break;
     }
   }
   if (hashBlock(normalized.slice(start, end).join('\n')) !== requirement.hash) {
-    return { reason: 'the requirement changed since it was read — reopen the review' };
+    return { reason: `the ${risk ? 'risk' : 'requirement'} changed since it was read — reopen the review` };
   }
   while (end > start + 1 && normalized[end - 1]!.trim() === '') end--;
   return { lines, crlf: content.includes('\r\n'), start, end };
 }
 
-function readBlockFrom(content: string, requirement: Requirement): { ok: true; block: string } | { ok: false; reason: string } {
+function readBlockFrom(content: string, requirement: Revisable): { ok: true; block: string } | { ok: false; reason: string } {
   const found = locate(content, requirement);
   if ('reason' in found) return { ok: false, reason: found.reason };
   return {
@@ -290,7 +440,7 @@ function readBlockFrom(content: string, requirement: Requirement): { ok: true; b
 }
 
 /** A requirement's Markdown, as it is in its file. */
-export function readRequirementBlock(requirement: Requirement): { ok: true; block: string } | { ok: false; reason: string } {
+export function readRequirementBlock(requirement: Revisable): { ok: true; block: string } | { ok: false; reason: string } {
   try {
     return readBlockFrom(readFileSync(requirement.file, 'utf8'), requirement);
   } catch (err) {
@@ -304,7 +454,7 @@ export function readRequirementBlock(requirement: Requirement): { ok: true; bloc
  * The blank lines after the block, and everything before and after it, are
  * kept byte for byte — line endings included.
  */
-export function writeRequirementBlock(requirement: Requirement, block: string): { ok: true } | { ok: false; reason: string } {
+export function writeRequirementBlock(requirement: Revisable, block: string): { ok: true } | { ok: false; reason: string } {
   let content: string;
   try {
     content = readFileSync(requirement.file, 'utf8');
@@ -370,7 +520,7 @@ export function remapAfterRevision(
  */
 export function acceptRefinement(
   session: ReviewSession,
-  requirement: Requirement,
+  requirement: Revisable,
   block: string,
   reparse: () => ReviewItem[],
 ): { ok: true; session: ReviewSession } | { ok: false; reason: string } {

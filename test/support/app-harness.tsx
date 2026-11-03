@@ -12,6 +12,7 @@ import { projectStage } from '../../src/core/guide.ts';
 import type { Job } from '../../src/core/jobs.ts';
 import { buildPipeline, type ChangePipeline } from '../../src/core/pipeline.ts';
 import { loadRoadmap } from '../../src/core/roadmap.ts';
+import { parseStop } from '../../src/core/stops.ts';
 import { finalizeVision, isGreenfield, VisionInterviewer } from '../../src/core/vision.ts';
 import { App, type TuiInput } from '../../src/tui/app.tsx';
 
@@ -51,7 +52,7 @@ export const freshChange = (name: string) => changeWith(name);
 
 const named: Record<string, string> = {
   return: 'RETURN', tab: 'TAB', up: 'ARROW_UP', down: 'ARROW_DOWN', left: 'ARROW_LEFT',
-  right: 'ARROW_RIGHT', backspace: 'BACKSPACE', space: ' ',
+  right: 'ARROW_RIGHT', backspace: 'BACKSPACE', space: ' ', home: 'HOME', end: 'END',
 };
 
 export async function mountApp(
@@ -90,6 +91,7 @@ export async function mountApp(
     modelFor?: TuiInput['modelFor'];
     onUsage?: TuiInput['onUsage'];
     jobUsage?: TuiInput['jobUsage'];
+    stopReport?: TuiInput['stopReport'];
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'spectacular-app-'));
@@ -104,7 +106,7 @@ export async function mountApp(
   }
   options.prepare?.(root);
   const changes: ChangePipeline[] = [...(options.changes ?? [])];
-  const created: { name: string; description: string }[] = [];
+  const created: { name: string; description: string; kind?: 'change' | 'defect' }[] = [];
   const dispatched: string[] = [];
   const jobs: Job[] = [];
   const docs = new Map<string, string>();
@@ -140,7 +142,6 @@ export async function mountApp(
     reloadPipelines: async () => [...changes],
     listJobs: () => jobs.map((j) => ({ ...j })),
     tailJob: (job) => [`working on ${job.artifact}…`, 'reading the ground rules'],
-    jobReport: (job) => reports.get(job.id) ?? null,
     cancelJob: () => {},
     promote: () => ({ ok: false, reason: 'n/a' }),
     stage: () => projectStage(root, changes.length, 'claude'),
@@ -152,9 +153,9 @@ export async function mountApp(
     },
     questions: () => guidedQuestions(root),
     answer: (q, text) => answerFoundation(q.item, text),
-    createChange: async (name, description) => {
+    createChange: async (name, description, kind) => {
       changes.push(freshChange(name));
-      created.push({ name, description });
+      created.push({ name, description, ...(kind ? { kind } : {}) });
       return { ok: true };
     },
     dispatch: async (change, artifact, feedback) => {
@@ -185,6 +186,11 @@ export async function mountApp(
     modelFor: options.modelFor,
     onUsage: options.onUsage,
     jobUsage: options.jobUsage,
+    // As the real one does without a report file: the job's last words.
+    stopReport: options.stopReport ?? ((change, artifact, job) => {
+      const said = job ? reports.get(job.id) : undefined;
+      return said === undefined ? null : parseStop(said, [], { change, artifact, source: 'message' });
+    }),
     warm: (target) => warmed.push(target),
     greenfield: () => isGreenfield(root),
     roadmap: () => loadRoadmap(root),
@@ -232,12 +238,12 @@ export async function mountApp(
       acceptedIn(change).delete(artifact);
       if (i >= 0) changes[i] = changeWith(change, done, [...acceptedIn(change)]);
     },
-    /** Pretends an agent finished without writing `artifact`, saying `message` last. */
-    stopJob: (change: string, artifact: string, message: string) => {
+    /** Pretends an agent finished without writing `artifact`, saying `message` last, if anything. */
+    stopJob: (change: string, artifact: string, message?: string) => {
       const job = jobs.find((j) => j.change === change && j.artifact === artifact && j.status === 'running');
       if (!job) throw new Error(`no running job for ${change}/${artifact}`);
       job.status = 'succeeded';
-      reports.set(job.id, message);
+      if (message !== undefined) reports.set(job.id, message);
     },
     /** Answers every ground-rule question, as if the setup were done. */
     settleGroundRules: () => {

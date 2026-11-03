@@ -10,8 +10,11 @@
  * the document back to be read again.
  */
 
+import { parseDecisions } from './decisions.ts';
 import { hashBlock } from './requirements.ts';
-import { loadReview, saveReview } from './review.ts';
+import { NOTE, SHOWN_RED, stripMarkers } from './markers.ts';
+import { stripMarker } from './provenance.ts';
+import { loadReview, saveReview, setState } from './review.ts';
 
 /** Where a written document stands. */
 export interface Signoff {
@@ -23,10 +26,13 @@ export interface Signoff {
 
 /**
  * The hash a document is accepted under. Ticking a task off is implementing
- * the plan, not changing it, so checkboxes count as unticked.
+ * the plan, not changing it, so checkboxes count as unticked — and so do
+ * recording that a guard test was shown red and the agent's `(note: …)`
+ * on a task (core/markers.ts). The generated-by marker is not content either
+ * (core/provenance.ts).
  */
 export function hashDocument(content: string): string {
-  return hashBlock(content.replace(/^(\s*[-*]\s+)\[[xX]\]/gm, '$1[ ]'));
+  return hashBlock(stripMarkers(stripMarker(content).replace(/^(\s*[-*]\s+)\[[xX]\]/gm, '$1[ ]'), [NOTE, SHOWN_RED]));
 }
 
 /** Whether `artifact` of `change`, as `content` now reads, is accepted. */
@@ -39,7 +45,15 @@ export function loadSignoff(projectRoot: string, change: string, artifact: strin
 
 /** Records that a human read `content` of `artifact` and accepted it. */
 export function acceptDocument(projectRoot: string, change: string, artifact: string, content: string): void {
-  const review = loadReview(projectRoot, change);
+  let review = loadReview(projectRoot, change);
+  // A design read and accepted whole accepts each decision in it as it
+  // reads now: later, only a decision whose text changes is asked again.
+  if (artifact === 'design') {
+    for (const decision of parseDecisions(content, 'design.md')) {
+      const stored = review.requirements[decision.id];
+      if (!stored || stored.state === 'pending' || stored.hash !== decision.hash) review = setState(review, decision, 'accepted');
+    }
+  }
   saveReview(projectRoot, {
     ...review,
     documents: {

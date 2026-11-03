@@ -80,6 +80,14 @@ export function launchers(
 const dirFor = (root: string) => join(root, '.spec-tacular', 'implementing');
 
 /**
+ * Inherited markers that would make the developer's own session something
+ * else: started from inside a Claude Code session, the implementing one
+ * would count as its child and save no transcript — nothing to resume, and
+ * nothing to read what it used from.
+ */
+export const DROPPED_ENV = ['CLAUDE_CODE_CHILD_SESSION'];
+
+/**
  * Writes the script that runs `command` for `change`: it marks the session
  * running while it lasts, and keeps the tab open once the agent exits so
  * nothing it printed last is lost.
@@ -105,6 +113,7 @@ export function writeSessionScript(
       `echo $$ > ${q(marker)}`,
       `trap 'rm -f ${q(marker)}' EXIT`,
       "trap 'exit 130' HUP INT TERM",
+      `unset ${DROPPED_ENV.join(' ')}`,
       ...exports,
       [command.command, ...command.args].map(q).join(' '),
       `printf '\\n%s\\n' 'Done — spec-tacular has picked up the tasks ticked off. Press enter to close this tab.'`,
