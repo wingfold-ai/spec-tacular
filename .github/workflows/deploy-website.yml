@@ -1,0 +1,84 @@
+# Build the spec-tacular.app landing page (website/) and publish it to
+# Infomaniak web hosting by FTP, the same way bundlemcp publishes its docs.
+# Pull requests that touch the site only build it and check its size.
+name: Deploy website
+
+on:
+  push:
+    branches: [ts/main]
+    paths:
+      - "website/**"
+      - ".github/workflows/deploy-website.yml"
+  pull_request:
+    paths:
+      - "website/**"
+      - ".github/workflows/deploy-website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+env:
+  SITE_DIR: website/.output/public
+  # The hosting included with an Infomaniak domain has a 10 MB quota;
+  # 9 MiB keeps headroom below it.
+  MAX_SITE_BYTES: 9437184
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: website/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.nvmrc
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: website
+      - run: pnpm generate
+        working-directory: website
+      - name: Require a password while the site is private
+        if: github.event_name != 'pull_request'
+        env:
+          SITE_AUTH_USER: ${{ secrets.SITE_AUTH_USER }}
+          SITE_AUTH_PASSWORD: ${{ secrets.SITE_AUTH_PASSWORD }}
+        run: |
+          if [ -z "$SITE_AUTH_USER" ] || [ -z "$SITE_AUTH_PASSWORD" ]; then
+            echo "No SITE_AUTH_* secrets: the site is public."
+            exit 0
+          fi
+          credentials=$(printf '%s:%s' "$SITE_AUTH_USER" "$SITE_AUTH_PASSWORD" | base64 -w0)
+          echo "::add-mask::$credentials"
+          { sed "s|@CREDENTIALS@|$credentials|g" website/deploy/basic-auth.htaccess
+            cat "$SITE_DIR/.htaccess"; } > "$RUNNER_TEMP/htaccess"
+          mv "$RUNNER_TEMP/htaccess" "$SITE_DIR/.htaccess"
+          echo "The site requires a password."
+      - name: Stays within the hosting quota
+        run: |
+          size=$(du -sb "$SITE_DIR" | cut -f1)
+          echo "Site size: $size bytes (limit $MAX_SITE_BYTES)"
+          test "$size" -le "$MAX_SITE_BYTES"
+      - name: Upload via FTP
+        if: github.event_name != 'pull_request'
+        uses: SamKirkland/FTP-Deploy-Action@110f9186c050f71550953127052e77650219c287 # v4.4.0
+        with:
+          server: ${{ secrets.INFOMANIAK_FTP_SERVER }}
+          username: ${{ secrets.INFOMANIAK_FTP_USERNAME }}
+          password: ${{ secrets.INFOMANIAK_FTP_PASSWORD }}
+          protocol: ${{ vars.INFOMANIAK_FTP_PROTOCOL || 'ftps' }}
+          local-dir: ./${{ env.SITE_DIR }}/
+          server-dir: ${{ vars.INFOMANIAK_FTP_SERVER_DIR || './' }}
+          # Only files this workflow uploaded are tracked; anything else on the
+          # server (e.g. Infomaniak's own files) is left alone.
+          dangerous-clean-slate: false

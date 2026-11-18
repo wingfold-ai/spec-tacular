@@ -1,7 +1,7 @@
 # spec-tacular.app
 
 The landing page for spec-tacular. Nuxt 4.6, Nuxt Content 3, Nuxt UI 4 / Tailwind 4,
-prerendered to static HTML for GitHub Pages.
+prerendered to static HTML and hosted on Infomaniak.
 
 ```bash
 pnpm install
@@ -67,10 +67,31 @@ the icon).
   enforced. Do not claim Windows support, other agents, 1.0, or a public repo
   before it is public.
 
+## Deployment
+
+`.github/workflows/deploy-website.yml` builds the site and uploads
+`.output/public` to the Infomaniak web hosting of spec-tacular.app by FTPS,
+like bundlemcp's docs. It runs on every push to `ts/main` that touches
+`website/`, and by hand (Actions → Deploy website → Run workflow). Pull
+requests only build and check the size: the hosting quota is 10 MB, the
+workflow fails above 9 MiB.
+
+| Setting | Kind | Value |
+| --- | --- | --- |
+| `INFOMANIAK_FTP_SERVER` | secret | FTP host from the Infomaniak manager |
+| `INFOMANIAK_FTP_USERNAME` | secret | FTP account user |
+| `INFOMANIAK_FTP_PASSWORD` | secret | FTP account password |
+| `INFOMANIAK_FTP_SERVER_DIR` | variable, optional | site folder on the server, ending in `/` (default `./`) |
+| `INFOMANIAK_FTP_PROTOCOL` | variable, optional | `ftps` (default) or `ftp` |
+| `SITE_AUTH_USER`, `SITE_AUTH_PASSWORD` | secrets, optional | while set, the site asks for this login (`deploy/basic-auth.htaccess`) |
+
+`public/.htaccess` redirects to HTTPS and to the bare domain, serves
+`/404.html`, and caches `/_nuxt/` (hashed files) for a year.
+
 ## Before launch
 
 - [ ] Repo public → swap `install` in `site.yml` for the public `curl … | sh` one-liner
 - [ ] `public/og-image.png` (1200×630), from the icon and lockup
 - [ ] Replace the faithful HTML demo with a VHS/asciinema recording as well, if wanted
-- [ ] Move `.github/workflows/deploy-website.yml` to the repo root and point DNS for spec-tacular.app at GitHub Pages
+- [ ] Remove the `SITE_AUTH_*` secrets to make the site public
 - [ ] Re-check the compare table against the current OpenSpec, Spec Kit and Kiro docs
