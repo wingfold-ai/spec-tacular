@@ -1,0 +1,23 @@
+version: v0.4.0
+repo: https://github.com/mhoegger/spec-tacular
+# Works today for people with access to the private repo. Swap for the
+# public curl one-liner once the repository is open.
+install: "gh api repos/mhoegger/spec-tacular/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
+installNote: Early access · Linux and macOS · needs the OpenSpec CLI
+# The page's sections in order, drawn as the TUI's pipeline bar (top) and
+# counted in the status bar (bottom). `to` is the section id in content/index.md.
+nav:
+  - { label: problem, to: '#problem' }
+  - { label: pipeline, to: '#how-it-works' }
+  - { label: review, to: '#review' }
+  - { label: built-in, to: '#features' }
+  - { label: repo, to: '#repo' }
+  - { label: compare, to: '#compare' }
+  - { label: evidence, to: '#evidence' }
+  - { label: install, to: '#install' }
+  - { label: faq, to: '#faq' }
+footer:
+  - { label: GitHub, to: 'https://github.com/mhoegger/spec-tacular' }
+  - { label: OpenSpec, to: 'https://github.com/Fission-AI/OpenSpec' }
+  - { label: llms.txt, to: '/llms.txt' }
+  - { label: Marius Högger, to: 'https://marius-hoegger.ch' }
