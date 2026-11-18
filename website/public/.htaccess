@@ -15,8 +15,9 @@ ErrorDocument 404 /404.html
 
 <IfModule mod_mime.c>
   AddType application/wasm .wasm
-  AddType text/plain .txt .md
-  AddCharset utf-8 .txt .md .html .css .js .json .xml .svg
+  # install.sh is fetched by the install one-liner and shown in browsers: plain text
+  AddType text/plain .txt .md .sh
+  AddCharset utf-8 .txt .md .sh .html .css .js .json .xml .svg
 </IfModule>
 
 <IfModule mod_headers.c>

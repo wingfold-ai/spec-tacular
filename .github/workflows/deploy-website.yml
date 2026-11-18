@@ -8,10 +8,12 @@ on:
     branches: [ts/main]
     paths:
       - "website/**"
+      - "install.sh"
       - ".github/workflows/deploy-website.yml"
   pull_request:
     paths:
       - "website/**"
+      - "install.sh"
       - ".github/workflows/deploy-website.yml"
   workflow_dispatch:
 
