@@ -1,0 +1,33 @@
+# Apache rules for spec-tacular.app on Infomaniak web hosting.
+RewriteEngine on
+
+# Send every HTTP request to HTTPS (Infomaniak FAQ 1961).
+# TLS ends at Infomaniak's proxy, so %{HTTPS} is always off here; check the
+# protocol the proxy forwards instead, or HTTPS requests redirect to themselves.
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule (.*) https://%{HTTP_HOST}/$1 [R=301,L]
+
+# One canonical host: www.spec-tacular.app → spec-tacular.app
+RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+RewriteRule (.*) https://%1/$1 [R=301,L]
+
+ErrorDocument 404 /404.html
+
+<IfModule mod_mime.c>
+  AddType application/wasm .wasm
+  AddType text/plain .txt .md
+  AddCharset utf-8 .txt .md .html .css .js .json .xml .svg
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Files under /_nuxt/ carry a content hash in their name, so they never change.
+  <If "%{REQUEST_URI} =~ m#^/_nuxt/#">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </If>
+  # Pages and everything else: always revalidate, so a deploy shows at once.
+  <Else>
+    Header set Cache-Control "public, max-age=0, must-revalidate"
+  </Else>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

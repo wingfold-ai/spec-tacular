@@ -1,0 +1,13 @@
+# Password gate while the site is private. The deploy workflow prepends this
+# to the site's .htaccess when the SITE_AUTH_USER and SITE_AUTH_PASSWORD
+# secrets are set, filling in their Basic encoding. Only HTTPS requests are
+# challenged, so a password never travels unencrypted: plain HTTP falls
+# through to the HTTPS redirect in public/.htaccess.
+RewriteEngine on
+<If "%{HTTP:X-Forwarded-Proto} == 'https' && %{HTTP:Authorization} != 'Basic @CREDENTIALS@'">
+  Header always set WWW-Authenticate "Basic realm=\"spec-tacular\""
+</If>
+RewriteCond %{HTTP:X-Forwarded-Proto} =https
+RewriteCond %{HTTP:Authorization} "!=Basic @CREDENTIALS@"
+RewriteRule ^ - [R=401,L]
+
