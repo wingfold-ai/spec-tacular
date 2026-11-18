@@ -33,6 +33,14 @@ CLI, which you install separately:
 npm i -g @fission-ai/openspec
 ```
 
+**From spec-tacular.app** — once the repository is public:
+
+```bash
+curl -fsSL https://spec-tacular.app/install.sh | sh
+```
+
+The website serves the same `install.sh` as this repository.
+
 **With the GitHub CLI** — works while the repository is private, as long as `gh`
 is signed in with access to it:
 

@@ -4,3 +4,5 @@ node_modules
 .data
 dist
 .env
+# copied from ../install.sh by `pnpm install-script` (one source of truth)
+public/install.sh

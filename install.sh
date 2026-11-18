@@ -1,6 +1,12 @@
 #!/bin/sh
 # Installs spec-tacular from a GitHub release of mhoegger/spec-tacular.
 #
+#   curl -fsSL https://spec-tacular.app/install.sh | sh
+#
+# spec-tacular.app serves this same file: website/ copies it at build time.
+# While the repository is private, the releases need the GitHub CLI, so fetch
+# the script through it instead:
+#
 #   gh api repos/mhoegger/spec-tacular/contents/install.sh \
 #     -H 'Accept: application/vnd.github.raw' | sh
 #
