@@ -1,0 +1,39 @@
+# Builds the static site and deploys it to GitHub Pages.
+# Move to the repo root's .github/workflows/ to activate (kept here while the
+# site lives in website/ on a feature branch).
+name: Deploy website
+on:
+  push:
+    branches: [ts/main]
+    paths: ['website/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency: { group: pages, cancel-in-progress: true }
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: website } }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: website/.nvmrc, cache: pnpm, cache-dependency-path: website/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm generate
+      - run: echo "spec-tacular.app" > .output/public/CNAME && touch .output/public/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: website/.output/public }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.deployment.outputs.page_url }}' }
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
