@@ -7,12 +7,13 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "dev": "nuxt dev",
-    "build": "nuxt build",
-    "generate": "nuxt generate",
+    "dev": "pnpm install-script && nuxt dev",
+    "build": "pnpm install-script && nuxt build",
+    "generate": "pnpm install-script && nuxt generate",
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "install-script": "cp ../install.sh public/install.sh"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.156",

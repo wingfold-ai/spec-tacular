@@ -1,7 +1,8 @@
 version: v0.4.0
 repo: https://github.com/mhoegger/spec-tacular
-# Works today for people with access to the private repo. Swap for the
-# public curl one-liner once the repository is open.
+# Works today for people with access to the private repo. Once the repository
+# is public, swap it for the one-liner this site serves itself:
+#   curl -fsSL https://spec-tacular.app/install.sh | sh
 install: "gh api repos/mhoegger/spec-tacular/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
 installNote: Early access · Linux and macOS · needs the OpenSpec CLI
 # The page's sections in order, drawn as the TUI's pipeline bar (top) and
