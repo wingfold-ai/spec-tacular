@@ -24,13 +24,16 @@ const version = computed(() => site.value?.version)
         </div>
         <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-st-border pt-4">
           <span class="text-xs text-st-faint">free · MIT · runs locally</span>
-          <a
-            v-if="repo"
-            :href="repo"
-            target="_blank"
-            rel="noopener"
-            class="tui-btn tui-btn-primary"
-          >[ View on GitHub ]</a>
+          <span class="flex flex-wrap gap-3">
+            <NuxtLink to="/docs/getting-started/quickstart" class="tui-btn tui-btn-primary">[ Read the docs ]</NuxtLink>
+            <a
+              v-if="repo"
+              :href="repo"
+              target="_blank"
+              rel="noopener"
+              class="tui-btn"
+            >[ View on GitHub ]</a>
+          </span>
         </div>
       </TuiPanel>
     </div>

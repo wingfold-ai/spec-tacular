@@ -74,6 +74,24 @@
   --ui-radius: 0;
 }
 
+/* Nuxt UI's own variables, pointed at the TUI tokens, so its prose and
+   docs components (callouts, steps, code groups) match the site. */
+:root, .dark, .light {
+  --ui-text-dimmed: var(--st-faint);
+  --ui-text-muted: var(--st-dim);
+  --ui-text-toned: var(--st-text);
+  --ui-text-highlighted: var(--st-strong);
+  --ui-text-inverted: var(--st-bg);
+  --ui-bg-muted: var(--st-panel);
+  --ui-bg-elevated: var(--st-panel);
+  --ui-bg-accented: var(--st-highlight);
+  --ui-bg-inverted: var(--st-text);
+  --ui-border: var(--st-border);
+  --ui-border-muted: var(--st-border);
+  --ui-border-accented: var(--st-faint);
+  --ui-border-inverted: var(--st-text);
+}
+
 @theme inline {
   --color-st-bg: var(--st-bg);
   --color-st-bg-deep: var(--st-bg-deep);
@@ -221,4 +239,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* Docs: inline code wraps with the sentence instead of becoming a block
+   (Nuxt UI's inline code is inline-block, which strands trailing punctuation). */
+.docs-prose :not(pre) > code {
+  display: inline;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
