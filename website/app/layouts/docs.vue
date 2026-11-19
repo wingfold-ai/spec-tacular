@@ -13,7 +13,7 @@ watch(() => route.path, () => (open.value = false))
 <template>
   <div id="top" class="min-h-dvh bg-st-bg text-st-text">
     <SiteHeader />
-    <div class="container-page lg:grid lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-10 xl:grid-cols-[16.5rem_minmax(0,1fr)_13rem]">
+    <div class="mx-auto w-full max-w-[96rem] px-4 sm:px-6 lg:grid lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-10 xl:grid-cols-[16.5rem_minmax(0,1fr)_13rem]">
       <aside class="lg:sticky lg:top-[2.75rem] lg:h-[calc(100dvh-2.75rem-2.25rem)] lg:overflow-y-auto lg:py-10 [scrollbar-width:thin]">
         <button
           type="button"

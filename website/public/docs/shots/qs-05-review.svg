@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 924 468" width="924" height="468" role="img" xml:space="preserve">
+<title>The review on requirement 2 of 4, 'Lock after repeated failures': its text, its scenario, a warning about the undefined words 'quickly' and 'several', and a flag that it names an HTTP endpoint</title>
+<style>.c0{fill:#7aa2f7}.c1{fill:#565f89}.c2{fill:#1f2335}.c3{fill:#c0caf5}.c4{fill:#bb9af7}.c5{fill:#e0af68}text{font-family:JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:14px;white-space:pre}.b{font-weight:700}.i{font-style:italic}.u{text-decoration:underline}path{fill:none;stroke-width:1.2}</style>
+<rect width="100%" height="100%" fill="#1a1b26"/>
+<rect class="c2" x="0" y="18" width="924" height="18"/>
+<rect class="c2" x="0" y="36" width="924" height="18"/>
+<rect class="c2" x="0" y="54" width="924" height="18"/>
+<rect class="c2" x="0" y="72" width="924" height="18"/>
+<rect class="c2" x="0" y="90" width="924" height="18"/>
+<rect class="c2" x="0" y="108" width="924" height="18"/>
+<rect class="c2" x="0" y="126" width="924" height="18"/>
+<rect class="c2" x="0" y="144" width="924" height="18"/>
+<rect class="c2" x="0" y="162" width="924" height="18"/>
+<rect class="c2" x="0" y="180" width="924" height="18"/>
+<rect class="c2" x="0" y="198" width="924" height="18"/>
+<rect class="c2" x="0" y="216" width="924" height="18"/>
+<rect class="c2" x="0" y="234" width="924" height="18"/>
+<rect class="c2" x="0" y="252" width="924" height="18"/>
+<rect class="c2" x="0" y="270" width="924" height="18"/>
+<rect class="c2" x="0" y="288" width="924" height="18"/>
+<rect class="c2" x="0" y="306" width="924" height="18"/>
+<rect class="c2" x="0" y="324" width="924" height="18"/>
+<rect class="c2" x="0" y="342" width="924" height="18"/>
+<rect class="c2" x="0" y="360" width="924" height="18"/>
+<rect class="c2" x="0" y="378" width="924" height="18"/>
+<rect class="c2" x="0" y="396" width="924" height="18"/>
+<rect class="c2" x="0" y="414" width="924" height="18"/>
+<rect class="c2" x="0" y="432" width="924" height="18"/>
+<rect class="c2" x="0" y="450" width="924" height="18"/>
+<rect class="c1" x="25.2" y="396" width="58.8" height="18"/>
+<rect class="c1" x="84" y="396" width="176.4" height="18" fill-opacity="0.25"/>
+<path stroke="#7aa2f7" d="M8.4 27H16.8M226.8 27H915.6M8.4 459H915.6M4.2 31.2V454.8M919.8 31.2V454.8M8.4 27A4.2 4.2 0 0 0 4.2 31.2M915.6 27A4.2 4.2 0 0 1 919.8 31.2M8.4 459A4.2 4.2 0 0 1 4.2 454.8M915.6 459A4.2 4.2 0 0 0 919.8 454.8"/>
+<text x="8.4" y="13.6" textLength="100.8" class="c0 b">spec-tacular</text>
+<text x="126" y="13.6" textLength="277.2" class="c1">~/my-app › add-user-login › specs</text>
+<text x="25.2" y="31.6" textLength="193.2" class="c0">add-user-login › review</text>
+<text x="25.2" y="67.6" textLength="294" class="c1">auth   requirement 2 of 4   [ADDED]</text>
+<text x="25.2" y="103.6" textLength="344.4" class="c0">Requirement: Lock after repeated failures</text>
+<text x="25.2" y="139.6" textLength="579.6" class="c3">The system SHALL lock an account quickly after several failed sign-in</text>
+<text x="25.2" y="157.6" textLength="302.4" class="c3">attempts, through `POST /api/login`.</text>
+<text x="42" y="193.6" textLength="226.8" class="c4">Scenario: Too many attempts</text>
+<text x="58.8" y="211.6" textLength="453.6" class="c3">- **WHEN** a user fails to sign in five times in a row</text>
+<text x="58.8" y="229.6" textLength="453.6" class="c3">- **THEN** further attempts are refused for 15 minutes</text>
+<text x="42" y="265.6" textLength="630" class="c5">! undefined words: quickly, several — how much, how soon, compared to what?</text>
+<text x="42" y="301.6" textLength="352.8" class="c5">1. names an HTTP endpoint: POST /api/login</text>
+<text x="277.2" y="409.6" textLength="184.8" class="c1">1 accepted · 3 pending</text>
+<text x="25.2" y="427.6" textLength="865.2" class="c1">a accept · r revise with AI · x reject · d defer · ctrl+e editor · m mark example · s skip · ? help · q</text>
+<text x="25.2" y="445.6" textLength="33.6" class="c1">back</text>
+</svg>

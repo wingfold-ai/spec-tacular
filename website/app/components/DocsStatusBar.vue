@@ -32,7 +32,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <div class="fixed inset-x-0 bottom-0 z-40 border-t border-st-border bg-st-bg-deep text-xs">
-    <div class="container-page flex h-9 items-center gap-4">
+    <div class="container-page !max-w-[96rem] flex h-9 items-center gap-4">
       <span class="flex min-w-0 items-center gap-2">
         <span class="text-st-accent" aria-hidden="true">▤</span>
         <span class="text-st-dim">docs</span>

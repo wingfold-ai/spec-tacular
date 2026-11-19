@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 924 432" width="924" height="432" role="img" xml:space="preserve">
+<title>The review on risk 5 of 6, 'Password stored readable': its hazard, what it affects, its severity, the guard that rules it out and the check that tests the guard</title>
+<style>.c0{fill:#7aa2f7}.c1{fill:#565f89}.c2{fill:#1f2335}.c3{fill:#c0caf5}text{font-family:JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:14px;white-space:pre}.b{font-weight:700}.i{font-style:italic}.u{text-decoration:underline}path{fill:none;stroke-width:1.2}</style>
+<rect width="100%" height="100%" fill="#1a1b26"/>
+<rect class="c2" x="0" y="18" width="924" height="18"/>
+<rect class="c2" x="0" y="36" width="924" height="18"/>
+<rect class="c2" x="0" y="54" width="924" height="18"/>
+<rect class="c2" x="0" y="72" width="924" height="18"/>
+<rect class="c2" x="0" y="90" width="924" height="18"/>
+<rect class="c2" x="0" y="108" width="924" height="18"/>
+<rect class="c2" x="0" y="126" width="924" height="18"/>
+<rect class="c2" x="0" y="144" width="924" height="18"/>
+<rect class="c2" x="0" y="162" width="924" height="18"/>
+<rect class="c2" x="0" y="180" width="924" height="18"/>
+<rect class="c2" x="0" y="198" width="924" height="18"/>
+<rect class="c2" x="0" y="216" width="924" height="18"/>
+<rect class="c2" x="0" y="234" width="924" height="18"/>
+<rect class="c2" x="0" y="252" width="924" height="18"/>
+<rect class="c2" x="0" y="270" width="924" height="18"/>
+<rect class="c2" x="0" y="288" width="924" height="18"/>
+<rect class="c2" x="0" y="306" width="924" height="18"/>
+<rect class="c2" x="0" y="324" width="924" height="18"/>
+<rect class="c2" x="0" y="342" width="924" height="18"/>
+<rect class="c2" x="0" y="360" width="924" height="18"/>
+<rect class="c2" x="0" y="378" width="924" height="18"/>
+<rect class="c2" x="0" y="396" width="924" height="18"/>
+<rect class="c2" x="0" y="414" width="924" height="18"/>
+<rect class="c1" x="25.2" y="360" width="151.2" height="18"/>
+<rect class="c1" x="176.4" y="360" width="84" height="18" fill-opacity="0.25"/>
+<path stroke="#7aa2f7" d="M8.4 27H16.8M226.8 27H915.6M8.4 423H915.6M4.2 31.2V418.8M919.8 31.2V418.8M8.4 27A4.2 4.2 0 0 0 4.2 31.2M915.6 27A4.2 4.2 0 0 1 919.8 31.2M8.4 423A4.2 4.2 0 0 1 4.2 418.8M915.6 423A4.2 4.2 0 0 0 919.8 418.8"/>
+<text x="8.4" y="13.6" textLength="100.8" class="c0 b">spec-tacular</text>
+<text x="126" y="13.6" textLength="277.2" class="c1">~/my-app › add-user-login › specs</text>
+<text x="25.2" y="31.6" textLength="193.2" class="c0">add-user-login › review</text>
+<text x="25.2" y="67.6" textLength="159.6" class="c1">risks   risk 5 of 6</text>
+<text x="25.2" y="103.6" textLength="252" class="c0">Risk: Password stored readable</text>
+<text x="25.2" y="139.6" textLength="596.4" class="c3">- **Hazard:** a password can be read back from the database or the logs</text>
+<text x="25.2" y="157.6" textLength="277.2" class="c3">- **Affects:** Sign in with email</text>
+<text x="25.2" y="175.6" textLength="394.8" class="c3">- **Boundary:** storing and checking a password</text>
+<text x="25.2" y="193.6" textLength="537.6" class="c3">- **Causes:** storing it in plain text; logging the request body</text>
+<text x="25.2" y="211.6" textLength="168" class="c3">- **Severity:** high</text>
+<text x="25.2" y="229.6" textLength="630" class="c3">- **Guard:** only a salted hash of the password is ever stored, and request</text>
+<text x="25.2" y="247.6" textLength="193.2" class="c3">bodies are never logged</text>
+<text x="25.2" y="265.6" textLength="613.2" class="c3">- **Check:** a test signs up, then searches the database file and the log</text>
+<text x="25.2" y="283.6" textLength="285.6" class="c3">for the password and finds neither</text>
+<text x="277.2" y="373.6" textLength="184.8" class="c1">4 accepted · 2 pending</text>
+<text x="25.2" y="391.6" textLength="856.8" class="c1">a accept · r revise with AI · x reject · d defer · ctrl+e editor · s skip · n/p move · pgdn scroll · ?</text>
+<text x="25.2" y="409.6" textLength="109.2" class="c1">help · q back</text>
+</svg>

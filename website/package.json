@@ -13,7 +13,8 @@
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck",
     "postinstall": "nuxt prepare",
-    "install-script": "cp ../install.sh public/install.sh"
+    "install-script": "cp ../install.sh public/install.sh",
+    "shots": "uv run --quiet --with pyte python scripts/tui-shots/capture.py"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.156",

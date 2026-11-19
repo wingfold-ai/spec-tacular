@@ -250,3 +250,15 @@ body {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* Docs: the article column is wide so screenshots, tables and code get room;
+   running text keeps a readable line length. */
+.docs-prose > p,
+.docs-prose > ul,
+.docs-prose > ol,
+.docs-prose > blockquote,
+.docs-prose > h2,
+.docs-prose > h3,
+.docs-prose > h4 {
+  max-width: 78ch;
+}

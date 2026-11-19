@@ -21,7 +21,7 @@ function marker(i: number) {
 
 <template>
   <header class="sticky top-0 z-40 border-b border-st-border bg-st-bg/85 backdrop-blur-sm">
-    <div class="container-page flex h-11 items-center gap-6 text-sm">
+    <div class="container-page flex h-11 items-center gap-6 text-sm" :class="inDocs ? '!max-w-[96rem]' : ''">
       <NuxtLink :to="isHome ? '#top' : '/'" class="flex shrink-0 items-center gap-2" :aria-label="isHome ? 'spec-tacular, back to top' : 'spec-tacular home'">
         <img src="/favicon.svg" alt="" class="size-5">
         <span class="font-bold text-st-strong">spec-tacular</span>
