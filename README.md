@@ -196,8 +196,9 @@ The selected slice is shown in full. Reshape them before anything is written:
 moves it (never before a slice it builds on), `e` rewords it — *Title —
 what it does* on one line. The
 rest become `spec-tacular/roadmap.yaml`;
-the vision and interview go to `spec-tacular/vision.md`, which every agent
-reads. The first slice becomes your first change, and the ground rules come
+the vision and interview go to `spec-tacular/vision.md`. Every agent reads
+both: the vision, and the slices with which one its change is, so a change
+builds on the slices before it and leaves later ones alone. The first slice becomes your first change, and the ground rules come
 next, proposed from the vision; its proposal is drafted once they are settled.
 
 Drafts are for reading. While an agent drafts, its progress streams into the
@@ -359,7 +360,8 @@ HAZ-0002  unmitigated low      Huge export
 
 *Mitigated* holds only while every guard passed its latest run; one never run
 leaves the hazard *unverified*, and a failing one makes it *open* again —
-said on every `--print` overview, and `spec-tacular hazards` exits non-zero.
+said on every `--print` overview. `spec-tacular hazards` exits non-zero while
+any hazard is open or has a guard never run; a waived guard does not fail it.
 An entry not looked at for 90 days is listed as due for review;
 `spec-tacular hazards --reviewed HAZ-0001` records a look.
 

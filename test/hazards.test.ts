@@ -119,6 +119,17 @@ describe('the status of a hazard', () => {
     expect(hazardState(hazard({ verification: [] }), [], now).status).toBe('open');
   });
 
+  test('CI fails on a guard failing or never run, not on a waiver or a closed entry', () => {
+    const waiver = { kind: 'waive', at: 'b', item: '[risk:c#leak]', hash: 'h', reason: 'no staging yet' } as EvidenceRecord;
+    expect(hazardState(hazard(), [], now).blocking).toBe(true);
+    expect(hazardState(hazard({ verification: [] }), [], now).blocking).toBe(true);
+    expect(hazardState(hazard(), [run('[risk:c#leak]', 'fail', 'a')], now).blocking).toBe(true);
+    expect(hazardState(hazard(), [waiver], now)).toMatchObject({ status: 'unverified', blocking: false });
+    expect(hazardState(hazard(), [run('[risk:c#leak]', 'pass', 'a')], now).blocking).toBe(false);
+    expect(hazardState(hazard({ stated: 'unmitigated' }), [], now).blocking).toBe(false);
+    expect(hazardState(hazard({ stated: 'closed' }), [], now).blocking).toBe(false);
+  });
+
   test('closed and unmitigated are what the entry says', () => {
     expect(hazardState(hazard({ stated: 'closed' }), [], now).status).toBe('closed');
     expect(hazardState(hazard({ stated: 'unmitigated', unmitigated: 'later' }), [], now)).toMatchObject({ status: 'unmitigated', because: 'later' });

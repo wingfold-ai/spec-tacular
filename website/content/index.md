@@ -32,10 +32,10 @@ secondary: { label: See how it works, to: '#how-it-works' }
       text: The export SHALL complete promptly, even for large accounts.
       scenarios:
         - { name: Large account, when: a user with many expenses exports, then: the export finishes quickly }
-      flag: 'vague: "promptly" and "quickly" cannot be tested. Name a limit, or mark it as an example.'
+      flag: 'undefined words: promptly, large, many, quickly — how much, how soon, compared to what?'
       revisable: true
     - capability: export
-      title: Export after account deletion
+      title: Keep finished exports
       text: The system SHALL write each finished export to the user_exports table and keep it for 30 days.
       scenarios:
         - { name: Export is kept, when: a user opens their export link within 30 days, then: the file downloads }
@@ -93,9 +93,9 @@ lead: 'In spec-driven development the agent writes down what it will build befor
     - label: Vision
       scope: new projects only
       text: Say what you are building and for whom, in your own words. An AI interview fills the gaps, then proposes a roadmap of small slices.
-      what: "A short description of the product, sharpened by an interview: one question at a time, with suggested answers to pick from. From it come 3–8 slices in build order, the first being the smallest thing a user can do end to end."
+      what: "A short description of the product, sharpened by an interview: one question at a time, with suggested answers to pick from. From it the agent proposes 3–8 slices in build order, the first being the smallest thing a user can do end to end."
       you: "Write a few sentences, answer the questions, then reshape the roadmap: drop a slice (space), merge it with the next (m), move it (shift+↑↓) or reword it (e)."
-      why: "Agents build better from a goal than from a feature list, and small slices keep every later spec small enough to review properly. Saved in spec-tacular/vision.md and roadmap.yaml, which every agent reads."
+      why: "Agents build better from a goal than from a feature list, and small slices keep every later spec small enough to review properly. Saved in spec-tacular/vision.md and roadmap.yaml. Every agent reads both, including which slice its change is, so it builds on earlier slices and leaves later ones alone."
     - label: Ground rules
       scope: once per project
       text: Domain, stack, architecture and conventions, settled before the first change. On a new project they are proposed from your vision and mostly confirmed with enter.
@@ -132,7 +132,7 @@ lead: 'In spec-driven development the agent writes down what it will build befor
       artifact: design.md
       gate: Accepted as a whole
       text: How it will be built, drafted only from the specs and risks you accepted.
-      what: "The technical approach and its decisions: modules, data, interfaces, trade-offs. It must answer every accepted risk by name; one it leaves out is flagged. A decision marked Scope: global can be promoted to a project-wide ADR (p)."
+      what: "The technical approach and its decisions: modules, data, interfaces, trade-offs. It must answer every accepted risk by name, except one you accepted as knowingly unmitigated; one it leaves out is flagged. Its decisions also join the review queue, where one marked Scope: global can be promoted to a project-wide ADR (p)."
       you: "Read it and accept it, redraft it with feedback, or edit it."
       why: "Because it is written only after the specs are settled, a requirement you changed in review flows into it, instead of leaving an outdated design that contradicts the specs while the agent builds."
     - key: tasks
@@ -140,7 +140,7 @@ lead: 'In spec-driven development the agent writes down what it will build befor
       artifact: tasks.md
       gate: Accepted as a whole
       text: The plan as a checklist the agent works through, with a guard task for every risk.
-      what: "Small, ordered steps the agent ticks off. For each risk there is a guard task, (guard: <risk>): write the test, then show it fails with the mitigation removed, and record how (shown red: …)."
+      what: "Small, ordered steps the agent ticks off. For each mitigated risk there is a guard task, (guard: <risk>): write the test, then show it fails with the mitigation removed, and record how (shown red: …). A task that needs a deployed environment is marked (defer: …), so it doesn't hold up archiving."
       you: "Check the plan is complete and in a sensible order, then accept it."
       why: "A test that has never failed proves nothing. Requiring each guard to be shown red first means the safety checks really test something. A guard ticked off without that record stays flagged."
     - key: implement
@@ -148,8 +148,8 @@ lead: 'In spec-driven development the agent writes down what it will build befor
       artifact: your code
       gate: You watch it tick
       text: Your agent builds the accepted tasks in a terminal tab of its own; spec-tacular follows along.
-      what: "\"Implement it in Claude Code\" opens your agent in a new terminal tab or window with the accepted tasks as its prompt. Tests, linters and read-only OpenSpec commands run without asking; everything else follows your usual permission mode."
-      you: "Watch or step in as you would in any agent session. spec-tacular shows how many tasks are ticked off, and flags files changed outside the proposal's boundary. Tasks that need a deployed environment can be deferred."
+      what: "\"Implement it in Claude Code\" opens your agent in a new terminal tab or window with the accepted tasks as its prompt. In Claude Code, the project's test command, the usual JS/TS checkers and read-only OpenSpec and git commands run without asking; everything else follows your usual permission mode."
+      you: "Watch or step in as you would in any agent session. spec-tacular shows how many tasks are ticked off, and flags files changed outside the proposal's boundary."
       why: "The agent works from what you accepted, not from a chat history. The boundary check is advisory: only you can tell whether reaching further was right, but you see that it happened."
     - key: archive
       label: Archive
@@ -205,12 +205,12 @@ band: true
   ---
   columns: 3
   items:
-    - { icon: i-lucide-compass, title: Foundation and ADRs, text: 'Stack, architecture and conventions are settled before the first change. Pick an architecture style and its layer rules come with it. Cross-cutting decisions are promoted to global ADRs.' }
+    - { icon: i-lucide-compass, title: Foundation and ADRs, text: 'Stack, architecture and conventions are asked before the first change, and any of them can be left for later. Pick an architecture style and its layer rules come with it. Cross-cutting decisions are promoted to global ADRs.' }
     - { icon: i-lucide-map, title: Roadmap in slices, text: 'A new project is cut into 3–8 small changes, smallest end-to-end slice first. Small changes keep specs small enough to review.' }
-    - { icon: i-lucide-shield-check, title: Risks guarded by tests, text: 'Every accepted risk gets a guard task. The agent must record its test failing without the mitigation; a guard ticked off without that record stays open. Archived risks become a hazard register.' }
+    - { icon: i-lucide-shield-check, title: Risks guarded by tests, text: 'Every accepted risk gets a guard task, unless you accept it as knowingly unmitigated. The agent must record its test failing without the mitigation; a guard ticked off without that record stays open. Archived risks become a hazard register.' }
     - { icon: i-lucide-square-dashed, title: A boundary per change, text: 'The proposal lists the paths it expects to touch. Files changed outside it are flagged.' }
     - { icon: 'i-lucide-terminal', title: 'Your agent, inside the TUI', text: 'Drafts are written in the background while you keep reviewing. Implementing opens Claude Code or opencode in a new tab or window.' }
-    - { icon: i-lucide-list-checks, title: Evidence you can run in CI, text: 'Tests tagged with a requirement or risk build a verification matrix. spec-tacular evidence and hazards exit non-zero when something is unverified, so CI can gate on them.' }
+    - { icon: i-lucide-list-checks, title: Evidence you can run in CI, text: 'Tests tagged with a requirement or risk build a verification matrix. spec-tacular evidence and hazards exit non-zero while something is unverified or failing, so CI can gate on them.' }
   ---
   ::
 
@@ -224,16 +224,20 @@ band: true
     ! guard ticked off without being shown red: "Export leaks other users"
     ! 1 file changed outside the boundary: lib/oops.ts
 
-    $ spec-tacular hazards
-    HAZ-0001  open        high     Export leaks other users
-               guard failing: [risk:add-export#export-leaks-other-users]
-    HAZ-0002  unmitigated low      Huge export
-               out of scope until pagination
-
     $ spec-tacular archive add-export
     1 requirement(s) merge into the baseline
     1 divert to pending validation
       data-export: Export completes against a deployment — a deployed instance to run against
+    Hazard register:
+      added HAZ-0001 from risk "Export leaks other users"
+      added HAZ-0002 from risk "Huge export"
+
+    $ spec-tacular hazards; echo "exit $?"
+    HAZ-0001  unverified  high     Export leaks other users
+               guard never run: [risk:add-export#export-leaks-other-users]
+    HAZ-0002  unmitigated low      Huge export
+               out of scope until pagination
+    exit 1
   ---
   ::
 :::
@@ -294,7 +298,7 @@ lead: spec-tacular is not a new spec format. It is the review surface and the ga
     - label: Accept, reject or defer single requirements
       cells: [no, no, no, { state: partial, text: comments per passage }, yes]
     - label: Next artifact waits for your acceptance
-      cells: [no, { state: partial, text: 'opt-in, waits for your command' }, { state: partial, text: separate steps }, { state: yes, text: approval per phase }, { state: yes, text: enforced }]
+      cells: [no, { state: no, text: 'moves on once the file exists' }, { state: partial, text: separate steps }, { state: yes, text: approval per phase }, { state: yes, text: enforced }]
     - label: Project foundation before the first change
       cells: [no, { state: partial, text: config.yaml context }, { state: yes, text: constitution }, { state: yes, text: steering files }, { state: yes, text: ground rules + ADRs }]
     - label: Keeps your Claude Code or opencode setup
@@ -321,7 +325,7 @@ lead: 'We test spec-tacular by having an AI play a new user: it builds a small e
     - { value: 9 of 9, label: 'known pitfalls handled, 8 raised unprompted' }
     - { value: ~47 min, label: from empty folder to implemented }
   highlight: 'Reading requirement by requirement, the reviewer caught a wrong balance in the agent''s own scenario ("2.00" where it had to be "-4.00"), rejected it and had it revised, before any code was written.'
-  caveat: 'Single runs on a small app, played and scored by an AI evaluator. They show what the workflow does, not a statistical result. The run reports are in the repository under evals/.'
+  caveat: 'Single runs on a small app, played and scored by an AI evaluator. They show what the workflow does, not a statistical result. This run (October 2026) used an earlier build, before the vision interview, the risks stage and archiving in the TUI; its report is in the repository under evals/results/.'
   ---
   ::
 :::
@@ -339,7 +343,7 @@ lead: 'A single binary for Linux and macOS (x64 and arm64). It needs no Bun or N
     - { title: Install OpenSpec, command: npm i -g @fission-ai/openspec }
     - { title: Install spec-tacular, site: true, text: 'Picks the build for your OS and CPU, checks it against the release checksums, installs to ~/.local/bin.' }
     - { title: Set up OpenSpec in your project, command: openspec init, text: 'Pick the agent you will drive: Claude Code (the default) or opencode.' }
-    - { title: Open the TUI, command: spec-tacular, text: 'A start screen walks you through vision, ground rules and your first change. Press ? for every key. For opencode, start it with --driver opencode.' }
+    - { title: Open the TUI, command: spec-tacular, text: 'A start screen walks you through vision, ground rules and your first change. Press ? there or on the overview for every key. For opencode, start it with --driver opencode.' }
   ---
   ::
 
@@ -357,11 +361,11 @@ title: Questions developers ask first
   ---
   items:
     - q: Does it replace OpenSpec?
-      a: No. spec-tacular drives the OpenSpec CLI and keeps its format and folder layout. It adds a schema and a review.md per change, and keeps everything else in spec-tacular/. Remove spec-tacular and your specs and change history are still plain OpenSpec.
+      a: No. spec-tacular drives the OpenSpec CLI and keeps its format and folder layout. It installs its schema into openspec/schemas/, writes a review.md into each change, and keeps everything else in spec-tacular/ (plus local state in .spec-tacular/). Remove spec-tacular and your specs and change history are still plain OpenSpec.
     - q: Which coding agents does it work with?
-      a: Claude Code (the default) and opencode (start with --driver opencode, and pick the same agent in openspec init). Drafting runs in the background; implementing opens your agent in a new tab or window (tmux, kitty, WezTerm, GNOME Terminal, Konsole or iTerm).
+      a: Claude Code (the default) and opencode (start with --driver opencode, and pick the same agent in openspec init). Drafting runs in the background; implementing opens your agent in a new tab (tmux, kitty, WezTerm, GNOME Terminal, Konsole or iTerm) or, where the terminal can't open one, a new terminal window.
     - q: Does my code leave my machine?
-      a: spec-tacular itself runs locally and talks to no model directly. Your agent talks to its model provider as it always does. By default the agents also load your Claude Code MCP servers and may call their tools unattended; set SPECTACULAR_NO_MCP to turn that off, or SPECTACULAR_MCP_DENY to block single servers.
+      a: spec-tacular itself runs locally and talks to no model directly. Your agent talks to its model provider as it always does. With Claude Code, the background drafting agents load your MCP servers by default and may call their tools without asking; set SPECTACULAR_NO_MCP to turn that off, or SPECTACULAR_MCP_DENY to block single servers.
     - q: Can I use it on an existing project?
       a: "Yes, and existing OpenSpec projects are the main case. spec-tacular works in the openspec/ folder you already have, so your specs and change history stay as they are. Before the first change it asks for the project's ground rules (what the system is for, its stack, architecture and conventions), one question at a time; any question can be left for later. Then you describe a change and review it like any other."
     - q: Can my team use it?
@@ -369,7 +373,7 @@ title: Questions developers ask first
     - q: What does it cost?
       a: spec-tacular is free and MIT licensed. You pay for your agent's model usage as usual; a sidebar shows the model, the drafting cost so far and the current step.
     - q: Is it ready?
-      a: 'It is at v0.4.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet.'
+      a: 'It is at v0.5.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet.'
   ---
   ::
 
