@@ -774,7 +774,7 @@ async function composePrompt(
     : described;
   // Implementing is interactive: a stop there is said in the session itself.
   const task = artifact === 'apply' ? verifying : `${verifying}\n\n${stopInstructions(args.cwd, change, artifact)}`;
-  return buildPrompt(buildContext(args.cwd, reviewed), task);
+  return buildPrompt(buildContext(args.cwd, reviewed, change), task);
 }
 
 /** How a change's formal requirements are verified: through matrices, or as any other requirement. */
@@ -1757,7 +1757,8 @@ async function runDefect(args: Args, adapter: OpenSpecAdapter): Promise<number> 
 /**
  * `spec-tacular hazards` — the register and where each hazard stands, by its
  * guards' latest results. `--reviewed HAZ-0003` records a look at one. Exits
- * non-zero while a hazard's guard is failing.
+ * non-zero while a hazard is unproven: a guard failing or never run, or no
+ * control verified by a test. A waived guard does not fail it.
  */
 function runHazards(args: Args): number {
   if (args.reviewed) {
@@ -1780,7 +1781,7 @@ function runHazards(args: Args): number {
         `           ${s.because}${s.dueForReview ? ` · due for review (last ${s.hazard.reviewed ?? 'never'})` : ''}\n`,
     );
   }
-  return states.some((s) => s.status === 'open') ? 1 : 0;
+  return states.some((s) => s.blocking) ? 1 : 0;
 }
 
 /** `spec-tacular roadmap` — show, promote, or complete a slice. */
