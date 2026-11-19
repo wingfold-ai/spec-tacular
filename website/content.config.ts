@@ -12,6 +12,16 @@ export default defineContentConfig({
         status: z.enum(['draft', 'published']).default('published'),
       }),
     }),
+    // In-depth documentation under /docs. Folder and file names carry a
+    // numeric prefix for ordering (1.getting-started/2.installation.md →
+    // /docs/getting-started/installation); .navigation.yml titles a folder.
+    docs: defineCollection({
+      type: 'page',
+      source: 'docs/**/*.md',
+      schema: z.object({
+        navTitle: z.string().optional(),
+      }),
+    }),
     meta: defineCollection({
       type: 'data',
       source: 'meta/site.yml',

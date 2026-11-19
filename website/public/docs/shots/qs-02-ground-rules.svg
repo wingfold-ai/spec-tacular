@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 924 468" width="924" height="468" role="img" xml:space="preserve">
+<title>Ground rules: the first question, 'What the system is for, and who uses it.', with an answer typed into the box at the bottom and a progress row for Domain, Stack, Architecture and Conventions</title>
+<style>.c0{fill:#7aa2f7}.c1{fill:#565f89}.c2{fill:#9ece6a}.c3{fill:#1f2335}.c4{fill:#3b4261}.c5{fill:#c0caf5}.c6{fill:#2f3549}.c7{fill:#1a1b26}text{font-family:JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:14px;white-space:pre}.b{font-weight:700}.i{font-style:italic}.u{text-decoration:underline}path{fill:none;stroke-width:1.2}</style>
+<rect width="100%" height="100%" fill="#1a1b26"/>
+<rect class="c3" x="0" y="36" width="924" height="18"/>
+<rect class="c3" x="0" y="54" width="924" height="18"/>
+<rect class="c3" x="0" y="72" width="924" height="18"/>
+<rect class="c3" x="0" y="90" width="924" height="18"/>
+<rect class="c3" x="0" y="108" width="924" height="18"/>
+<rect class="c3" x="0" y="126" width="924" height="18"/>
+<rect class="c3" x="0" y="144" width="924" height="18"/>
+<rect class="c3" x="0" y="162" width="924" height="18"/>
+<rect class="c3" x="0" y="180" width="924" height="18"/>
+<rect class="c3" x="0" y="198" width="16.8" height="18"/>
+<rect class="c6" x="16.8" y="198" width="890.4" height="18"/>
+<rect class="c3" x="907.2" y="198" width="16.8" height="18"/>
+<rect class="c3" x="0" y="216" width="924" height="18"/>
+<rect class="c3" x="0" y="234" width="924" height="18"/>
+<rect class="c3" x="0" y="252" width="924" height="18"/>
+<rect class="c3" x="0" y="270" width="924" height="18"/>
+<rect class="c3" x="0" y="288" width="924" height="18"/>
+<rect class="c3" x="0" y="306" width="924" height="18"/>
+<rect class="c3" x="0" y="324" width="924" height="18"/>
+<rect class="c3" x="0" y="342" width="924" height="18"/>
+<rect class="c3" x="0" y="360" width="924" height="18"/>
+<rect class="c3" x="0" y="378" width="924" height="18"/>
+<rect class="c3" x="0" y="396" width="924" height="18"/>
+<rect class="c3" x="0" y="414" width="924" height="18"/>
+<rect class="c1" x="8.4" y="450" width="33.6" height="18"/>
+<rect class="c1" x="117.6" y="450" width="58.8" height="18"/>
+<rect class="c1" x="235.2" y="450" width="67.2" height="18"/>
+<rect class="c1" x="445.2" y="450" width="42" height="18"/>
+<rect class="c1" x="546" y="450" width="33.6" height="18"/>
+<rect class="c1" x="697.2" y="450" width="67.2" height="18"/>
+<rect class="c1" x="840" y="450" width="67.2" height="18"/>
+<rect class="c5" x="831.6" y="378" width="1.05" height="18"/>
+<path stroke="#9ece6a" d="M92.4 27H109.2"/>
+<path stroke="#7aa2f7" d="M268.8 27H285.6M8.4 99H16.8M478.8 99H915.6M25.2 369H898.8M25.2 405H898.8M8.4 423H915.6M4.2 103.2V418.8M919.8 103.2V418.8M21 373.2V400.8M903 373.2V400.8M8.4 99A4.2 4.2 0 0 0 4.2 103.2M915.6 99A4.2 4.2 0 0 1 919.8 103.2M25.2 369A4.2 4.2 0 0 0 21 373.2M898.8 369A4.2 4.2 0 0 1 903 373.2M25.2 405A4.2 4.2 0 0 1 21 400.8M898.8 405A4.2 4.2 0 0 0 903 400.8M8.4 423A4.2 4.2 0 0 1 4.2 418.8M915.6 423A4.2 4.2 0 0 0 919.8 418.8"/>
+<path stroke="#3b4261" d="M8.4 45H16.8M134.4 45H915.6M8.4 81H915.6M4.2 49.2V76.8M919.8 49.2V76.8M8.4 45A4.2 4.2 0 0 0 4.2 49.2M915.6 45A4.2 4.2 0 0 1 919.8 49.2M8.4 81A4.2 4.2 0 0 1 4.2 76.8M915.6 81A4.2 4.2 0 0 0 919.8 76.8"/>
+<text x="8.4" y="13.6" textLength="100.8" class="c0 b">spec-tacular</text>
+<text x="126" y="13.6" textLength="193.2" class="c1">~/my-app › ground rules</text>
+<text x="8.4" y="31.6" textLength="67.2" class="c2">✓ Set up</text>
+<text x="126" y="31.6" textLength="126" class="c0">2. Ground rules</text>
+<text x="302.4" y="31.6" textLength="126" class="c1">3. First change</text>
+<text x="25.2" y="49.6" textLength="100.8" class="c4">Ground rules</text>
+<text x="16.8" y="67.6" textLength="67.2" class="c0">Domain ◆</text>
+<text x="84" y="67.6" textLength="25.2" class="c1">○○○</text>
+<text x="134.4" y="67.6" textLength="42" class="c5">Stack</text>
+<text x="184.8" y="67.6" textLength="42" class="c1">○○○○○</text>
+<text x="252" y="67.6" textLength="100.8" class="c5">Architecture</text>
+<text x="361.2" y="67.6" textLength="42" class="c1">○○○○○</text>
+<text x="428.4" y="67.6" textLength="92.4" class="c5">Conventions</text>
+<text x="529.2" y="67.6" textLength="378" class="c1">○○○○○                                    0/19</text>
+<text x="25.2" y="103.6" textLength="445.2" class="c0">Domain · What the project is about, in its own words.</text>
+<text x="16.8" y="121.6" textLength="336" class="c0 b">What the system is for, and who uses it.</text>
+<text x="16.8" y="139.6" textLength="739.2" class="c1">Two sentences. e.g. "Lets clinic staff book rooms. Used by receptionists, not patients."</text>
+<text x="42" y="193.6" textLength="226.8" class="c1">↷ Skip — leave it for later</text>
+<text x="25.2" y="211.6" textLength="159.6" class="c0">▸ ✎ Write my answer</text>
+<text x="33.6" y="391.6" textLength="798" class="c5">› A small notes app. Used by individuals on their phone and laptop to keep short private notes.</text>
+<text x="8.4" y="445.6" textLength="470.4" class="c1">AI suggestions off: turned off by SPECTACULAR_NO_ADVISOR</text>
+<text x="16.8" y="463.6" textLength="16.8" class="c7">↑↓</text>
+<text x="50.4" y="463.6" textLength="50.4" class="c1">choose</text>
+<text x="126" y="463.6" textLength="42" class="c7">enter</text>
+<text x="184.8" y="463.6" textLength="33.6" class="c1">save</text>
+<text x="243.6" y="463.6" textLength="50.4" class="c7">ctrl+r</text>
+<text x="310.8" y="463.6" textLength="117.6" class="c1">revise with AI</text>
+<text x="453.6" y="463.6" textLength="25.2" class="c7">tab</text>
+<text x="495.6" y="463.6" textLength="33.6" class="c1">skip</text>
+<text x="554.4" y="463.6" textLength="16.8" class="c7">←→</text>
+<text x="588" y="463.6" textLength="92.4" class="c1">move cursor</text>
+<text x="705.6" y="463.6" textLength="50.4" class="c7">ctrl+e</text>
+<text x="772.8" y="463.6" textLength="50.4" class="c1">editor</text>
+<text x="848.4" y="463.6" textLength="50.4" class="c7">ctrl+f</text>
+<text x="915.6" y="463.6" textLength="8.4" class="c1">d</text>
+</svg>

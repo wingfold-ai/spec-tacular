@@ -17,6 +17,7 @@ All copy lives in Markdown. Edit it there, not in the components.
 | --- | --- |
 | `content/index.md` | The landing page: SEO frontmatter, then one MDC block per section |
 | `content/meta/site.yml` | Version, install command, nav and footer links |
+| `content/docs/**` | The documentation at `/docs`: numeric prefixes order folders and pages (`1.getting-started/2.quickstart.md` → `/docs/getting-started/quickstart`), `.navigation.yml` titles a folder |
 
 
 `/llms.txt`, `/llms-full.txt`, the sitemap and robots.txt are generated from the
@@ -36,6 +37,16 @@ between the `---` fences are the component's props.
 | `terminal-block`, `file-tree` | Real CLI output, files written to the repo |
 | `compare-table`, `evidence-table` | Comparison with alternatives, eval results |
 | `install-steps`, `faq-list`, `cta-banner` | Install, FAQ, closing call to action |
+
+## Docs
+
+`/docs` is rendered by `app/pages/docs/[...slug].vue` in `app/layouts/docs.vue`:
+a page tree (`DocsSidebar`), an outline (`DocsToc`), previous/next (`DocsPager`)
+and a status bar with page keys (`DocsStatusBar`: `p`/`n`, `h` home, `t` theme).
+Pages can use Nuxt UI's prose components (`::note`, `::tip`, `::warning`,
+`::caution`, `::steps`, `::code-group`) and the site's own (`:key-cap{k="a"}`,
+`::terminal-block`, `::file-tree`). Every claim is checked against `src/` and
+the README; on-screen strings are quoted from the source.
 
 ## Design
 
