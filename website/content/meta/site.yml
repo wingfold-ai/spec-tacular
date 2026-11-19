@@ -1,4 +1,4 @@
-version: v0.4.0
+version: v0.5.0
 repo: https://github.com/mhoegger/spec-tacular
 # Works today for people with access to the private repo. Once the repository
 # is public, swap it for the one-liner this site serves itself:

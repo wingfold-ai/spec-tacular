@@ -373,7 +373,7 @@ title: Questions developers ask first
     - q: What does it cost?
       a: spec-tacular is free and MIT licensed. You pay for your agent's model usage as usual; a sidebar shows the model, the drafting cost so far and the current step.
     - q: Is it ready?
-      a: 'It is at v0.4.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet.'
+      a: 'It is at v0.5.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet.'
   ---
   ::
 
