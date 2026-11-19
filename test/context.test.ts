@@ -118,3 +118,44 @@ describe('buildPrompt', () => {
     expect(buildPrompt(empty, 'ONLY THIS')).toBe('ONLY THIS');
   });
 });
+
+describe('the roadmap in the context', () => {
+  const ROADMAP = `vision: Split expenses
+slices:
+  - id: add-groups
+    summary: Create a group
+    status: done
+  - id: add-expenses
+    summary: Add an expense to a group
+    status: active
+    dependsOn: [add-groups]
+  - id: settle-up
+    summary: Settle balances
+    status: planned
+`;
+
+  test('every agent sees the slices and which one its change is', () => {
+    const d = root();
+    mkdirSync(join(d, 'spec-tacular'), { recursive: true });
+    writeFileSync(join(d, 'spec-tacular', 'roadmap.yaml'), ROADMAP);
+    const text = renderContext(buildContext(d, [], 'add-expenses'));
+    expect(text).toContain('# Roadmap');
+    expect(text).toContain('This change is `add-expenses`');
+    expect(text).toContain('- add-groups (done): Create a group');
+    expect(text).toContain('- add-expenses (active) ← this change: Add an expense to a group');
+    expect(text).toContain('- settle-up (planned): Settle balances');
+  });
+
+  test('a change outside the roadmap still sees it, without a current slice', () => {
+    const d = root();
+    mkdirSync(join(d, 'spec-tacular'), { recursive: true });
+    writeFileSync(join(d, 'spec-tacular', 'roadmap.yaml'), ROADMAP);
+    const text = renderContext(buildContext(d, [], 'fix-typo'));
+    expect(text).toContain('# Roadmap');
+    expect(text).not.toContain('This change is');
+  });
+
+  test('no roadmap, no section', () => {
+    expect(renderContext(buildContext(root(), []))).not.toContain('# Roadmap');
+  });
+});

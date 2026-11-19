@@ -11,7 +11,8 @@ import { useKeyboard } from '@opentui/solid';
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { GRADIENT, THEME } from './theme.ts';
 import { isCancel, isEnter } from './input.ts';
-import { Button, shortPath, Spinner } from './widgets.tsx';
+import { Button, Panel, ScrollArea, shortPath, Spinner } from './widgets.tsx';
+import { HelpOverlay } from './guide.tsx';
 import { useContentWidth } from './layout.ts';
 
 export interface HomeAction {
@@ -38,6 +39,8 @@ export function HomeScreen(props: HomeProps) {
   const contentWidth = useContentWidth();
   const [focus, setFocus] = createSignal(0);
   const [tick, setTick] = createSignal(0);
+  // The same key list as on the overview, so `?` means one thing everywhere.
+  const [help, setHelp] = createSignal(false);
 
   // The logo types itself in, then its gradient keeps drifting slowly.
   const timer = setInterval(() => setTick((t) => t + 1), 70);
@@ -59,6 +62,9 @@ export function HomeScreen(props: HomeProps) {
   };
 
   useKeyboard((key) => {
+    // Help is a transient overlay: any key closes it rather than acting.
+    if (help()) return setHelp(false);
+    if (key.sequence === '?') return setHelp(true);
     if (props.busy) return;
     if (key.name === 'q' || isCancel(key)) return props.onQuit();
     if (isEnter(key) || key.name === 'space') return press(focus());
@@ -70,6 +76,16 @@ export function HomeScreen(props: HomeProps) {
   });
 
   return (
+    <Show
+      when={!help()}
+      fallback={
+        <Panel title="Help · any key closes" grow focused>
+          <ScrollArea>
+            <HelpOverlay />
+          </ScrollArea>
+        </Panel>
+      }
+    >
     <box
       style={{
         flexDirection: 'column',
@@ -120,7 +136,8 @@ export function HomeScreen(props: HomeProps) {
 
       <text>{' '}</text>
       <text style={{ fg: THEME.dim }}>{shortPath(props.root, 80)}</text>
-      <text style={{ fg: THEME.dim }}>←/→ choose · enter select · q quit · or click</text>
+      <text style={{ fg: THEME.dim }}>←/→ choose · enter select · ? keys · q quit · or click</text>
     </box>
+    </Show>
   );
 }

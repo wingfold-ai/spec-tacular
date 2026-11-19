@@ -277,6 +277,11 @@ export interface HazardState {
   because: string;
   /** Not looked at for longer than the review period. */
   dueForReview: boolean;
+  /**
+   * Fails a CI gate: a guard failing, no control verified by a test, or a
+   * guard never run. A waiver is a recorded decision and does not.
+   */
+  blocking: boolean;
 }
 
 export const REVIEW_DAYS = 90;
@@ -284,10 +289,11 @@ export const REVIEW_DAYS = 90;
 export function hazardState(hazard: Hazard, records: EvidenceRecord[], now = new Date()): HazardState {
   const age = hazard.reviewed ? (now.getTime() - Date.parse(hazard.reviewed)) / 86_400_000 : Infinity;
   const dueForReview = hazard.stated !== 'closed' && !(age <= REVIEW_DAYS);
-  const base = { hazard, dueForReview };
+  const base = { hazard, dueForReview, blocking: false };
+  const blocked = { hazard, dueForReview, blocking: true };
   if (hazard.stated === 'closed') return { ...base, status: 'closed', because: 'closed' };
   if (hazard.stated === 'unmitigated') return { ...base, status: 'unmitigated', because: hazard.unmitigated || 'left unmitigated' };
-  if (hazard.verification.length === 0) return { ...base, status: 'open', because: 'no control is verified by a test' };
+  if (hazard.verification.length === 0) return { ...blocked, status: 'open', because: 'no control is verified by a test' };
 
   const failing: string[] = [];
   const never: string[] = [];
@@ -302,8 +308,8 @@ export function hazardState(hazard: Hazard, records: EvidenceRecord[], now = new
     else if (latest.some((r) => r.kind === 'run' && r.outcome === 'fail')) failing.push(tag);
     else if (waiver?.kind === 'waive' && (!last || waiver.at >= last)) waived.push(`${tag} (${waiver.reason})`);
   }
-  if (failing.length > 0) return { ...base, status: 'open', because: `guard failing: ${failing.join(', ')}` };
-  if (never.length > 0) return { ...base, status: 'unverified', because: `guard never run: ${never.join(', ')}` };
+  if (failing.length > 0) return { ...blocked, status: 'open', because: `guard failing: ${failing.join(', ')}` };
+  if (never.length > 0) return { ...blocked, status: 'unverified', because: `guard never run: ${never.join(', ')}` };
   if (waived.length > 0) return { ...base, status: 'unverified', because: `guard waived, not shown: ${waived.join('; ')}` };
   return { ...base, status: 'mitigated', because: 'every guard passed its latest run' };
 }

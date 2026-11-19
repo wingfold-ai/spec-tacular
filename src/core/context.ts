@@ -18,12 +18,15 @@ import { join } from 'node:path';
 import { loadClasses, renderClasses } from './classes.ts';
 import { acceptedAdrs } from './decisions.ts';
 import { registerStates, renderRegister } from './hazards.ts';
+import { loadRoadmap, type Roadmap } from './roadmap.ts';
 import { glossaryPath } from './formal/glossary.ts';
 import type { ReviewedItem } from './review.ts';
 
 export interface ContextBundle {
   /** What the project is for, in the developer's words — greenfield only. */
   vision: string;
+  /** The roadmap's slices, and which one this call is about, when there is a roadmap. */
+  roadmap?: { slices: Roadmap['slices']; current?: string };
   /** Ground rules: stack, architecture, conventions. */
   foundation: { name: string; content: string }[];
   /** Accepted architectural decision records. */
@@ -58,6 +61,7 @@ function readMarkdownDir(dir: string): { name: string; content: string }[] {
 export function buildContext(
   projectRoot: string,
   reviewed: ReviewedItem[],
+  change?: string,
 ): ContextBundle {
   const foundation = readMarkdownDir(join(projectRoot, 'spec-tacular', 'foundation'));
   // Only accepted ADRs are binding. A superseded one is history, and feeding
@@ -73,6 +77,11 @@ export function buildContext(
   } catch {
     // No vision: a project that did not start from one. Nothing is missing.
   }
+
+  // The slices around this one: what came before is built on, what comes
+  // later is left out, so a change stays the size of its slice.
+  const roadmap = loadRoadmap(projectRoot);
+  const slices = roadmap?.slices ?? [];
 
   const missing: string[] = [];
   if (foundation.length === 0) missing.push('no foundation documents yet');
@@ -91,6 +100,7 @@ export function buildContext(
 
   return {
     vision,
+    ...(slices.length > 0 ? { roadmap: { slices, ...(change && slices.some((x) => x.id === change) ? { current: change } : {}) } } : {}),
     foundation,
     decisions,
     ...(classes ? { classes: renderClasses(classes) } : {}),
@@ -116,6 +126,22 @@ export function renderContext(bundle: ContextBundle): string {
     out.push('# Product vision', '');
     out.push('What the developer is building, in their words. Every change serves it.', '');
     out.push(bundle.vision.replace(/^#[^\n]*\n+/, ''), '');
+  }
+
+  if (bundle.roadmap) {
+    const { slices, current } = bundle.roadmap;
+    out.push('# Roadmap', '');
+    out.push(
+      current
+        ? `The product is built in these slices, in order. This change is \`${current}\`.\nBuild on the slices done before it; leave what later slices cover to them.`
+        : 'The product is built in these slices, in order. Leave what later slices cover to them.',
+      '',
+    );
+    for (const slice of slices) {
+      const here = slice.id === current ? ' ← this change' : '';
+      out.push(`- ${slice.id} (${slice.status})${here}: ${slice.summary.trim().replace(/\s+/g, ' ')}`);
+    }
+    out.push('');
   }
 
   if (bundle.foundation.length > 0) {
