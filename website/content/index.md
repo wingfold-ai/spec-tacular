@@ -1,7 +1,7 @@
 ---
 title: spec-tacular — review every requirement before your agent builds it
 seoTitle: spec-tacular · Spec-driven development you stay in control of
-description: A terminal UI on top of OpenSpec. Accept, reject or defer every requirement your coding agent writes, one key at a time. Design, tasks and code only follow what you accepted. Works with Claude Code and opencode.
+description: A terminal UI on top of OpenSpec. Accept, reject or defer every requirement your coding agent writes, one key at a time. Design and tasks are drafted only from what you accepted, and your agent implements those tasks. Works with Claude Code and opencode.
 ---
 
 ::hero-section
@@ -72,22 +72,94 @@ lead: Writing specs first is the right instinct. But when the agent writes them 
 id: how-it-works
 eyebrow: How it works
 title: A pipeline where nothing moves until you accept it
-lead: spec-tacular adds a strict order and a human gate to the OpenSpec change. Each artifact is drafted only from the one you accepted before it, so a fix in review flows forward instead of leaving stale documents behind.
+lead: 'In spec-driven development the agent writes down what it will build before it builds it, and you check that text first. spec-tacular takes OpenSpec''s change documents, puts them in a strict order and adds a human gate to each: an agent drafts, you decide, and only then the next document is drafted from what you accepted. A fix made in review flows forward instead of leaving stale documents behind.'
 ---
   ::pipeline-flow
   ---
+  terms:
+    - term: change
+      text: "One unit of work, such as \"add user login\". In OpenSpec it is a folder, openspec/changes/add-user-login/, that holds every document about it."
+    - term: artifact
+      text: "One document of a change: the proposal, the specs, the risks, the design or the tasks. Plain Markdown, in git."
+    - term: requirement
+      text: "One testable statement in a spec: \"The system SHALL …\". Each comes with scenarios, WHEN … THEN …, that say how you would check it."
+    - term: gate
+      text: "The point where a stage waits for you. A file that exists is only written; it counts once you accepted it."
+    - term: baseline
+      text: "openspec/specs/: the accepted requirements of every finished change. The current, written-down truth about your system."
+    - term: agent
+      text: "Claude Code or opencode. It drafts the artifacts and writes the code; spec-tacular decides what it gets to see and when."
   before:
-    - { label: 'Vision', text: 'Say what you are building and for whom. A short AI interview, then a roadmap of small slices.' }
-    - { label: Ground rules, text: 'Domain, stack, architecture, conventions. Proposed from your vision, mostly confirmed with enter.' }
+    - label: Vision
+      scope: new projects only
+      text: Say what you are building and for whom, in your own words. An AI interview fills the gaps, then proposes a roadmap of small slices.
+      what: "A short description of the product, sharpened by an interview: one question at a time, with suggested answers to pick from. From it come 3–8 slices in build order, the first being the smallest thing a user can do end to end."
+      you: "Write a few sentences, answer the questions, then reshape the roadmap: drop a slice (space), merge it with the next (m), move it (shift+↑↓) or reword it (e)."
+      why: "Agents build better from a goal than from a feature list, and small slices keep every later spec small enough to review properly. Saved in spec-tacular/vision.md and roadmap.yaml, which every agent reads."
+    - label: Ground rules
+      scope: once per project
+      text: Domain, stack, architecture and conventions, settled before the first change. On a new project they are proposed from your vision and mostly confirmed with enter.
+      what: "Questions about the project, one at a time: what the system is for and its core terms, the language, framework and datastore, the architecture style, where business rules live, naming, and what a test must cover. Choose an architecture style and its layer rules come with it."
+      you: "Confirm or change each proposed answer (marked ⇐, enter confirms). On a new project only one question has to be answered on day one; eight more are marked Decide later and wait until a change needs them."
+      why: "Without them every change makes its own assumptions and the agent picks the stack and patterns as it goes. Saved in spec-tacular/foundation/; every agent reads them before it drafts anything."
   stages:
-    - { key: 'proposal', label: 'Proposal', artifact: 'proposal.md', gate: 'Accepted as a whole', text: 'What changes and why, plus a boundary of the paths it expects to touch.' }
-    - { key: 'specs', label: 'Specs', artifact: 'specs/*.md', gate: 'Accepted requirement by requirement', text: 'Each requirement with its scenarios, on its own screen. Design is refused while any is unreviewed.' }
-    - { key: risks, label: Risks, artifact: risks.md, gate: Accepted one risk at a time, text: 'Hazard, severity, guard and test for each thing that could go wrong.' }
-    - { key: design, label: Design, artifact: design.md, gate: Accepted as a whole, text: Drafted from accepted specs only. It must answer every risk by name. }
-    - { key: tasks, label: Tasks, artifact: tasks.md, gate: Accepted as a whole, text: 'The work, with a guard task per risk that has to be shown failing first.' }
-    - { key: implement, label: Implement, artifact: your code, gate: You watch it tick, text: 'Claude Code or opencode opens in a new tab. spec-tacular follows the tasks as they are done.' }
-    - { key: archive, label: Archive, artifact: openspec/specs/, gate: Verified requirements merge, text: 'Accepted requirements join the baseline. Ones that need a deployed environment wait in a register.' }
-  note: 'Accepting starts nothing by itself: you draft the next artifact when you are ready. Edit an accepted text and it is marked to be read again.'
+    - key: proposal
+      label: Proposal
+      artifact: proposal.md
+      gate: Accepted as a whole
+      text: Why this change, what it changes, and a boundary of the paths it expects to touch.
+      what: "A short document: the motivation, what changes, which capabilities it adds or modifies, its impact, and a ## Boundary that lists the folders and files the change should touch."
+      you: "Read it and accept it (a), send it back with a note so the agent redrafts it (r), or edit it yourself in $EDITOR (ctrl+e)."
+      why: "It is the cheapest place to say \"not this\" or \"smaller\". Everything after it is drafted from this text, so a wrong scope caught here never turns into specs, design or code."
+    - key: specs
+      label: Specs
+      artifact: specs/*.md
+      gate: Accepted requirement by requirement
+      text: The behaviour the change promises, as requirements with scenarios, reviewed one at a time.
+      what: "The requirements this change adds or modifies, in OpenSpec's format: \"The system SHALL …\" plus scenarios such as WHEN a user fails to sign in five times THEN further attempts are refused for 15 minutes. spec-tacular flags vague words (\"quickly\", \"several\"), happy-path-only scenarios and premature details like a named endpoint."
+      you: "One requirement per screen: accept (a), reject (x, it asks why), defer (d, it asks what would verify it later), or revise just this one requirement with the agent (r) and read the diff before it is written."
+      why: "This is the contract the code will be built and tested against. Reviewing one requirement at a time makes it a real decision instead of a skim, and the design is refused while any requirement is still unreviewed."
+    - key: risks
+      label: Risks
+      artifact: risks.md
+      gate: Accepted one risk at a time
+      text: What this change could break, and how each danger will be guarded and tested.
+      what: "Each risk names a hazard (what could go wrong), its severity, the guard that prevents it, and the test that proves the guard works. Example: \"an export leaks other users' data\", guarded by filtering on the caller, tested with two users."
+      you: "Review each risk in the same queue as the specs: accept, reject or defer it."
+      why: "Agents are good at the happy path and tend to miss what must not happen. Naming risks before the design means the design has to deal with them, instead of someone noticing in production."
+    - key: design
+      label: Design
+      artifact: design.md
+      gate: Accepted as a whole
+      text: How it will be built, drafted only from the specs and risks you accepted.
+      what: "The technical approach and its decisions: modules, data, interfaces, trade-offs. It must answer every accepted risk by name; one it leaves out is flagged. A decision marked Scope: global can be promoted to a project-wide ADR (p)."
+      you: "Read it and accept it, redraft it with feedback, or edit it."
+      why: "Because it is written only after the specs are settled, a requirement you changed in review flows into it, instead of leaving an outdated design that contradicts the specs while the agent builds."
+    - key: tasks
+      label: Tasks
+      artifact: tasks.md
+      gate: Accepted as a whole
+      text: The plan as a checklist the agent works through, with a guard task for every risk.
+      what: "Small, ordered steps the agent ticks off. For each risk there is a guard task, (guard: <risk>): write the test, then show it fails with the mitigation removed, and record how (shown red: …)."
+      you: "Check the plan is complete and in a sensible order, then accept it."
+      why: "A test that has never failed proves nothing. Requiring each guard to be shown red first means the safety checks really test something. A guard ticked off without that record stays flagged."
+    - key: implement
+      label: Implement
+      artifact: your code
+      gate: You watch it tick
+      text: Your agent builds the accepted tasks in a terminal tab of its own; spec-tacular follows along.
+      what: "\"Implement it in Claude Code\" opens your agent in a new terminal tab or window with the accepted tasks as its prompt. Tests, linters and read-only OpenSpec commands run without asking; everything else follows your usual permission mode."
+      you: "Watch or step in as you would in any agent session. spec-tacular shows how many tasks are ticked off, and flags files changed outside the proposal's boundary. Tasks that need a deployed environment can be deferred."
+      why: "The agent works from what you accepted, not from a chat history. The boundary check is advisory: only you can tell whether reaching further was right, but you see that it happened."
+    - key: archive
+      label: Archive
+      artifact: openspec/specs/
+      gate: Accepted requirements merge
+      text: The finished change's requirements become part of the baseline; anything deferred stays on record.
+      what: "Archiving (A, then enter) merges the change's accepted requirements into openspec/specs/. Deferred ones go to spec-tacular/pending-validation.md with what would verify them, and review.md, the record of every decision, moves into the archive with the change."
+      you: "Check the preview, which also says if something still blocks archiving, and confirm."
+      why: "The next change is proposed against an up-to-date description of the system, and nothing you deferred is silently forgotten."
+  note: 'Accepting starts nothing by itself: you decide when the next artifact is drafted (w). Edit or redraft an accepted text and it is marked to be read again.'
   ---
   ::
 :::
@@ -291,7 +363,7 @@ title: Questions developers ask first
     - q: Does my code leave my machine?
       a: spec-tacular itself runs locally and talks to no model directly. Your agent talks to its model provider as it always does. By default the agents also load your Claude Code MCP servers and may call their tools unattended; set SPECTACULAR_NO_MCP to turn that off, or SPECTACULAR_MCP_DENY to block single servers.
     - q: Can I use it on an existing project?
-      a: Yes. Without a vision, the ground rules start with the domain question and ask all nineteen. Then you describe a change and review it like any other.
+      a: "Yes, and existing OpenSpec projects are the main case. spec-tacular works in the openspec/ folder you already have, so your specs and change history stay as they are. Before the first change it asks for the project's ground rules (what the system is for, its stack, architecture and conventions), one question at a time; any question can be left for later. Then you describe a change and review it like any other."
     - q: Can my team use it?
       a: Every decision is written to review.md in the change folder, so it is reviewed in pull requests with the rest of the change. Several people reviewing the same change at once is not built yet.
     - q: What does it cost?
