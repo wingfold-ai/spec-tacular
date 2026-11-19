@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 924 396" width="924" height="396" role="img" xml:space="preserve">
+<title>The overview: the Changes list with add-user-login, and its change panel with the pipeline bar (proposal ready, the other stages blocked) and the buttons 'Let an agent draft it' and 'Write it myself'</title>
+<style>.c0{fill:#7aa2f7}.c1{fill:#565f89}.c2{fill:#1f2335}.c3{fill:#3b4261}.c4{fill:#2f3549}.c5{fill:#bb9af7}.c6{fill:#c0caf5}.c7{fill:#1a1b26}text{font-family:JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:14px;white-space:pre}.b{font-weight:700}.i{font-style:italic}.u{text-decoration:underline}path{fill:none;stroke-width:1.2}</style>
+<rect width="100%" height="100%" fill="#1a1b26"/>
+<rect class="c2" x="0" y="18" width="924" height="18"/>
+<rect class="c2" x="0" y="36" width="16.8" height="18"/>
+<rect class="c4" x="16.8" y="36" width="252" height="18"/>
+<rect class="c2" x="268.8" y="36" width="655.2" height="18"/>
+<rect class="c2" x="0" y="54" width="924" height="18"/>
+<rect class="c2" x="0" y="72" width="924" height="18"/>
+<rect class="c2" x="0" y="90" width="924" height="18"/>
+<rect class="c2" x="0" y="108" width="924" height="18"/>
+<rect class="c2" x="0" y="126" width="924" height="18"/>
+<rect class="c2" x="0" y="144" width="924" height="18"/>
+<rect class="c2" x="0" y="162" width="924" height="18"/>
+<rect class="c2" x="0" y="180" width="302.4" height="18"/>
+<rect class="c0" x="302.4" y="180" width="268.8" height="18"/>
+<rect class="c2" x="571.2" y="180" width="352.8" height="18"/>
+<rect class="c2" x="0" y="198" width="302.4" height="18"/>
+<rect class="c0" x="302.4" y="198" width="268.8" height="18"/>
+<rect class="c2" x="571.2" y="198" width="352.8" height="18"/>
+<rect class="c2" x="0" y="216" width="302.4" height="18"/>
+<rect class="c0" x="302.4" y="216" width="268.8" height="18"/>
+<rect class="c2" x="571.2" y="216" width="352.8" height="18"/>
+<rect class="c2" x="0" y="234" width="924" height="18"/>
+<rect class="c2" x="0" y="252" width="924" height="18"/>
+<rect class="c2" x="0" y="270" width="924" height="18"/>
+<rect class="c2" x="0" y="288" width="924" height="18"/>
+<rect class="c2" x="0" y="306" width="924" height="18"/>
+<rect class="c2" x="0" y="324" width="924" height="18"/>
+<rect class="c2" x="0" y="342" width="924" height="18"/>
+<rect class="c2" x="0" y="360" width="924" height="18"/>
+<rect class="c1" x="8.4" y="378" width="33.6" height="18"/>
+<rect class="c1" x="117.6" y="378" width="58.8" height="18"/>
+<rect class="c1" x="218.4" y="378" width="25.2" height="18"/>
+<rect class="c1" x="352.8" y="378" width="25.2" height="18"/>
+<rect class="c1" x="529.2" y="378" width="25.2" height="18"/>
+<rect class="c1" x="680.4" y="378" width="67.2" height="18"/>
+<rect class="c1" x="806.4" y="378" width="25.2" height="18"/>
+<rect class="c1" x="890.4" y="378" width="25.2" height="18"/>
+<path stroke="#3b4261" d="M8.4 27H16.8M126 27H277.2M394.8 63H411.6M487.2 63H504M579.6 63H596.4M680.4 63H697.2M772.8 63H789.6M588 189H831.6M588 225H831.6M25.2 297H109.2M134.4 297H252M25.2 351H109.2M134.4 351H252M8.4 369H277.2M4.2 31.2V364.8M281.4 31.2V364.8M583.8 193.2V220.8M835.8 193.2V220.8M21 301.2V346.8M113.4 301.2V346.8M130.2 301.2V346.8M256.2 301.2V346.8M8.4 27A4.2 4.2 0 0 0 4.2 31.2M277.2 27A4.2 4.2 0 0 1 281.4 31.2M588 189A4.2 4.2 0 0 0 583.8 193.2M831.6 189A4.2 4.2 0 0 1 835.8 193.2M588 225A4.2 4.2 0 0 1 583.8 220.8M831.6 225A4.2 4.2 0 0 0 835.8 220.8M25.2 297A4.2 4.2 0 0 0 21 301.2M109.2 297A4.2 4.2 0 0 1 113.4 301.2M134.4 297A4.2 4.2 0 0 0 130.2 301.2M252 297A4.2 4.2 0 0 1 256.2 301.2M25.2 351A4.2 4.2 0 0 1 21 346.8M109.2 351A4.2 4.2 0 0 0 113.4 346.8M134.4 351A4.2 4.2 0 0 1 130.2 346.8M252 351A4.2 4.2 0 0 0 256.2 346.8M8.4 369A4.2 4.2 0 0 1 4.2 364.8M277.2 369A4.2 4.2 0 0 0 281.4 364.8"/>
+<path stroke="#7aa2f7" d="M294 27H302.4M436.8 27H915.6M310.8 189H562.8M310.8 225H562.8M294 369H915.6M289.8 31.2V364.8M919.8 31.2V364.8M306.6 193.2V220.8M567 193.2V220.8M294 27A4.2 4.2 0 0 0 289.8 31.2M915.6 27A4.2 4.2 0 0 1 919.8 31.2M310.8 189A4.2 4.2 0 0 0 306.6 193.2M562.8 189A4.2 4.2 0 0 1 567 193.2M310.8 225A4.2 4.2 0 0 1 306.6 220.8M562.8 225A4.2 4.2 0 0 0 567 220.8M294 369A4.2 4.2 0 0 1 289.8 364.8M915.6 369A4.2 4.2 0 0 0 919.8 364.8"/>
+<text x="8.4" y="13.6" textLength="100.8" class="c0 b">spec-tacular</text>
+<text x="126" y="13.6" textLength="67.2" class="c1">~/my-app</text>
+<text x="25.2" y="31.6" textLength="92.4" class="c3">Changes · 1</text>
+<text x="310.8" y="31.6" textLength="117.6" class="c0">add-user-login</text>
+<text x="16.8" y="49.6" textLength="134.4" class="c0">▸ add-user-login</text>
+<text x="243.6" y="49.6" textLength="25.2" class="c1">0/5</text>
+<text x="302.4" y="67.6" textLength="84" class="c0">◉ proposal</text>
+<text x="420" y="67.6" textLength="436.8" class="c1">○ specs    ○ risks    ○ design    ○ tasks    ○ apply</text>
+<text x="302.4" y="121.6" textLength="33.6" class="c5 b">Next</text>
+<text x="302.4" y="139.6" textLength="588" class="c6">Write the proposal: why this change, and what it changes. Let an agent</text>
+<text x="302.4" y="157.6" textLength="260.4" class="c6">draft it, or write it yourself.</text>
+<text x="327.6" y="211.6" textLength="218.4" class="c7">✦ Let an agent draft it  w</text>
+<text x="604.8" y="211.6" textLength="210" class="c6">✎ Write it myself  ctrl+e</text>
+<text x="42" y="319.6" textLength="193.2" class="c6">+ New        ! Report a</text>
+<text x="42" y="337.6" textLength="159.6" class="c6">change       defect</text>
+<text x="16.8" y="391.6" textLength="16.8" class="c7">←→</text>
+<text x="50.4" y="391.6" textLength="50.4" class="c1">action</text>
+<text x="126" y="391.6" textLength="42" class="c7">enter</text>
+<text x="184.8" y="391.6" textLength="16.8" class="c1">go</text>
+<text x="226.8" y="391.6" textLength="8.4" class="c7">n</text>
+<text x="252" y="391.6" textLength="84" class="c1">new change</text>
+<text x="361.2" y="391.6" textLength="8.4" class="c7">b</text>
+<text x="386.4" y="391.6" textLength="126" class="c1">report a defect</text>
+<text x="537.6" y="391.6" textLength="8.4" class="c7">f</text>
+<text x="562.8" y="391.6" textLength="100.8" class="c1">ground rules</text>
+<text x="688.8" y="391.6" textLength="50.4" class="c7">ctrl+j</text>
+<text x="756" y="391.6" textLength="33.6" class="c1">jobs</text>
+<text x="814.8" y="391.6" textLength="8.4" class="c7">?</text>
+<text x="840" y="391.6" textLength="33.6" class="c1">help</text>
+<text x="898.8" y="391.6" textLength="8.4" class="c7">q</text>
+</svg>

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 924 396" width="924" height="396" role="img" xml:space="preserve">
+<title>The vision screen of a new project: 'What are you building?', a description typed into the box, and the buttons Continue and 'Not a new project — just start a change'</title>
+<style>.c0{fill:#7aa2f7}.c1{fill:#565f89}.c2{fill:#9ece6a}.c3{fill:#1f2335}.c4{fill:#c0caf5}.c5{fill:#1a1b26}text{font-family:JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:14px;white-space:pre}.b{font-weight:700}.i{font-style:italic}.u{text-decoration:underline}path{fill:none;stroke-width:1.2}</style>
+<rect width="100%" height="100%" fill="#1a1b26"/>
+<rect class="c3" x="0" y="36" width="924" height="18"/>
+<rect class="c3" x="0" y="54" width="924" height="18"/>
+<rect class="c3" x="0" y="72" width="924" height="18"/>
+<rect class="c3" x="0" y="90" width="924" height="18"/>
+<rect class="c3" x="0" y="108" width="924" height="18"/>
+<rect class="c3" x="0" y="126" width="924" height="18"/>
+<rect class="c3" x="0" y="144" width="924" height="18"/>
+<rect class="c3" x="0" y="162" width="924" height="18"/>
+<rect class="c3" x="0" y="180" width="924" height="18"/>
+<rect class="c3" x="0" y="198" width="924" height="18"/>
+<rect class="c3" x="0" y="216" width="924" height="18"/>
+<rect class="c3" x="0" y="234" width="924" height="18"/>
+<rect class="c3" x="0" y="252" width="924" height="18"/>
+<rect class="c3" x="0" y="270" width="924" height="18"/>
+<rect class="c3" x="0" y="288" width="924" height="18"/>
+<rect class="c3" x="0" y="306" width="924" height="18"/>
+<rect class="c3" x="0" y="324" width="924" height="18"/>
+<rect class="c3" x="0" y="342" width="924" height="18"/>
+<rect class="c3" x="0" y="360" width="924" height="18"/>
+<rect class="c1" x="8.4" y="378" width="58.8" height="18"/>
+<rect class="c1" x="159.6" y="378" width="67.2" height="18"/>
+<rect class="c1" x="394.8" y="378" width="67.2" height="18"/>
+<rect class="c4" x="764.4" y="252" width="1.05" height="18"/>
+<path stroke="#9ece6a" d="M92.4 27H109.2"/>
+<path stroke="#7aa2f7" d="M218.4 27H235.2M8.4 45H16.8M126 45H915.6M25.2 243H898.8M25.2 279H898.8M8.4 369H915.6M4.2 49.2V364.8M919.8 49.2V364.8M21 247.2V274.8M903 247.2V274.8M8.4 45A4.2 4.2 0 0 0 4.2 49.2M915.6 45A4.2 4.2 0 0 1 919.8 49.2M25.2 243A4.2 4.2 0 0 0 21 247.2M898.8 243A4.2 4.2 0 0 1 903 247.2M25.2 279A4.2 4.2 0 0 1 21 274.8M898.8 279A4.2 4.2 0 0 0 903 274.8M8.4 369A4.2 4.2 0 0 1 4.2 364.8M915.6 369A4.2 4.2 0 0 0 919.8 364.8"/>
+<path stroke="#565f89" d="M394.8 27H411.6"/>
+<path stroke="#bb9af7" d="M25.2 315H142.8M25.2 351H142.8M21 319.2V346.8M147 319.2V346.8M25.2 315A4.2 4.2 0 0 0 21 319.2M142.8 315A4.2 4.2 0 0 1 147 319.2M25.2 351A4.2 4.2 0 0 1 21 346.8M142.8 351A4.2 4.2 0 0 0 147 346.8"/>
+<path stroke="#3b4261" d="M168 315H529.2M168 351H529.2M163.8 319.2V346.8M533.4 319.2V346.8M168 315A4.2 4.2 0 0 0 163.8 319.2M529.2 315A4.2 4.2 0 0 1 533.4 319.2M168 351A4.2 4.2 0 0 1 163.8 346.8M529.2 351A4.2 4.2 0 0 0 533.4 346.8"/>
+<text x="8.4" y="13.6" textLength="100.8" class="c0 b">spec-tacular</text>
+<text x="126" y="13.6" textLength="142.8" class="c1">~/my-app › vision</text>
+<text x="8.4" y="31.6" textLength="67.2" class="c2">✓ Set up</text>
+<text x="126" y="31.6" textLength="75.6" class="c0">2. Vision</text>
+<text x="252" y="31.6" textLength="302.4" class="c1">3. Ground rules      4. First change</text>
+<text x="25.2" y="49.6" textLength="92.4" class="c0">Your vision</text>
+<text x="16.8" y="85.6" textLength="184.8" class="c0 b">What are you building?</text>
+<text x="16.8" y="121.6" textLength="655.2" class="c4">This is a new project, so there is nothing to change yet — start from what you</text>
+<text x="16.8" y="139.6" textLength="680.4" class="c4">want it to be. Describe it freely: who it is for, what they will do with it, what</text>
+<text x="16.8" y="157.6" textLength="546" class="c4">matters most. Rough is fine; paste a longer text if you have one.</text>
+<text x="16.8" y="193.6" textLength="772.8" class="c4">(AI is off: turned off by SPECTACULAR_NO_ADVISOR — your description is saved as the vision.)</text>
+<text x="33.6" y="265.6" textLength="730.8" class="c4">› A notes app for people who want their notes private: sign in, write, find them again.</text>
+<text x="42" y="337.6" textLength="84" class="c0">▶ Continue</text>
+<text x="184.8" y="337.6" textLength="327.6" class="c4">Not a new project — just start a change</text>
+<text x="16.8" y="391.6" textLength="42" class="c5">enter</text>
+<text x="75.6" y="391.6" textLength="67.2" class="c1">continue</text>
+<text x="168" y="391.6" textLength="50.4" class="c5">ctrl+n</text>
+<text x="235.2" y="391.6" textLength="142.8" class="c1">not a new project</text>
+<text x="403.2" y="391.6" textLength="50.4" class="c5">ctrl+c</text>
+<text x="470.4" y="391.6" textLength="33.6" class="c1">back</text>
+</svg>

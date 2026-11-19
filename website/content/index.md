@@ -259,7 +259,7 @@ lead: 'We test spec-tacular by having an AI play a new user: it builds a small e
 id: install
 eyebrow: Install
 title: Running in your project in four steps
-lead: A single binary for Linux and macOS (x64 and arm64). It needs no Bun or Node of its own, only the OpenSpec CLI and your agent.
+lead: 'A single binary for Linux and macOS (x64 and arm64). It needs no Bun or Node of its own, only the OpenSpec CLI and your agent. The quickstart in the docs walks you from here to a first accepted change.'
 ---
   ::install-steps
   ---
@@ -269,6 +269,9 @@ lead: A single binary for Linux and macOS (x64 and arm64). It needs no Bun or No
     - { title: Set up OpenSpec in your project, command: openspec init, text: 'Pick the agent you will drive: Claude Code (the default) or opencode.' }
     - { title: Open the TUI, command: spec-tacular, text: 'A start screen walks you through vision, ground rules and your first change. Press ? for every key. For opencode, start it with --driver opencode.' }
   ---
+  ::
+
+  ::docs-link{to="/docs/getting-started/quickstart" label="Quickstart: your first reviewed change" hint="every step, from install to an accepted change"}
   ::
 :::
 
@@ -296,6 +299,9 @@ title: Questions developers ask first
     - q: Is it ready?
       a: 'It is at v0.4.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet.'
   ---
+  ::
+
+  ::docs-link{to="/docs" label="Read the docs" hint="guides, keys, commands and configuration"}
   ::
 :::
 

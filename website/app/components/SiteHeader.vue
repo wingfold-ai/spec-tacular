@@ -8,6 +8,9 @@ const { data: site } = await useSite()
 const { sections, current } = useSections()
 const colorMode = useColorMode()
 const isDark = computed(() => colorMode.value !== 'light')
+const route = useRoute()
+const isHome = computed(() => route.path === '/')
+const inDocs = computed(() => route.path.startsWith('/docs'))
 
 function marker(i: number) {
   if (i === current.value) return '●'
@@ -18,14 +21,18 @@ function marker(i: number) {
 
 <template>
   <header class="sticky top-0 z-40 border-b border-st-border bg-st-bg/85 backdrop-blur-sm">
-    <div class="container-page flex h-11 items-center gap-6 text-sm">
-      <a href="#top" class="flex shrink-0 items-center gap-2" aria-label="spec-tacular, back to top">
+    <div class="container-page flex h-11 items-center gap-6 text-sm" :class="inDocs ? '!max-w-[96rem]' : ''">
+      <NuxtLink :to="isHome ? '#top' : '/'" class="flex shrink-0 items-center gap-2" :aria-label="isHome ? 'spec-tacular, back to top' : 'spec-tacular home'">
         <img src="/favicon.svg" alt="" class="size-5">
         <span class="font-bold text-st-strong">spec-tacular</span>
         <span v-if="site" class="border border-st-border px-1.5 text-[0.7rem] leading-5 text-st-dim">{{ site.version }}</span>
-      </a>
+      </NuxtLink>
 
-      <nav class="hidden min-w-0 flex-1 md:block" aria-label="Sections">
+      <nav v-if="!isHome" class="hidden min-w-0 flex-1 items-center gap-4 text-[0.8rem] md:flex" aria-label="Site">
+        <NuxtLink to="/" class="text-st-faint hover:text-st-strong">home</NuxtLink>
+        <NuxtLink to="/docs" :class="inDocs ? 'font-bold text-st-accent' : 'text-st-faint hover:text-st-strong'">docs<span v-if="inDocs" class="ml-1">●</span></NuxtLink>
+      </nav>
+      <nav v-else class="hidden min-w-0 flex-1 md:block" aria-label="Sections">
         <ol class="flex items-center gap-x-3.5 overflow-x-auto whitespace-nowrap text-[0.8rem] [scrollbar-width:none] lg:gap-x-4">
           <li v-for="(s, i) in sections" :key="s.id">
             <a
@@ -41,6 +48,7 @@ function marker(i: number) {
       </nav>
 
       <div class="ml-auto flex shrink-0 items-center gap-1 md:ml-0">
+        <NuxtLink to="/docs" class="tui-btn h-8 !px-2.5 !py-0 text-xs" :class="inDocs ? '!border-st-accent !text-st-accent' : ''">docs</NuxtLink>
         <ClientOnly>
           <button
             type="button"
@@ -63,7 +71,7 @@ function marker(i: number) {
       </div>
     </div>
 
-    <nav class="border-t border-st-border/60 md:hidden" aria-label="Sections">
+    <nav v-if="isHome" class="border-t border-st-border/60 md:hidden" aria-label="Sections">
       <ol class="container-page flex h-8 items-center gap-x-3.5 overflow-x-auto whitespace-nowrap text-[0.78rem] [scrollbar-width:none]">
         <li v-for="(s, i) in sections" :key="s.id">
           <a
