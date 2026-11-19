@@ -1,5 +1,7 @@
 // spec-tacular.app — the landing page for the spec-tacular TUI.
 // Static site: `pnpm generate` writes .output/public for GitHub Pages.
+import { llmsTxt } from './llms.config'
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-11-01',
   ssr: true,
@@ -51,6 +53,9 @@ export default defineNuxtConfig({
       },
     },
   },
+
+  // /llms.txt: key facts, then the docs grouped like the sidebar (llms.config.ts).
+  aiReady: { llmsTxt: llmsTxt() },
 
   schemaOrg: {
     identity: { type: 'Person', name: 'Marius Högger', url: 'https://marius-hoegger.ch' },
