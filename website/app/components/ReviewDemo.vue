@@ -27,7 +27,7 @@ const VERIFY = 'a load test on staging'
 const index = ref(0)
 const decisions = ref<Kind[]>([])
 const revised = ref<Record<number, string>>({}) // index -> original text
-const phase = ref<'idle' | 'prompt' | 'note' | 'flash'>('idle')
+const phase = ref<'idle' | 'prompt' | 'note' | 'diff' | 'flash'>('idle')
 const promptKind = ref<'x' | 'd' | null>(null)
 const flashKind = ref<Kind | null>(null)
 const status = ref('')
@@ -72,6 +72,19 @@ function commit(kind: Kind) {
 }
 
 function act(key: string) {
+  // The agent's answer is only a proposal: a writes it, q throws it away.
+  if (phase.value === 'diff') {
+    if (key === 'a') {
+      revised.value = { ...revised.value, [index.value]: current.value!.text }
+      phase.value = 'idle'
+      status.value = 'Revision written. The new text is pending again: accept, reject or defer it.'
+    }
+    else if (key === 'q') {
+      phase.value = 'idle'
+      status.value = 'Revision discarded. The requirement is unchanged.'
+    }
+    return
+  }
   if (busy.value || done.value) return
   if (key === 'a') {
     phase.value = 'flash'; flashKind.value = 'a'
@@ -90,9 +103,8 @@ function act(key: string) {
     phase.value = 'note'; flashKind.value = null
     status.value = `Revising with note: ${props.revision.note}.`
     later(() => {
-      revised.value = { ...revised.value, [index.value]: current.value!.text }
-      phase.value = 'idle'
-      status.value = 'Requirement revised. Accept it or decide otherwise.'
+      phase.value = 'diff'
+      status.value = 'The agent proposes a new text. Press a to write it, q to discard it.'
     }, 800)
   }
 }
@@ -111,7 +123,7 @@ function onKey(e: KeyboardEvent) {
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
   const k = e.key.toLowerCase()
   if (k === 'w' && done.value) return
-  if (!['a', 'x', 'd', 'r'].includes(k)) return
+  if (!['a', 'x', 'd', 'r', ...(phase.value === 'diff' ? ['q'] : [])].includes(k)) return
   e.preventDefault()
   act(k)
 }
@@ -215,11 +227,15 @@ const activeKey = computed(() => (phase.value === 'note' ? 'r' : flashKind.value
             <p v-if="phase === 'note'" class="mt-3 break-words text-st-dim">
               <span class="text-st-accent">note</span> › <span class="text-st-strong">{{ revision.note }}</span><span class="st-caret">▌</span>
             </p>
-            <div v-if="isRevised" class="mt-3 break-words border-t border-st-border pt-2 text-st-dim">
-              <p class="text-st-accent">revised · note › {{ revision.note }}</p>
-              <p class="text-st-err line-through decoration-st-err/40">− {{ revised[index] }}</p>
+            <div v-if="phase === 'diff'" class="mt-3 break-words border-t border-st-border pt-2 text-st-dim">
+              <p class="text-st-accent">proposed · note › {{ revision.note }}</p>
+              <p class="text-st-err line-through decoration-st-err/40">− {{ current.text }}</p>
               <p class="text-st-ok">+ {{ revision.text }}</p>
+              <p class="mt-2"><KeyCap k="a" tone="ok" /> accept — write it · <KeyCap k="q" /> discard</p>
             </div>
+            <p v-else-if="isRevised" class="mt-3 break-words border-t border-st-border pt-2 text-st-accent">
+              revised · note › {{ revision.note }} · pending again
+            </p>
           </div>
         </template>
 
@@ -258,12 +274,12 @@ const activeKey = computed(() => (phase.value === 'note' ? 'r' : flashKind.value
             :key="key.k"
             type="button"
             class="inline-flex items-center gap-1.5 py-1 text-st-dim transition-opacity focus-visible:outline-2 focus-visible:outline-st-accent disabled:opacity-40"
-            :disabled="key.k === 'q' || done || (busy && activeKey !== key.k)"
+            :disabled="key.k === 'q' ? phase !== 'diff' : done || (phase === 'diff' ? key.k !== 'a' : busy && activeKey !== key.k)"
             :aria-label="`${key.label} (${key.k})`"
             @click="act(key.k)"
           >
             <KeyCap :k="key.k" :active="activeKey === key.k" :tone="key.tone" />
-            <span>{{ key.label }}</span>
+            <span>{{ key.k === 'q' && phase === 'diff' ? 'discard' : key.label }}</span>
           </button>
         </div>
       </div>
