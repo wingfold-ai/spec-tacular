@@ -174,7 +174,9 @@ jobs:
         shell: bash
         run: |
           bun run build --target bun-linux-x64-baseline
-          version=$(bun -e 'console.log(require("./package.json").version)')
+          # A pre-release version of its own: package.json's version is on npm
+          # once released, and npm refuses even a dry run over it.
+          version="$(bun -e 'console.log(require("./package.json").version)')-ci.$GITHUB_RUN_ID"
           build="builds/spec-tacular-v$version-linux-x64"
           mkdir -p "$build"
           cp dist/spec-tacular dist/THIRD_PARTY_NOTICES.md LICENSE README.md "$build/"
@@ -188,12 +190,13 @@ jobs:
           ls -l tgz
 
       # The release job's publish command, short of uploading: the same paths
-      # and package metadata npm checks before it publishes.
+      # and package metadata npm checks before it publishes. A pre-release
+      # goes under `next`, as the release job publishes one.
       - name: Publish (dry run)
         shell: bash
         run: |
           for dir in npm-out/cli-* npm-out/cli; do
-            npm publish "./$dir" --dry-run --tag latest
+            npm publish "./$dir" --dry-run --tag next
           done
 
       - name: Install the packed packages

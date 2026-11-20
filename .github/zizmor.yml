@@ -4,3 +4,7 @@ rules:
   # workflow in the same repository; keep it until `$/` is widely supported.
   self-repository:
     disable: true
+  adhoc-packages:
+    ignore:
+      # The release's own check: install what it just published, as a user would.
+      - release.yml:289
