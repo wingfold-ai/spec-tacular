@@ -55,7 +55,7 @@ Around that core, spec-tacular adds project ground rules before the first change
 | You need | Notes |
 | --- | --- |
 | Linux or macOS | x64 or arm64. There is no Windows build. |
-| The OpenSpec CLI | Installed with npm: `npm i -g @fission-ai/openspec`. |
+| The OpenSpec CLI | 1.11 or newer, OpenSpec 2 included: `npm i -g @fission-ai/openspec`. |
 | Claude Code or opencode | Installed and signed in. Claude Code is the default. |
 | spec-tacular | A single binary. It needs no Bun or Node of its own. |
 

@@ -32,11 +32,15 @@ pipeline that is always visible.
 
 spec-tacular is a single binary for Linux and macOS (x64 and arm64); it needs no
 Bun or Node of its own. It drives the [OpenSpec](https://github.com/Fission-AI/OpenSpec)
-CLI, which you install separately:
+CLI, which you install separately. spec-tacular works with OpenSpec 1.11 or
+newer, including 2.x:
 
 ```bash
 npm i -g @fission-ai/openspec
 ```
+
+The npm package needs Node.js 22.12 or newer. OpenSpec also ships a standalone
+binary that needs no Node: `curl -fsSL https://openspec.dev/cli/install.sh | sh`.
 
 **From spec-tacular.app** — once the repository is public:
 

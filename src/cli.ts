@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { randomUUID } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import { OpenSpecAdapter, OpenSpecError, isOpenSpecProject, openSpecToolsInstalled } from './adapter/openspec.ts';
+import { checkOpenSpecVersion } from './adapter/version.ts';
 import {
   buildPipeline,
   specified,
@@ -633,6 +634,24 @@ function openSpecMissing(root: string, driver: string): string | null {
   if (!openSpecToolsInstalled(root, driver)) {
     return `OpenSpec is not set up for ${agent} here. Run \`openspec init\` in this folder again, and choose ${agent}.`;
   }
+  return null;
+}
+
+/**
+ * Why the installed OpenSpec cannot be used, or null. A major newer than the
+ * last one tested is only warned about. When the version cannot be asked for
+ * at all (no OpenSpec on the PATH), the command's own call reports that.
+ */
+async function openSpecUnsupported(adapter: OpenSpecAdapter): Promise<string | null> {
+  let raw: string;
+  try {
+    raw = await adapter.version();
+  } catch {
+    return null;
+  }
+  const check = checkOpenSpecVersion(raw);
+  if (!check.ok) return check.problem;
+  if (check.warning) process.stderr.write(`warning: ${check.warning}\n`);
   return null;
 }
 
@@ -2085,13 +2104,20 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  if (args.command === 'init') return runInit(args);
+  // Commands that only read spec-tacular's own files need no OpenSpec.
   if (args.command === 'jobs') return runJobs(args);
   if (args.command === 'adr') return runAdrs(args);
   if (args.command === 'foundation') return runFoundation(args);
   if (args.command === 'pending') return runPending(args);
   if (args.command === 'hazards') return runHazards(args);
   const adapter = new OpenSpecAdapter({ cwd: args.cwd, bin: args.bin });
+
+  const unsupported = await openSpecUnsupported(adapter);
+  if (unsupported) {
+    process.stderr.write(`${unsupported}\n`);
+    return 1;
+  }
+  if (args.command === 'init') return runInit(args);
 
   try {
     if (args.command === 'roadmap') return await runRoadmap(args, adapter);

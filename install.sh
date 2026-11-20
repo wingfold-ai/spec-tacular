@@ -128,5 +128,6 @@ esac
 
 if ! command -v openspec >/dev/null 2>&1; then
   say "note: spec-tacular needs the OpenSpec CLI, which is not on your PATH. Install it with:"
-  say "  npm i -g @fission-ai/openspec"
+  say "  npm i -g @fission-ai/openspec            (needs Node.js 22.12 or newer)"
+  say "  or OpenSpec's standalone binary: https://openspec.dev"
 fi

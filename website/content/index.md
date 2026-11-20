@@ -340,7 +340,7 @@ lead: 'A single binary for Linux and macOS (x64 and arm64). It needs no Bun or N
   ::install-steps
   ---
   steps:
-    - { title: Install OpenSpec, command: npm i -g @fission-ai/openspec }
+    - { title: Install OpenSpec, command: npm i -g @fission-ai/openspec, text: 'Version 1.11 or newer; OpenSpec 2 works too.' }
     - { title: Install spec-tacular, site: true, text: 'Picks the build for your OS and CPU, checks it against the release checksums, installs to ~/.local/bin.' }
     - { title: Set up OpenSpec in your project, command: openspec init, text: 'Pick the agent you will drive: Claude Code (the default) or opencode.' }
     - { title: Open the TUI, command: spec-tacular, text: 'A start screen walks you through vision, ground rules and your first change. Press ? there or on the overview for every key. For opencode, start it with --driver opencode.' }
