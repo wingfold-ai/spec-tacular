@@ -33,23 +33,45 @@ export function resolveEditor(env: NodeJS.ProcessEnv = process.env): string | un
   return ['nano', 'vim', 'vi'].find((name) => dirs.some((d) => existsSync(join(d, name))));
 }
 
-export function openInEditor(
+/**
+ * Hands the terminal over and takes it back. Since OpenTUI 0.8 both are
+ * transitions to wait for: a program started before `suspend()` settles draws
+ * over the TUI. A renderer that never set up a terminal (the tests' test
+ * renderer) refuses to suspend; there is nothing to hand over then.
+ */
+async function handOver(renderer: CliRenderer | undefined): Promise<void> {
+  try {
+    await renderer?.suspend();
+  } catch {
+    // Not attached to a terminal: nothing to give back either.
+  }
+}
+
+async function takeBack(renderer: CliRenderer | undefined): Promise<void> {
+  try {
+    await renderer?.resume();
+  } catch {
+    // Not suspended (see handOver): already ours.
+  }
+}
+
+export async function openInEditor(
   renderer: CliRenderer | undefined,
   file: string,
   line: number,
-): { ok: boolean; reason?: string } {
+): Promise<{ ok: boolean; reason?: string }> {
   const editor = resolveEditor();
   if (!editor) return { ok: false, reason: 'No $EDITOR set, and no nano or vim found' };
 
   const command = editor.split(/\s+/)[0]!;
-  renderer?.suspend();
+  await handOver(renderer);
   try {
     const result = spawnSync(command, argsFor(editor, file, line), { stdio: 'inherit' });
     if (result.error) return { ok: false, reason: result.error.message };
     return { ok: true };
   } finally {
     // In `finally` so a crashing editor cannot leave the terminal unusable.
-    renderer?.resume();
+    await takeBack(renderer);
   }
 }
 
@@ -57,16 +79,16 @@ export function openInEditor(
  * Hands the terminal to another program — an agent's own session — until it
  * exits, then takes it back.
  */
-export function runInTerminal(
+export async function runInTerminal(
   renderer: CliRenderer | undefined,
   command: { command: string; args: string[]; env?: Record<string, string> },
   cwd: string,
-): { ok: boolean; reason?: string } {
+): Promise<{ ok: boolean; reason?: string }> {
   // ctrl+c there reaches every process in this terminal: meant for the agent,
   // it must not end spec-tacular too.
   const ignore = () => {};
   process.on('SIGINT', ignore);
-  renderer?.suspend();
+  await handOver(renderer);
   try {
     const result = spawnSync(command.command, command.args, {
       stdio: 'inherit',
@@ -78,7 +100,7 @@ export function runInTerminal(
     if (result.error) return { ok: false, reason: result.error.message };
     return { ok: true };
   } finally {
-    renderer?.resume();
+    await takeBack(renderer);
     process.off('SIGINT', ignore);
   }
 }

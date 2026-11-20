@@ -54,7 +54,8 @@ async function mount() {
         onBack={() => { backCalled = true; }}
       />
     ),
-    { width: 100, height: 40 },
+    // As the app does: ctrl+c is its own cancel, not a quit.
+    { width: 100, height: 40, exitOnCtrlC: false },
   );
 
   const press = async (...keys: string[]) => {
