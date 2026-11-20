@@ -47,7 +47,7 @@ You need:
 - [Bun](https://bun.sh) 1.4.2. CI and the release builds use this version.
 - Git.
 - The [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI, to run
-  spec-tacular against a real project. CI tests against 1.14.0:
+  spec-tacular against a real project. CI tests against 2.0.0 (1.x works too):
 
   ```bash
   npm i -g @fission-ai/openspec

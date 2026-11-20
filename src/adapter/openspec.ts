@@ -46,8 +46,13 @@ export function isOpenSpecProject(dir: string): boolean {
   return existsSync(join(dir, 'openspec'));
 }
 
-/** Where `openspec init` puts each agent's skills and commands. */
-const AGENT_DIRS: Record<string, string> = { claude: '.claude', opencode: '.opencode' };
+/**
+ * Where `openspec init` puts each agent's skills. OpenSpec 2 installs them
+ * once in `.agents/skills/`: opencode reads that folder itself, and Claude
+ * Code, which does not, gets links in `.claude/skills/`. OpenSpec 1 wrote a
+ * copy per agent.
+ */
+const AGENT_DIRS: Record<string, string[]> = { claude: ['.claude'], opencode: ['.opencode', '.agents'] };
 
 /**
  * Whether `openspec init` wired OpenSpec into `driver`: its skills and
@@ -55,8 +60,8 @@ const AGENT_DIRS: Record<string, string> = { claude: '.claude', opencode: '.open
  * know counts as wired — there is nothing to check.
  */
 export function openSpecToolsInstalled(dir: string, driver: string): boolean {
-  const agentDir = AGENT_DIRS[driver];
-  return !agentDir || existsSync(join(dir, agentDir, 'skills', 'openspec-apply-change'));
+  const agentDirs = AGENT_DIRS[driver];
+  return !agentDirs || agentDirs.some((d) => existsSync(join(dir, d, 'skills', 'openspec-apply-change')));
 }
 
 export class OpenSpecAdapter {
