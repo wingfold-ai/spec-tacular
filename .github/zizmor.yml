@@ -1,0 +1,6 @@
+# zizmor configuration: https://docs.zizmor.sh/configuration/
+rules:
+  # `uses: ./.github/workflows/…` is the documented form for a reusable
+  # workflow in the same repository; keep it until `$/` is widely supported.
+  self-repository:
+    disable: true

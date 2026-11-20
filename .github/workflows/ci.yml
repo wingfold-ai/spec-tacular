@@ -1,0 +1,167 @@
+# Every pull request and every push to main: typecheck and tests (with a
+# coverage floor) on Linux and macOS, a release build that must start and draw
+# its TUI, lint for the shell scripts and the workflows themselves, and, on
+# pull requests, the title convention and a review of new dependencies.
+# The website has its own workflow (deploy-website.yml).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUN_VERSION: "1.4.2"
+  # The OpenSpec CLI the integration tests drive; spec-tacular is tested against it.
+  OPENSPEC_VERSION: "1.14.0"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install the OpenSpec CLI
+        run: npm install --global "@fission-ai/openspec@${OPENSPEC_VERSION}" # zizmor: ignore[adhoc-packages] pinned version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Tests with coverage
+        run: bun test --coverage --coverage-reporter=text --coverage-reporter=lcov
+
+      # The floor is on the totals: 90% of lines and 88% of functions. Raise it
+      # as coverage grows; never lower it to let a change through.
+      - name: Coverage floor
+        shell: bash
+        env:
+          MIN_LINES: "90"
+          MIN_FUNCTIONS: "88"
+        run: |
+          awk -F: -v ml="$MIN_LINES" -v mf="$MIN_FUNCTIONS" '
+            /^LF:/{lf+=$2} /^LH:/{lh+=$2} /^FNF:/{fnf+=$2} /^FNH:/{fnh+=$2}
+            END {
+              l = 100*lh/lf; f = 100*fnh/fnf
+              printf "### Coverage\n\n| | covered | total | %% | floor |\n|---|---|---|---|---|\n| lines | %d | %d | %.1f | %d |\n| functions | %d | %d | %.1f | %d |\n", lh, lf, l, ml, fnh, fnf, f, mf
+              if (l < ml || f < mf) { print "::error::coverage below the floor" > "/dev/stderr"; exit 1 }
+            }' coverage/lcov.info | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && runner.os == 'Linux'
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          retention-days: 14
+          if-no-files-found: ignore
+
+  build:
+    name: build and smoke-test the binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build --target bun-linux-x64-baseline
+
+      - name: The binary starts and draws its start screen
+        shell: bash
+        run: |
+          version=$(bun -e 'console.log(require("./package.json").version)')
+          out=$(dist/spec-tacular --version)
+          [ "$out" = "spec-tacular $version" ] || { echo "::error::unexpected --version output: $out"; exit 1; }
+          dist/spec-tacular --help > /dev/null
+          scripts/smoke-tui.sh dist/spec-tacular
+
+  lint:
+    name: lint scripts and workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shell scripts (shellcheck)
+        run: shellcheck install.sh scripts/*.sh evals/setup.sh evals/tools/*.sh
+
+      # Template injection, unpinned actions, over-broad tokens, credential persistence.
+      - name: Workflows (zizmor)
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          advanced-security: false
+          persona: regular
+
+  pr-title:
+    name: pull request title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Squash merges use the title as the commit message, and the release
+      # notes are built from those: `type(scope)!: Subject`, at most 72 characters.
+      - name: Conventional Commits title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          re='^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert|style)(\([a-z0-9-]+\))?!?: [A-Z].*[^.]$'
+          if ! [[ "$TITLE" =~ $re ]]; then
+            echo "::error::Title must look like 'type(scope): Subject' (Conventional Commits, capitalised subject, no trailing period): $TITLE"
+            exit 1
+          fi
+          if [ "${#TITLE}" -gt 72 ]; then
+            echo "::error::Title is ${#TITLE} characters; the limit is 72."
+            exit 1
+          fi
+
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

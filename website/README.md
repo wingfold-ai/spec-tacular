@@ -65,7 +65,7 @@ Brand: `public/brand/icon.svg` (app icon), `icon-mono.svg`, `logo-lockup.svg`
 (wordmark is live text in JetBrains Mono), and `public/favicon.svg` (a copy of
 the icon).
 
-## Positioning (source: Second Brain, "Mission: Spec-tacular")
+## Positioning
 
 - **For:** developers and teams who code with Claude Code or opencode and want
   to stay in control. The first audience is existing OpenSpec users. Next come
@@ -75,14 +75,14 @@ the icon).
 - **Proof:** the review loop itself, shown live in the hero. No competitor
   page shows review. Claims are backed by the eval runs in `../evals/`.
 - **Rules for copy:** say "evidence", not "proof". The boundary is flagged, not
-  enforced. Do not claim Windows support, other agents, 1.0, or a public repo
-  before it is public.
+  enforced. Do not claim Windows support, other agents or 1.0
+  before they exist.
 
 ## Deployment
 
 `.github/workflows/deploy-website.yml` builds the site and uploads
 `.output/public` to the Infomaniak web hosting of spec-tacular.app by FTPS,
-like bundlemcp's docs. It runs on every push to `ts/main` that touches
+like bundlemcp's docs. It runs on every push to `main` that touches
 `website/`, and by hand (Actions → Deploy website → Run workflow). Pull
 requests only build and check the size: the hosting quota is 10 MB, the
 workflow fails above 9 MiB.

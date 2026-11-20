@@ -1,5 +1,10 @@
 # spec-tacular
 
+[![CI](https://github.com/wingfold-ai/spec-tacular/actions/workflows/ci.yml/badge.svg)](https://github.com/wingfold-ai/spec-tacular/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/wingfold-ai/spec-tacular/badge)](https://scorecard.dev/viewer/?uri=github.com/wingfold-ai/spec-tacular)
+[![Latest release](https://img.shields.io/github/v/release/wingfold-ai/spec-tacular?label=release)](https://github.com/wingfold-ai/spec-tacular/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 A terminal UI for spec-driven development that builds **on top of** [OpenSpec](https://github.com/Fission-AI/OpenSpec).
 
 OpenSpec gets the artifacts right: proposals, specs, design, tasks, archive. What it
@@ -75,7 +80,7 @@ bun install && bun run build   # writes dist/spec-tacular
 ### Releasing
 
 Bump `version` in `package.json` in the pull request and merge it into
-`ts/main`: that is the whole release. The auto-release workflow tags the merge
+`main`: that is the whole release. The auto-release workflow tags the merge
 `v<version>` and runs the release. A merge that leaves the version alone
 releases nothing. Tagging by hand still works too:
 
@@ -848,3 +853,14 @@ Source layout:
 | `src/agent/` | Agent drivers (Claude Code, opencode). Build a command; never talk to a model directly. |
 | `spec-tacular/` | What the tool writes for humans: foundation, ADRs, roadmap, pending-validation register. |
 | `src/tui/` | OpenTUI + Solid screens. Deliberately thin — they draw, `core/` decides. |
+
+## Contributing
+
+Bug reports, fixes and documentation are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers the setup, the checks, the pull request conventions and how a release
+happens. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Please do not report security problems in a public issue. [SECURITY.md](SECURITY.md)
+says what is in scope and how to report one privately.

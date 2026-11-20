@@ -37,7 +37,8 @@ cd "$run/project"
 git config user.email eval@spec-tacular.invalid
 git config user.name "spec-tacular eval"
 "$openspec" init --tools claude . >/dev/null 2>&1 || true
-git add -A && git commit -qm "Empty project" --allow-empty || true
+git add -A
+git commit -qm "Empty project" --allow-empty || true
 
 cp "$evals/tools/shims/tmux" "$evals/tools/shims/claude" "$run/shims/"
 chmod +x "$run/shims/"*

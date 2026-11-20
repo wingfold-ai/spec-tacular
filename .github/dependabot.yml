@@ -1,0 +1,44 @@
+# Dependabot version updates. Security updates are switched on in the
+# repository settings and are never delayed. Version updates wait 7 days after
+# a release (cooldown), so a compromised release can be caught before it lands
+# here. Titles are `chore: Bump …`, which the pull-request title check accepts.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+    labels: ["dependencies"]
+
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      bun:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: chore
+    labels: ["dependencies"]
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      website:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: chore
+    labels: ["dependencies"]
