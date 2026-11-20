@@ -21,7 +21,7 @@ concurrency:
 env:
   BUN_VERSION: "1.4.2"
   # The OpenSpec CLI the integration tests drive; spec-tacular is tested against it.
-  OPENSPEC_VERSION: "1.14.0"
+  OPENSPEC_VERSION: "2.0.0"
 
 jobs:
   test:
