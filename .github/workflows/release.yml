@@ -243,5 +243,6 @@ jobs:
               echo "$name@$version is on npm already."
               continue
             fi
-            npm publish "$dir" --tag "$tag"
+            # "./": a bare npm-out/cli would be read as a GitHub repository.
+            npm publish "./$dir" --tag "$tag"
           done

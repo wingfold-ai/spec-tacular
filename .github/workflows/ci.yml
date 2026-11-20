@@ -187,6 +187,15 @@ jobs:
           for dir in npm-out/*; do npm pack "./$dir" --pack-destination tgz --silent; done
           ls -l tgz
 
+      # The release job's publish command, short of uploading: the same paths
+      # and package metadata npm checks before it publishes.
+      - name: Publish (dry run)
+        shell: bash
+        run: |
+          for dir in npm-out/cli-* npm-out/cli; do
+            npm publish "./$dir" --dry-run --tag latest
+          done
+
       - name: Install the packed packages
         run: npm install --global --prefix "$RUNNER_TEMP/npm-global" --no-audit --no-fund ./tgz/*.tgz # zizmor: ignore[adhoc-packages] the packages this commit just built
 
