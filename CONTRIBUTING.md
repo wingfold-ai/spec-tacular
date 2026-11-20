@@ -9,7 +9,8 @@ problem, set up the repository, run the checks, and get a change merged.
   [issue tracker](https://github.com/wingfold-ai/spec-tacular/issues/new/choose).
 - **Suggest a feature** with the feature request form. Describe the problem
   first; the solution can follow.
-- **Ask a question** in an issue. Read the
+- **Ask a question or share an idea** in
+  [Discussions](https://github.com/wingfold-ai/spec-tacular/discussions). Read the
   [documentation](https://spec-tacular.app/docs) first; many answers are there.
 - **Improve the documentation.** Small fixes need no issue first.
 - **Fix an issue.** Issues labelled `good first issue` are a good place to

@@ -4,11 +4,30 @@
   "description": "A terminal UI for spec-driven development, built on OpenSpec",
   "type": "module",
   "license": "MIT",
+  "author": "Marius Högger",
+  "homepage": "https://spec-tacular.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wingfold-ai/spec-tacular.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wingfold-ai/spec-tacular/issues"
+  },
+  "keywords": [
+    "spec-driven-development",
+    "openspec",
+    "tui",
+    "cli",
+    "claude-code",
+    "opencode",
+    "ai-agents",
+    "requirements"
+  ],
   "bin": {
     "spec-tacular": "./src/cli.ts"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "bun": ">=1.4.2"
   },
   "scripts": {
     "start": "bun run src/cli.ts",
@@ -24,7 +43,7 @@
   },
   "devDependencies": {
     "@fission-ai/openspec": "^2.0.0",
-    "@types/bun": "latest",
+    "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"
   }
 }

@@ -21,4 +21,5 @@ footer:
   - { label: GitHub, to: 'https://github.com/wingfold-ai/spec-tacular' }
   - { label: OpenSpec, to: 'https://github.com/Fission-AI/OpenSpec' }
   - { label: llms.txt, to: '/llms.txt' }
+  - { label: Privacy, to: '/privacy' }
   - { label: Marius Högger, to: 'https://marius-hoegger.ch' }
