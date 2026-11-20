@@ -26,8 +26,10 @@ Follow [SECURITY.md](SECURITY.md).
 
 You do not need all of it before your first change.
 
-1. [`README.md`](README.md): what spec-tacular does, every command, every
-   environment variable, and the source layout.
+1. The [documentation](https://spec-tacular.app/docs) (its source is
+   `website/content/docs/`): what spec-tacular does, every
+   [command](https://spec-tacular.app/docs/reference/cli) and every
+   [environment variable](https://spec-tacular.app/docs/reference/configuration).
 2. [`docs/architecture.md`](docs/architecture.md): stack, layering, data
    model, state machine.
 3. [`docs/tui-design.md`](docs/tui-design.md): screens, layout, keybindings.
@@ -40,6 +42,19 @@ You do not need all of it before your first change.
 The layering in short: `src/adapter/` is the only code that knows OpenSpec
 exists, `src/core/` decides, `src/tui/` only draws, and `src/agent/` builds
 agent commands but never talks to a model itself.
+
+| Path | What |
+| --- | --- |
+| `src/adapter/` | The only module that knows OpenSpec exists. Reads its `--json` CLI; never writes a file OpenSpec owns. |
+| `src/core/` | Pure domain logic: requirement parsing, review state, drift detection, stage derivation. Schema-agnostic and terminal-free. |
+| `src/render/` | Headless text rendering, so the overview is testable and pipe-friendly. |
+| `src/agent/` | Agent drivers (Claude Code, opencode). Build a command; never talk to a model directly. |
+| `src/tui/` | OpenTUI + Solid screens. Deliberately thin: they draw, `core/` decides. |
+| `schemas/` | The OpenSpec schemas `spec-tacular init` installs into a project. |
+| `scripts/` | The build (`build.ts`), the npm packaging and the TUI smoke test. |
+| `npm/` | The npm launcher and README of `@spec-tacular/cli`. |
+| `website/` | spec-tacular.app: the landing page and the documentation (Nuxt). |
+| `evals/` | Runs where an AI plays a new user from an empty folder; not part of CI. |
 
 ## Development setup
 
