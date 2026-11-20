@@ -3,12 +3,15 @@ name: Release
 # Push a tag `vX.Y.Z` matching package.json's version to publish a release:
 # standalone `spec-tacular` binaries (Bun runtime, program and OpenTUI's native
 # library in one file) for Linux and macOS, x64 and arm64, each as a tar.gz
-# with the README and the licence, and a SHA256SUMS file. A tag with a hyphen
-# (`v1.0.0-rc.1`) makes a pre-release.
+# with the README and the licence, and a SHA256SUMS file; then the same builds
+# as npm packages (@spec-tacular/cli and one package per platform). A tag with
+# a hyphen (`v1.0.0-rc.1`) makes a pre-release, published to npm under `next`.
 #
 # Merging a pull request into main that bumps the version does this on its
-# own: auto-release.yml tags the merge and calls this workflow for the tag
-# (a tag pushed by a workflow never triggers another one by itself).
+# own: auto-release.yml tags the merge and starts this workflow for the tag
+# (a tag pushed by a workflow never triggers another one by itself). It always
+# runs as this workflow, never as a reusable one, because npm's trusted
+# publishing is set up for release.yml.
 #
 # A pull request that changes this workflow or the build scripts runs the
 # build and every check as a dry run, packaged as `dev`; only a tag publishes.
@@ -20,13 +23,9 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/auto-release.yml
       - scripts/**
-  workflow_call:
-    inputs:
-      tag:
-        description: The tag to build and publish, already pushed
-        required: true
-        type: string
-  # By hand, for a tag whose release did not publish (Actions → Release → Run workflow).
+  # Started by auto-release.yml, or by hand for a tag whose release or npm
+  # publish did not finish (Actions → Release → Run workflow). Both steps skip
+  # what is already published.
   workflow_dispatch:
     inputs:
       tag:
@@ -178,7 +177,71 @@ jobs:
 
       - name: Create the release
         run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "The release $TAG exists already."
+            exit 0
+          fi
           flags=(--title "spec-tacular $TAG" --generate-notes --verify-tag)
           case "$TAG" in *-*) flags+=(--prerelease) ;; esac
           shopt -s nullglob
           gh release create "$TAG" "${flags[@]}" dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS dist/*.intoto.jsonl
+
+  npm:
+    name: publish to npm
+    needs: release
+    if: inputs.tag || github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    # npm's trusted publisher for each package names this workflow and this
+    # environment; npm accepts the job's OIDC token instead of a stored token.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
+
+      # Trusted publishing needs Node 22.14+ and npm 11.5.1+; Node 24 brings both.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Lay out the packages
+        run: |
+          mkdir builds
+          for archive in dist/*.tar.gz; do tar -xzf "$archive" -C builds; done
+          bun scripts/npm-packages.ts --version "${TAG#v}" --builds builds --out npm-out
+
+      # The platform packages first: @spec-tacular/cli names them as optional
+      # dependencies at exactly this version. A version already on npm is
+      # skipped, so a re-run finishes what a failed one left.
+      - name: Publish
+        run: |
+          npm --version
+          case "$TAG" in *-*) tag=next ;; *) tag=latest ;; esac
+          for dir in npm-out/cli-* npm-out/cli; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "$name@$version is on npm already."
+              continue
+            fi
+            npm publish "$dir" --tag "$tag"
+          done

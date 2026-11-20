@@ -65,6 +65,16 @@ release's `SHA256SUMS`, and installs `spec-tacular` to `~/.local/bin`. Set
 to update. Until 0.3.0 the command was called `spectacular`; the script removes
 that old copy when it installs `spec-tacular`.
 
+**With npm** — the same builds, as npm packages:
+
+```bash
+npm i -g @spec-tacular/cli
+```
+
+npm installs only the package with the binary for your platform (an optional
+dependency), so don't install with `--omit=optional`. `@spec-tacular/cli` itself
+is a small Node launcher; the binary still needs no Node.
+
 **By hand** — download `spec-tacular-<version>-<os>-<arch>.tar.gz` and
 `SHA256SUMS` from a release, then:
 
