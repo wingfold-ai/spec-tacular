@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs spec-tacular from a GitHub release of mhoegger/spec-tacular.
+# Installs spec-tacular from a GitHub release of wingfold-ai/spec-tacular.
 #
 #   curl -fsSL https://spec-tacular.app/install.sh | sh
 #
@@ -7,7 +7,7 @@
 # While the repository is private, the releases need the GitHub CLI, so fetch
 # the script through it instead:
 #
-#   gh api repos/mhoegger/spec-tacular/contents/install.sh \
+#   gh api repos/wingfold-ai/spec-tacular/contents/install.sh \
 #     -H 'Accept: application/vnd.github.raw' | sh
 #
 # SPECTACULAR_VERSION      a release tag such as v0.1.0 (default: the latest release)
@@ -20,7 +20,7 @@
 
 set -eu
 
-REPO=mhoegger/spec-tacular
+REPO=wingfold-ai/spec-tacular
 version=${SPECTACULAR_VERSION:-latest}
 install_dir=${SPECTACULAR_INSTALL_DIR:-$HOME/.local/bin}
 
