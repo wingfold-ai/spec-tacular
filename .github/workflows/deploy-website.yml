@@ -73,7 +73,7 @@ jobs:
           test "$size" -le "$MAX_SITE_BYTES"
       - name: Upload via FTP
         if: github.event_name != 'pull_request'
-        uses: SamKirkland/FTP-Deploy-Action@110f9186c050f71550953127052e77650219c287 # v4.4.0
+        uses: SamKirkland/FTP-Deploy-Action@110f9186c050f71550953127052e77650219c287 # v4.4.0 zizmor: ignore[ref-version-mismatch] the pin is the v4.4.0 tag; a branch of the same name differs
         with:
           server: ${{ secrets.INFOMANIAK_FTP_SERVER }}
           username: ${{ secrets.INFOMANIAK_FTP_USERNAME }}
