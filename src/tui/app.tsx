@@ -949,8 +949,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     out.push({
       label: '✎ Edit it',
       key: 'ctrl+e',
-      run: () => {
-        const opened = openInEditor(renderer, d.file, 1);
+      run: async () => {
+        const opened = await openInEditor(renderer, d.file, 1);
         if (!opened.ok) return setNotice(opened.reason ?? 'Could not open an editor');
         void openDoc(d.change, d.artifact);
         void reload(d.change);
@@ -1298,7 +1298,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
       setNotice(`${handoff.label} is implementing ${change} in ${elsewhere.where}. This stays open and follows the tasks.`);
       return;
     }
-    const ran = runInTerminal(renderer, handoff.command, props.input.root);
+    const ran = await runInTerminal(renderer, handoff.command, props.input.root);
     await reload(change);
     if (!ran.ok) return setNotice(`${handoff.label} could not start: ${ran.reason}`);
     const tasks = pipelines().find((c) => c.name === change)?.apply.tasks;
@@ -1320,7 +1320,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
     const file = await props.input.artifactFile(p.name, step.artifact);
     if (!file.ok) return setNotice(file.reason);
-    const opened = openInEditor(renderer, file.file, 1);
+    const opened = await openInEditor(renderer, file.file, 1);
     if (!opened.ok) return setNotice(opened.reason ?? 'Could not open an editor');
     setNotice(null);
     await reload(p.name);
@@ -1530,7 +1530,7 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
   };
 
   /** `g` on a card: the glossary in $EDITOR, at the end of its variables. */
-  const onGlossary = () => {
+  const onGlossary = async () => {
     const path = glossaryPath(props.input.root);
     if (!existsSync(path)) {
       mkdirSync(dirname(path), { recursive: true });
@@ -1538,18 +1538,18 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     }
     const lines = readFileSync(path, 'utf8').split('\n');
     const constraints = lines.findIndex((l) => /^constraints:/.test(l));
-    const result = openInEditor(renderer, path, constraints > 0 ? constraints : lines.length);
+    const result = await openInEditor(renderer, path, constraints > 0 ? constraints : lines.length);
     if (!result.ok) return setNotice(result.reason ?? 'Could not open an editor');
     // Read again: the card's formal form is checked against it.
     setSession((s) => (s ? { ...s } : s));
   };
 
-  const onEdit = () => {
+  const onEdit = async () => {
     const current = session();
     const item = current ? currentItem(current) : null;
     if (!current || !item) return;
 
-    const result = openInEditor(renderer, item.item.file, item.item.line);
+    const result = await openInEditor(renderer, item.item.file, item.item.line);
     if (!result.ok) {
       setNotice(result.reason ?? 'Could not open an editor');
       return;
@@ -1783,8 +1783,8 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
             if (advisor?.dismiss(q)) setAdviceNotice(`Removed “${q.item.name}”`);
             refreshFoundation();
           }}
-          onEdit={(q) => {
-            const result = openInEditor(renderer, q.item.file, q.item.line);
+          onEdit={async (q) => {
+            const result = await openInEditor(renderer, q.item.file, q.item.line);
             if (!result.ok) setAdviceNotice(result.reason ?? 'Could not open an editor');
             refreshFoundation();
           }}
