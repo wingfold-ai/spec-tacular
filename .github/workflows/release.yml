@@ -26,6 +26,13 @@ on:
         description: The tag to build and publish, already pushed
         required: true
         type: string
+  # By hand, for a tag whose release did not publish (Actions → Release → Run workflow).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build and publish, already pushed (e.g. v0.6.0)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -153,7 +160,10 @@ jobs:
           sha256sum --check SHA256SUMS
           cat SHA256SUMS
 
+      # GitHub stores attestations for public repositories only on this plan:
+      # while the repository is private, releases go out without provenance.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event.repository.visibility == 'public'
         id: attest
         with:
           subject-path: dist/*.tar.gz
@@ -161,6 +171,7 @@ jobs:
       # The signed provenance also ships with the release, for verifiers that
       # read it from the assets (and for OpenSSF Scorecard's Signed-Releases).
       - name: Provenance bundle
+        if: steps.attest.outcome == 'success'
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: cp "$BUNDLE" "dist/spec-tacular-$TAG.intoto.jsonl"
@@ -169,4 +180,5 @@ jobs:
         run: |
           flags=(--title "spec-tacular $TAG" --generate-notes --verify-tag)
           case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          shopt -s nullglob
           gh release create "$TAG" "${flags[@]}" dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS dist/*.intoto.jsonl
