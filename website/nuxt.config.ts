@@ -1,10 +1,18 @@
 // spec-tacular.app — the landing page for the spec-tacular TUI.
 // Static site: `pnpm generate` writes .output/public for GitHub Pages.
+import { readFileSync } from 'node:fs'
 import { llmsTxt } from './llms.config'
+
+// The release this site describes: the repository's own version.
+const version = `v${JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version}`
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-11-01',
   ssr: true,
+
+  runtimeConfig: {
+    public: { version },
+  },
 
   modules: ['@nuxt/ui', '@nuxt/content', '@nuxtjs/seo', '@nuxt/fonts'],
 

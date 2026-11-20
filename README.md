@@ -89,7 +89,7 @@ Bump `version` in `package.json` in the pull request and merge it into
 releases nothing. Tagging by hand still works too:
 
 ```bash
-git tag v0.3.0 && git push origin v0.3.0
+git tag v<version> && git push origin v<version>
 ```
 
 The release workflow checks the tag matches `package.json`, builds and

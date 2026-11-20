@@ -44,7 +44,7 @@ function docsSection(folder: string): Section {
 }
 
 export function llmsTxt() {
-  const version = readFileSync('content/meta/site.yml', 'utf8').match(/^version:\s*(\S+)/m)?.[1] ?? ''
+  const version = `v${JSON.parse(readFileSync('../package.json', 'utf8')).version}`
   const folders = sorted(readdirSync(DOCS, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name))
   const docs = folders.map(docsSection)
   const intro = frontmatter(join(DOCS, 'index.md'))

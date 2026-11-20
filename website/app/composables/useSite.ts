@@ -1,4 +1,10 @@
-// Site-wide facts (version, install command, nav) from content/meta/site.yml.
+// Site-wide facts: install command and nav from content/meta/site.yml, and
+// the version from the repository's package.json (nuxt.config.ts), so a
+// release never needs the site edited by hand.
 export function useSite() {
-  return useAsyncData('site-meta', () => queryCollection('meta').first())
+  const version = useRuntimeConfig().public.version as string
+  return useAsyncData('site-meta', async () => {
+    const meta = await queryCollection('meta').first()
+    return meta ? { ...meta, version } : null
+  })
 }
