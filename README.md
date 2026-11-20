@@ -43,6 +43,10 @@ flowchart LR
   D --> T[Tasks]
   T --> I[Implement<br/><i>in your agent</i>]
   I --> A[Archive<br/><i>into the baseline</i>]
+  classDef stage fill:#1a1b26,stroke:#7aa2f7,color:#c0caf5
+  classDef review fill:#1a1b26,stroke:#bb9af7,color:#c0caf5,stroke-width:2px
+  class P,D,T,I,A stage
+  class S,R review
 ```
 
 Before the first change, a project gets its **ground rules** (domain, stack, architecture, conventions), and a new project a **vision** with a **roadmap** of small slices. Every agent reads them, so it builds on your decisions instead of making its own.
