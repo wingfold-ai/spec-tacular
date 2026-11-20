@@ -188,7 +188,7 @@ jobs:
           ls -l tgz
 
       - name: Install the packed packages
-        run: npm install --global --prefix "$RUNNER_TEMP/npm-global" --no-audit --no-fund tgz/*.tgz # zizmor: ignore[adhoc-packages] the packages this commit just built
+        run: npm install --global --prefix "$RUNNER_TEMP/npm-global" --no-audit --no-fund ./tgz/*.tgz # zizmor: ignore[adhoc-packages] the packages this commit just built
 
       - name: Run the installed command
         shell: bash
