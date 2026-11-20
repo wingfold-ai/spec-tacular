@@ -145,6 +145,8 @@ jobs:
           [ "$out" = "spec-tacular $version" ] || { echo "::error::unexpected --version output: $out"; exit 1; }
           dist/spec-tacular --help > /dev/null
           scripts/smoke-tui.sh dist/spec-tacular
+          # The archive ships the bundled packages' licences with the binary.
+          grep -q '^## @opentui/core ' dist/THIRD_PARTY_NOTICES.md
 
   lint:
     name: lint scripts and workflows

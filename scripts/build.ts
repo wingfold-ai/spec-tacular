@@ -20,8 +20,8 @@
  */
 
 import solidPlugin from '@opentui/solid/bun-plugin';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 function option(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -54,6 +54,8 @@ const result = await Bun.build({
   target: 'bun',
   plugins: [solidPlugin],
   minify: true,
+  // Which packages end up in the binary, for THIRD_PARTY_NOTICES.md.
+  metafile: true,
   // Embedded in the binary, so stack traces name source files and lines.
   sourcemap: 'inline',
   compile: {
@@ -73,3 +75,68 @@ const result = await Bun.build({
 for (const log of result.logs) console.error(log);
 if (!result.success) process.exit(1);
 console.log(`Built ${outfile}${target ? ` for ${target}` : ''}`);
+
+/**
+ * The binary carries the Bun runtime and every package the bundler pulled in,
+ * so it ships their licences: THIRD_PARTY_NOTICES.md next to it, with every
+ * licence file each package has (OpenTUI's native library brings several,
+ * FFmpeg's LGPL among them), and Bun's own notice, which covers what Bun
+ * links (JavaScriptCore under the LGPL, among others).
+ */
+function bundledPackages(inputs: string[]): string[] {
+  const names = new Set<string>();
+  for (const input of inputs) {
+    const m = /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input);
+    if (m) names.add(m[1]!);
+  }
+  return [...names].sort();
+}
+
+function licenceFiles(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((f) => /^(licen[cs]e|copying|notice)/i.test(f))
+    .sort((a, b) => a.length - b.length || a.localeCompare(b));
+}
+
+const inputs = Object.keys(result.metafile?.inputs ?? {});
+const packages = bundledPackages(inputs);
+if (packages.length === 0) {
+  process.stderr.write('The build reported no bundled packages; cannot write THIRD_PARTY_NOTICES.md.\n');
+  process.exit(1);
+}
+const notices: string[] = [
+  '# Third-party notices',
+  '',
+  'spec-tacular is MIT-licensed (see LICENSE). This binary also contains the',
+  'software below, under its own licences.',
+  '',
+  '## Bun',
+  '',
+  `The Bun runtime ${Bun.version} (https://bun.sh), embedded by \`bun build --compile\`.`,
+  '',
+  // Bun's LICENSE.md (scripts/licenses/bun.md), a level down under this heading.
+  readFileSync(join(import.meta.dir, 'licenses', 'bun.md'), 'utf8').replace(/<!--[\s\S]*?-->\s*/g, '').trim().replace(/^(#+) /gm, '#$1 '),
+  '',
+];
+for (const name of packages) {
+  const dir = join('node_modules', name);
+  const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+    version: string;
+    license?: string;
+    homepage?: string;
+    repository?: string | { url?: string };
+  };
+  const source = pkg.homepage ?? (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url) ?? '';
+  const files = licenceFiles(dir);
+  if (files.length === 0) {
+    process.stderr.write(`${name} has no licence file to include in THIRD_PARTY_NOTICES.md.\n`);
+    process.exit(1);
+  }
+  notices.push(`## ${name} ${pkg.version}`, '', `License: ${pkg.license ?? 'see below'}${source ? ` · ${source}` : ''}`, '');
+  for (const file of files) {
+    notices.push(`### ${file}`, '', '```text', readFileSync(join(dir, file), 'utf8').trim(), '```', '');
+  }
+}
+const noticesFile = join(dirname(outfile), 'THIRD_PARTY_NOTICES.md');
+writeFileSync(noticesFile, notices.join('\n'));
+console.log(`Wrote ${noticesFile} (${packages.length} packages and Bun)`);

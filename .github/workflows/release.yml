@@ -113,7 +113,7 @@ jobs:
         run: |
           name="spec-tacular-$TAG-${{ matrix.platform }}"
           mkdir -p "pkg/$name"
-          cp dist/spec-tacular README.md LICENSE "pkg/$name/"
+          cp dist/spec-tacular dist/THIRD_PARTY_NOTICES.md README.md LICENSE "pkg/$name/"
           tar -C pkg -czf "pkg/$name.tar.gz" "$name"
           cd pkg
           if command -v sha256sum >/dev/null; then
