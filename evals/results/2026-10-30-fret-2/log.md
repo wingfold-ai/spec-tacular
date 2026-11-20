@@ -81,7 +81,7 @@
 09:00:50 Risk 24 revise: round 1 used 'Guard: none'/'Check: none' (not the README's Unmitigated: form); round 2 asked for Unmitigated: line -> correct. Write + accept.
 09:01:31 Risk 25 revised to instants-to-the-ms; agent noted tension with req 'full precision' (fine: ms is Tick's precision). Write + accept.
 09:01:50 Risks 6/6 accepted (2 rejected+revised). Overview clean (no warnings). $3.82. w -> draft design.
-09:03:02 Design drafting; job log shows agent reading /home/marius-hoegger/.claude/projects/... (its own spilled tool output, outside project; harmless but notable).
+09:03:02 Design drafting; job log shows agent reading ~/.claude/projects/... (its own spilled tool output, outside project; harmless but notable).
 09:06:18 Design drafted (~6.5 min, total $4.92). 584 lines, 16 decisions (15 marked Scope: global — over-labelled, would make 15 ADRs), answers each of the 6 risks by name in Risks/Trade-offs, matrix harness plan per capability, decide->plan->execute, Result values, Intl zone. Checked rounding formula floor((d+30000)/60000) -> correct. Long for a 3-command slice but correct and consistent. Accept.
 09:06:31 Design accepted. No prompt about promoting global decisions (p not offered on the overview). w -> tasks.
 09:09:38 Tasks drafted (~2.5 min, $5.95): 9 groups, 37 tasks, guard task per mitigated risk (5) each with a concrete 'Show it red' mutation, harness-before-code, inspection task for 'Writes are atomic', verification.yaml filled in task 1.1, gates at the end. Traced every non-formal requirement to a tagged test task. Minor: 5.6/9.3 say 'recorded in the change review' (where? README says evidence --sign). Accept.

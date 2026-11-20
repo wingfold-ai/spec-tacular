@@ -1,0 +1,86 @@
+name: Bug report
+description: Report something that is broken or behaves differently from what the documentation says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please search the existing issues first.
+        **Security problems must not be reported here.** Use the "Report a security vulnerability" link on the previous page.
+  - type: input
+    id: version
+    attributes:
+      label: spec-tacular version
+      description: The output of `spec-tacular --version`, or the commit if you run it from source.
+      placeholder: "spec-tacular 0.5.0"
+    validations:
+      required: true
+  - type: input
+    id: openspec
+    attributes:
+      label: OpenSpec version
+      description: The output of `openspec --version`.
+      placeholder: "1.14.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      description: The coding agent spec-tacular drives in this project.
+      options:
+        - Claude Code
+        - opencode
+        - Not relevant to this bug
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Agent version and model
+      description: "`claude --version` or `opencode --version`, and the model if you set one."
+      placeholder: "Claude Code 2.1.0, default model"
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and terminal
+      description: The OS and CPU, the terminal emulator, and tmux if you use it.
+      placeholder: "Ubuntu 24.04 x64, GNOME Terminal, inside tmux 3.4"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that shows the problem, starting from the screen or command you were on.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: print
+    attributes:
+      label: "`spec-tacular --print` output"
+      description: Run `spec-tacular --print` in the project and paste the output. Remove anything you would rather not share. This is formatted as code automatically.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Other output
+      description: Error messages, the job pane (ctrl+j) for a failed draft, or a screenshot of the TUI. Remove tokens and keys.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and did not find this bug.
+          required: true
+        - label: I am on the latest release, or the bug is still there on it.

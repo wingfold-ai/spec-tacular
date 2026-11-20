@@ -99,6 +99,19 @@ describe('where a project is', () => {
     expect(projectStage(r, 1)).toEqual({ kind: 'working' });
   });
 
+  test('an empty archive with only OpenSpec\'s .gitkeep is not an archived change', () => {
+    const r = withOpenSpec();
+    mkdirSync(join(r, 'openspec', 'specs', 'auth'), { recursive: true });
+    writeFileSync(join(r, 'openspec', 'specs', 'auth', 'spec.md'), '# Auth\n');
+    mkdirSync(join(r, 'openspec', 'changes', 'archive'), { recursive: true });
+    writeFileSync(join(r, 'openspec', 'changes', 'archive', '.gitkeep'), '');
+    scaffoldFoundation(r);
+    answerAll(r);
+    expect(projectStage(r, 0)).toEqual({ kind: 'no-changes' });
+    mkdirSync(join(r, 'openspec', 'changes', 'archive', '2026-11-20-add-auth'));
+    expect(projectStage(r, 0)).toEqual({ kind: 'working' });
+  });
+
   test('a project with baseline specs goes straight to its first change', () => {
     const r = withOpenSpec();
     mkdirSync(join(r, 'openspec', 'specs', 'auth'), { recursive: true });

@@ -1,16 +1,4 @@
 {
-  "extraKnownMarketplaces": {
-    "claude-skills": {
-      "source": {
-        "source": "github",
-        "repo": "mhoegger/claude-skills"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "git-attribution@claude-skills": true,
-    "git-conventions@claude-skills": true
-  },
   "attribution": {
     "commit": "",
     "pr": "",

@@ -243,7 +243,8 @@ describe('with plain OpenSpec', () => {
     expect(run('validate', 'add-split', '--strict')).toContain('valid');
     run('archive', 'add-split', '--yes');
     const archive = join(root, 'openspec', 'changes', 'archive');
-    const [moved] = readdirSync(archive);
+    // OpenSpec 1.14 also keeps a `.gitkeep` in the archive.
+    const [moved] = readdirSync(archive).filter((e) => !e.startsWith('.'));
     expect(markerOf(readFileSync(join(archive, moved!, 'review.md'), 'utf8'))).toBe(markerLine('markdown'));
   }, 30_000);
 });

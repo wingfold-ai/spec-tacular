@@ -601,7 +601,9 @@ async function loadPipelines(
 function archivedChanges(projectRoot: string): Set<string> {
   try {
     return new Set(
-      readdirSync(join(projectRoot, 'openspec', 'changes', 'archive')).map((d) => d.replace(/^\d{4}-\d{2}-\d{2}-/, '')),
+      readdirSync(join(projectRoot, 'openspec', 'changes', 'archive'))
+        .filter((d) => !d.startsWith('.'))
+        .map((d) => d.replace(/^\d{4}-\d{2}-\d{2}-/, '')),
     );
   } catch {
     return new Set();

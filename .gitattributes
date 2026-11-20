@@ -1,0 +1,22 @@
+# LF in the repository and on checkout: the shell scripts and the shims run
+# as they are, and the tests compare rendered text byte for byte.
+* text=auto eol=lf
+
+# Lockfiles are generated: GitHub collapses them in review (they still diff).
+bun.lock linguist-generated=true
+website/pnpm-lock.yaml linguist-generated=true
+
+# Recorded evaluation runs are reports, not source.
+evals/results/** linguist-documentation=true
+
+# Binary files are never converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.gz binary
+*.woff binary
+*.woff2 binary

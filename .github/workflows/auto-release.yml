@@ -1,6 +1,6 @@
 name: Auto-release
 
-# Every merge into ts/main whose package.json version has no release yet is
+# Every merge into main whose package.json version has no release yet is
 # released: the merge commit is tagged `v<version>` and the release workflow
 # builds and publishes it. A merge that does not bump the version releases
 # nothing, so a pull request decides whether it ships by bumping it.
@@ -10,7 +10,7 @@ name: Auto-release
 # release.yml's tag trigger, and runs exactly once.
 on:
   push:
-    branches: [ts/main]
+    branches: [main]
 
 permissions:
   contents: read
@@ -30,13 +30,17 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Is this version released yet?
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version=$(jq -r .version package.json)
           tag="v$version"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent 2>/dev/null; then
             echo "$tag already exists: nothing to release. Bump the version in package.json to release."
             exit 0
           fi
@@ -46,9 +50,10 @@ jobs:
         if: steps.version.outputs.tag
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        # Through the API, so the checkout keeps no credentials.
         run: |
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "refs/tags/$TAG"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" --silent
           echo "Tagged $GITHUB_SHA as $TAG" >> "$GITHUB_STEP_SUMMARY"
 
   release:
@@ -57,6 +62,9 @@ jobs:
     if: needs.tag.outputs.tag
     permissions:
       contents: write
+      # release.yml attests the build provenance of each archive
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}

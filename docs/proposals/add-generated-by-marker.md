@@ -109,9 +109,9 @@ job.
 
 ### Measuring
 
-- This part lives in the second brain, not in the code. One note gives the
-  code search, and how to count repos with commits to marked files in at
-  least 3 of the last 6 weeks, leaving out mhoegger's. The weekly
+- This part lives outside the code, in the maintainer's notes. One note gives
+  the code search, and how to count repos with commits to marked files in at
+  least 3 of the last 6 weeks, leaving out the maintainer's own. The weekly
   OpenSpec-issues watch task gets this count as a second step.
 
 ## Capabilities
@@ -216,5 +216,5 @@ files:
   `openspec` 1.14.0: `validate --strict` passes, and `review.md` arrives in
   the archive.
 - **Still to do:**
-  - the measurement note in the second brain;
+  - the measurement note in the maintainer's notes;
   - adding the count to the weekly watch task.

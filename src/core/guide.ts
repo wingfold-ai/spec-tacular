@@ -108,7 +108,8 @@ export function projectStage(projectRoot: string, changeCount: number, driver?: 
 
 function hasArchived(projectRoot: string): boolean {
   try {
-    return readdirSync(join(projectRoot, 'openspec', 'changes', 'archive')).length > 0;
+    // OpenSpec 1.14 keeps a `.gitkeep` there: only a dated folder is an archived change.
+    return readdirSync(join(projectRoot, 'openspec', 'changes', 'archive')).some((e) => !e.startsWith('.'));
   } catch {
     return false;
   }

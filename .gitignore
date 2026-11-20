@@ -8,3 +8,4 @@ temp/
 .claude/settings.local.json
 target/
 __pycache__/
+coverage/
