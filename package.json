@@ -1,6 +1,6 @@
 {
   "name": "spec-tacular",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A terminal UI for spec-driven development, built on OpenSpec",
   "type": "module",
   "license": "MIT",
