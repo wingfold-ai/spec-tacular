@@ -26,7 +26,6 @@ export default defineContentConfig({
       type: 'data',
       source: 'meta/site.yml',
       schema: z.object({
-        version: z.string(),
         repo: z.string(),
         install: z.string(),
         installNote: z.string(),

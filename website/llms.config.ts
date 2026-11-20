@@ -44,7 +44,7 @@ function docsSection(folder: string): Section {
 }
 
 export function llmsTxt() {
-  const version = readFileSync('content/meta/site.yml', 'utf8').match(/^version:\s*(\S+)/m)?.[1] ?? ''
+  const version = `v${JSON.parse(readFileSync('../package.json', 'utf8')).version}`
   const folders = sorted(readdirSync(DOCS, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name))
   const docs = folders.map(docsSection)
   const intro = frontmatter(join(DOCS, 'index.md'))
@@ -56,7 +56,7 @@ export function llmsTxt() {
         'spec-tacular is a terminal UI (TUI) for spec-driven development on top of OpenSpec (https://github.com/Fission-AI/OpenSpec). It does not replace OpenSpec: it drives the OpenSpec CLI and works in the project\'s openspec/ folder, so specs and change history stay plain OpenSpec.',
         'Core idea: an artifact counts as complete only when a person accepted it. Every change moves through proposal → specs → risks → design → tasks → implement → archive, and each artifact is drafted only from the accepted one before it. Specs are reviewed one requirement at a time: accept (a), reject (x), defer (d) or revise that one requirement with AI (r). Decisions are kept in git, in openspec/changes/<change>/review.md.',
         'Agents: Claude Code (the default) or opencode (start with --driver opencode). spec-tacular calls no model itself; drafting runs through the agent in the background, and implementing opens the agent in a terminal tab of its own with the accepted tasks.',
-        `Platforms and status: Linux and macOS, x64 and arm64, a single binary; needs the OpenSpec CLI (npm i -g @fission-ai/openspec). Early access, ${version}, MIT licence. The repository is private for now, so installing needs the GitHub CLI with access; once it is public: curl -fsSL ${SITE}/install.sh | sh. The npm package @spec-tacular/cli is only a name reservation.`,
+        `Platforms and status: Linux and macOS, x64 and arm64, a single binary; needs the OpenSpec CLI 1.11 or newer, OpenSpec 2 included (npm i -g @fission-ai/openspec). Early access, ${version}, MIT licence. The repository is private for now, so installing needs the GitHub CLI with access; once it is public: curl -fsSL ${SITE}/install.sh | sh. The npm package @spec-tacular/cli is only a name reservation.`,
       ],
     },
     {
