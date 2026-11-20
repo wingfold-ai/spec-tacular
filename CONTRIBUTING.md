@@ -104,9 +104,10 @@ Run one file while you work:
 bun test test/hazards.test.ts
 ```
 
-**Coverage.** `bun test --coverage` fails below the thresholds in
-`bunfig.toml`. New code comes with tests, and a change should not lower the
-coverage of the files it touches.
+**Coverage.** CI fails a pull request when total coverage drops below 90% of
+lines or 88% of functions (the "Coverage floor" step in `ci.yml`). New code
+comes with tests, and a change should not lower the coverage of the files it
+touches.
 
 **How the tests avoid real agents.** No test calls Claude Code, opencode or a
 model, and none needs an API key or the network:

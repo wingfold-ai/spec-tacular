@@ -4,6 +4,6 @@ preload = ["@opentui/solid/preload"]
 
 [test]
 preload = ["@opentui/solid/preload"]
-# `bun test --coverage` fails below these (CI runs it on every pull request).
-coverageThreshold = { lines = 0.9, functions = 0.88 }
+# Bun's own coverageThreshold applies to every file; the floor CI enforces is
+# on the totals instead (.github/workflows/ci.yml, "Coverage floor").
 coverageSkipTestFiles = true
