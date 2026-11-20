@@ -45,7 +45,7 @@ The website serves the same `install.sh` as this repository.
 is signed in with access to it:
 
 ```bash
-gh api repos/mhoegger/spec-tacular/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+gh api repos/wingfold-ai/spec-tacular/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
 ```
 
 The script picks the build for your OS and CPU, checks it against the
@@ -60,7 +60,7 @@ that old copy when it installs `spec-tacular`.
 `SHA256SUMS` from a release, then:
 
 ```bash
-gh release download -R mhoegger/spec-tacular -p 'spec-tacular-*-linux-x64.tar.gz' -p SHA256SUMS
+gh release download -R wingfold-ai/spec-tacular -p 'spec-tacular-*-linux-x64.tar.gz' -p SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS   # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
 tar -xzf spec-tacular-*-linux-x64.tar.gz
 install spec-tacular-*-linux-x64/spec-tacular ~/.local/bin/
