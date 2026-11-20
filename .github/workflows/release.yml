@@ -232,17 +232,68 @@ jobs:
       # The platform packages first: @spec-tacular/cli names them as optional
       # dependencies at exactly this version. A version already on npm is
       # skipped, so a re-run finishes what a failed one left.
-      - name: Publish
+      - name: Publish the platform packages
         run: |
           npm --version
           case "$TAG" in *-*) tag=next ;; *) tag=latest ;; esac
-          for dir in npm-out/cli-* npm-out/cli; do
+          for dir in npm-out/cli-*; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version > /dev/null 2>&1; then
               echo "$name@$version is on npm already."
               continue
             fi
-            # "./": a bare npm-out/cli would be read as a GitHub repository.
+            # "./": a bare npm-out/cli-… would be read as a GitHub repository.
             npm publish "./$dir" --tag "$tag"
           done
+
+      # npm takes minutes to serve a new version's tarball. Published before
+      # that, @spec-tacular/cli would install without its binary (npm skips an
+      # optional dependency it cannot download), so it waits for all four.
+      - name: Wait until npm serves the platform packages
+        run: |
+          version=${TAG#v}
+          for i in $(seq 1 90); do
+            missing=""
+            for dir in npm-out/cli-*; do
+              p=${dir#npm-out/cli-}
+              url="https://registry.npmjs.org/@spec-tacular/cli-$p/-/cli-$p-$version.tgz"
+              [ "$(curl -s -o /dev/null -w '%{http_code}' -I "$url")" = 200 ] || missing="$missing $p"
+            done
+            if [ -z "$missing" ]; then
+              echo "All platform packages can be downloaded."
+              exit 0
+            fi
+            echo "Waiting for:$missing"
+            sleep 10
+          done
+          echo "::error::npm did not serve$missing within 15 minutes. Run Release for $TAG again to publish @spec-tacular/cli."
+          exit 1
+
+      - name: Publish @spec-tacular/cli
+        run: |
+          case "$TAG" in *-*) tag=next ;; *) tag=latest ;; esac
+          version=$(node -p "require('./npm-out/cli/package.json').version")
+          if npm view "@spec-tacular/cli@$version" version > /dev/null 2>&1; then
+            echo "@spec-tacular/cli@$version is on npm already."
+            exit 0
+          fi
+          npm publish ./npm-out/cli --tag "$tag"
+
+      # What a user gets: install the release from npm, as they would, and run it.
+      - name: Install from npm and run
+        run: |
+          version=${TAG#v}
+          for i in $(seq 1 60); do
+            rm -rf "$RUNNER_TEMP/npm-check"
+            if npm install --global --prefix "$RUNNER_TEMP/npm-check" --prefer-online --no-audit --no-fund "@spec-tacular/cli@$version" > /dev/null 2>&1 \
+              && out=$("$RUNNER_TEMP/npm-check/bin/spec-tacular" --version 2>&1) \
+              && [ "$out" = "spec-tacular $version" ]; then
+              echo "npm i -g @spec-tacular/cli@$version works: $out"
+              exit 0
+            fi
+            echo "Not installable yet (${out:-not served yet}); trying again."
+            sleep 10
+          done
+          echo "::error::@spec-tacular/cli@$version did not install and run from npm within 10 minutes."
+          exit 1
