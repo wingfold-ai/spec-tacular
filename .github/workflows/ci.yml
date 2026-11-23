@@ -3,6 +3,13 @@
 # its TUI, lint for the shell scripts and the workflows themselves, and, on
 # pull requests, the title convention and a review of new dependencies.
 # The website has its own workflow (deploy-website.yml).
+#
+# A change that touches only documentation (website/, docs/ and the Markdown
+# files at the top level) skips the tests, the builds and the OpenSpec runs:
+# none of them reads those files, so they would test the code they tested
+# last time. Lint and the title check always run. Branch protection requires
+# the one `CI passed` check, which counts a skipped job as passed and a
+# failed or cancelled one as failed.
 name: CI
 
 on:
@@ -24,8 +31,53 @@ env:
   OPENSPEC_VERSION: "2.0.0"
 
 jobs:
+  changes:
+    name: what changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      # For a pull request this is the merge commit CI tests; its first parent
+      # is the base branch, so the diff is exactly what the tests would see change.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Does anything besides documentation change?
+        id: diff
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          code=false
+          # Run everything when started by hand, or when a push is not the
+          # single squashed commit main only ever receives.
+          if [ "$EVENT" = workflow_dispatch ]; then
+            code=true
+          elif [ "$EVENT" = push ] && [ "$BEFORE" != "$(git rev-parse HEAD^1)" ]; then
+            code=true
+          fi
+          files=$(git diff --name-only HEAD^1 HEAD)
+          [ -n "$files" ] || code=true
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              website/*|docs/*) ;;
+              */*) code=true ;;
+              *.md) ;;
+              *) code=true ;;
+            esac
+          done <<< "$files"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          { echo "### What changed"; echo; echo "Code changed: **$code**"; echo; echo '```'; echo "$files"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -86,6 +138,8 @@ jobs:
     # oldest supported release, the last 1.x and 2.x run the tests that drive
     # the real CLI, from a fresh project to an archived change.
     name: OpenSpec ${{ matrix.openspec }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -121,6 +175,8 @@ jobs:
 
   build:
     name: build and smoke-test the binary
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -153,6 +209,8 @@ jobs:
     # What `npm i -g @spec-tacular/cli` installs, from this commit: the
     # packages laid out as a release lays them out, packed, installed into an
     # empty prefix, and the command run through its launcher.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -268,3 +326,23 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
+
+  passed:
+    # The one check branch protection requires. A job skipped because only
+    # documentation changed counts as passed; one that failed, was cancelled
+    # or never ran because a job before it failed counts as failed.
+    name: CI passed
+    needs: [changes, test, openspec, build, npm, lint, pr-title, dependency-review]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          [ "$(echo "$RESULTS" | jq -r '.changes.result')" = success ] || { echo "::error::could not tell what changed"; exit 1; }
+          failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
+          [ -z "$failed" ] || { echo "::error::failed: $failed"; exit 1; }
