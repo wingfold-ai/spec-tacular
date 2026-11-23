@@ -6,7 +6,7 @@ const { data: site } = await useSite()
   <footer class="border-t border-st-border bg-st-bg py-8 text-xs text-st-faint">
     <div class="container-page flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <p>
-        <span class="text-st-dim">spec-tacular {{ site?.version }}</span> · MIT ·
+        <span class="text-st-dim">spec-tacular {{ site?.version }}</span> · Apache 2.0 ·
         built on <a href="https://github.com/Fission-AI/OpenSpec" class="text-st-dim underline decoration-st-border underline-offset-4 hover:text-st-strong">OpenSpec</a>
         · <span class="text-st-ok">exit 0</span>
       </p>

@@ -107,7 +107,7 @@ if (packages.length === 0) {
 const notices: string[] = [
   '# Third-party notices',
   '',
-  'spec-tacular is MIT-licensed (see LICENSE). This binary also contains the',
+  'spec-tacular is licensed under Apache 2.0 (see LICENSE). This binary also contains the',
   'software below, under its own licences.',
   '',
   '## Bun',

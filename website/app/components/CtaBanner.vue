@@ -23,7 +23,7 @@ const version = computed(() => site.value?.version)
           <InstallCommand />
         </div>
         <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-st-border pt-4">
-          <span class="text-xs text-st-faint">free · MIT · runs locally</span>
+          <span class="text-xs text-st-faint">free · Apache 2.0 · runs locally</span>
           <span class="flex flex-wrap gap-3">
             <NuxtLink to="/docs/getting-started/quickstart" class="tui-btn tui-btn-primary">[ Read the docs ]</NuxtLink>
             <a
