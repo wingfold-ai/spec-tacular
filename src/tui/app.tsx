@@ -905,7 +905,6 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
     const d = doc();
     if (!d) return [];
     const out: DocumentAction[] = [];
-    const step = next();
     const p = pipelines().find((c) => c.name === d.change);
     const at = p?.stages.findIndex((s) => s.id === d.artifact) ?? -1;
     // The implementation diff is accepted on the apply stage, after every artifact.
@@ -932,14 +931,6 @@ function App(props: { input: TuiInput; onQuit: () => void }) {
           );
           void reload(d.change);
         },
-      });
-    } else if (step?.actions.includes('draft') && step.artifact && step.artifact !== d.artifact) {
-      out.push({
-        label: step.artifact === 'apply'
-          ? '✓ Looks good — start implementing'
-          : `✓ Looks good — draft the ${step.artifact}`,
-        key: 'a',
-        run: () => { closeDoc(); void draftNext(); },
       });
     } else {
       out.push({ label: '✓ Looks good', key: 'a', run: closeDoc });
