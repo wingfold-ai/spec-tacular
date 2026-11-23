@@ -7,7 +7,10 @@
 # A change that touches only documentation (website/, docs/ and the Markdown
 # files at the top level) skips the tests, the builds and the OpenSpec runs:
 # none of them reads those files, so they would test the code they tested
-# last time. Lint and the title check always run. Branch protection requires
+# last time. A push to main skips them too when the pull request it merges
+# passed CI on exactly the same files, which branch protection makes the rule
+# (squash merges of up-to-date branches). Lint and the title check always run.
+# Branch protection requires
 # the one `CI passed` check, which counts a skipped job as passed and a
 # failed or cancelled one as failed.
 name: CI
@@ -35,8 +38,12 @@ jobs:
     name: what changed
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
-      code: ${{ steps.diff.outputs.code }}
+      code: ${{ steps.tested.outputs.code || steps.diff.outputs.code }}
     steps:
       # For a pull request this is the merge commit CI tests; its first parent
       # is the base branch, so the diff is exactly what the tests would see change.
@@ -73,6 +80,31 @@ jobs:
           done <<< "$files"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           { echo "### What changed"; echo; echo "Code changed: **$code**"; echo; echo '```'; echo "$files"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # main takes only squashed pull requests that are up to date with it, so
+      # the merged commit is, file for file, the code the pull request's CI
+      # passed on. Run it again only when that cannot be shown.
+      - name: Was this exact code already tested?
+        id: tested
+        if: github.event_name == 'push' && steps.diff.outputs.code == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          rerun() { echo "code=true" >> "$GITHUB_OUTPUT"; echo "Testing again: $1" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          pr=$(gh api "repos/$REPO/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].number // empty') || rerun "could not look up the pull request"
+          [ -n "$pr" ] || rerun "no merged pull request for $GITHUB_SHA"
+          head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha) || rerun "could not read #$pr"
+          # The pull request's last commit holds every commit main had when it
+          # merged, so its CI tested exactly these files.
+          behind=$(gh api "repos/$REPO/compare/$(git rev-parse HEAD^1)...$head" --jq .behind_by) || rerun "could not compare #$pr with main"
+          [ "$behind" = 0 ] || rerun "#$pr was $behind commits behind main"
+          [ "$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha)" = "$(git rev-parse 'HEAD^{tree}')" ] || rerun "the merged files differ from #$pr's last commit"
+          run=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$head&event=pull_request&status=success" --jq '.workflow_runs[0].html_url // empty') || rerun "could not list #$pr's CI runs"
+          [ -n "$run" ] || rerun "no passing CI run for #$pr's last commit"
+          echo "code=false" >> "$GITHUB_OUTPUT"
+          echo "Already tested: these files passed CI in #$pr, $run" >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: test (${{ matrix.os }})
