@@ -1,0 +1,28 @@
+# Known vulnerabilities the OSV scanner (and OpenSSF Scorecard, which runs it)
+# reports in pnpm-lock.yaml but which do not apply. Remove an entry once the
+# OSV record is corrected; each one expires so that it gets looked at again.
+#
+# Each of these advisories was fixed in the Nuxt 4 line at or below 4.6.4,
+# which is what the site uses, but its OSV record also lists the Nuxt 3 line
+# as an open range ("introduced 3.0.0", no fix), and the scanner matches that
+# range against 4.6.4.
+
+[[IgnoredVulns]]
+id = "GHSA-f3x9-2chm-73c8"
+ignoreUntil = 2027-05-31
+reason = "Fixed in nuxt and @nuxt/nitro-server 4.6.4; the match is the open Nuxt 3 range."
+
+[[IgnoredVulns]]
+id = "GHSA-hf59-9xwc-2g4p"
+ignoreUntil = 2027-05-31
+reason = "Fixed in nuxt and @nuxt/nitro-server 4.6.4; the match is the open Nuxt 3 range."
+
+[[IgnoredVulns]]
+id = "GHSA-vjh5-4x84-xrqp"
+ignoreUntil = 2027-05-31
+reason = "Fixed in nuxt and @nuxt/nitro-server 4.6.2; the match is the open Nuxt 3 range."
+
+[[IgnoredVulns]]
+id = "GHSA-96x6-fvhx-49hg"
+ignoreUntil = 2027-05-31
+reason = "Fixed in nuxt 4.6.4; the match is the open Nuxt 3 range."

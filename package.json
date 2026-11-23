@@ -45,5 +45,9 @@
     "@fission-ai/openspec": "^2.0.0",
     "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "glob": "^14.0.2",
+    "zod": "^4.6.6"
   }
 }
