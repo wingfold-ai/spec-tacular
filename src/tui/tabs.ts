@@ -162,7 +162,7 @@ export function implementingNow(root: string): string[] {
   const out: string[] = [];
   for (const entry of entries) {
     const file = join(dirFor(root), entry);
-    let pid = NaN;
+    let pid: number;
     try {
       pid = Number.parseInt(readFileSync(file, 'utf8').trim(), 10);
     } catch {

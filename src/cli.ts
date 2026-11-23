@@ -38,6 +38,7 @@ import {
   exportFiles,
   fretCli,
   fretFormula,
+  fretInvocation,
   monitorability,
   monitorDecision,
   monitorFret,
@@ -165,7 +166,6 @@ import { foundationGate, gateFor } from './core/gate.ts';
 import { DEFECT_SCHEMA_NAME, initProject, SCHEMA_NAME } from './core/init.ts';
 import { buildContext, buildPrompt } from './core/context.ts';
 import {
-  activeJobForChange,
   cancelJob,
   JobConflictError,
   listJobs,
@@ -1430,7 +1430,7 @@ async function runFret(args: Args, adapter: OpenSpecAdapter): Promise<number> {
       );
       return 1;
     }
-    const r = spawnSync('sh', ['-c', `${cli} realizability --diagnose '${args.change}' '${args.target}'`], { stdio: 'inherit' });
+    const r = spawnSync(...fretInvocation(cli, ['realizability', '--diagnose', args.change, args.target]), { stdio: 'inherit' });
     return r.status ?? 1;
   }
 
