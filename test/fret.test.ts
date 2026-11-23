@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { holdsAt, parseMtl } from '../src/core/formal/mtl.ts';
 import { parseFretish } from '../src/core/formal/fretish.ts';
@@ -9,6 +10,7 @@ import {
   exportFiles,
   formulasPath,
   fretFormula,
+  fretInvocation,
   monitorability,
   monitorDecision,
   monitorFret,
@@ -101,6 +103,16 @@ describe('cross-checking spec-tacular against FRET', () => {
     delete process.env['SPECTACULAR_FRET_CLI'];
     expect(fretFormula(d, FRET_SENTENCE)).toEqual({ formula: FRET_FORMULA, from: 'cache' });
     expect(fretFormula(d, 'sw shall satisfy y').formula).toBeNull();
+  });
+
+  test('arguments reach the FRET command line as they are, never as shell code', () => {
+    const d = project();
+    const marker = join(d, 'pwned');
+    const hostile = [`it's'; touch ${marker}; echo '`, '$(touch ' + marker + ')', '`touch ' + marker + '`', 'a b', ''];
+    const r = spawnSync(...fretInvocation(`printf '[%s]\\n' realizability`, hostile), { encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe(['realizability', ...hostile].map((a) => `[${a}]\n`).join(''));
+    expect(existsSync(marker)).toBe(false);
   });
 });
 

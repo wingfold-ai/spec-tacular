@@ -71,7 +71,15 @@ export function fretCli(projectRoot: string): string | null {
   }
 }
 
-const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+/**
+ * How to run `fret.cli` with arguments. The command itself is shell text
+ * from the project's own config (like an npm script), but the arguments go
+ * to the shell as positional parameters ("$@"), never into the command
+ * text, so a quote or `;` in a change name or sentence stays data.
+ */
+export function fretInvocation(cli: string, args: string[]): [string, string[]] {
+  return ['sh', ['-c', `${cli} "$@"`, 'sh', ...args]];
+}
 
 export type FormulaSource = { formula: string; from: 'fret' | 'cache' } | { formula: null; why: string };
 
@@ -82,7 +90,7 @@ export type FormulaSource = { formula: string; from: 'fret' | 'cache' } | { form
 export function fretFormula(projectRoot: string, fretish: string): FormulaSource {
   const cli = fretCli(projectRoot);
   if (cli) {
-    const r = spawnSync('sh', ['-c', `${cli} formalize -l ft-fin ${quote(fretish)}`], { encoding: 'utf8', timeout: 60_000 });
+    const r = spawnSync(...fretInvocation(cli, ['formalize', '-l', 'ft-fin', fretish]), { encoding: 'utf8', timeout: 60_000 });
     const line = (r.stdout ?? '').split('\n').map((l) => l.trim()).filter(Boolean).at(-1);
     if (r.status === 0 && line) {
       const cache = loadCache(projectRoot);
