@@ -3,7 +3,7 @@
   "version": "0.7.0",
   "description": "A terminal UI for spec-driven development, built on OpenSpec",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Marius Högger",
   "homepage": "https://spec-tacular.app",
   "repository": {

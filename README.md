@@ -15,7 +15,7 @@
   <a href="https://github.com/wingfold-ai/spec-tacular/releases/latest"><img src="https://img.shields.io/github/v/release/wingfold-ai/spec-tacular?label=release" alt="Latest release"></a>
   <a href="https://www.npmjs.com/package/@spec-tacular/cli"><img src="https://img.shields.io/npm/v/@spec-tacular/cli?label=npm" alt="npm"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/wingfold-ai/spec-tacular"><img src="https://api.scorecard.dev/projects/github.com/wingfold-ai/spec-tacular/badge" alt="OpenSSF Scorecard"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-blue" alt="License: Apache 2.0"></a>
 </p>
 
 <p align="center">
@@ -131,4 +131,4 @@ Please report security problems privately, as [SECURITY.md](SECURITY.md) describ
 
 ## License
 
-[MIT](LICENSE) © Marius Högger. Release binaries embed the Bun runtime and other packages; their licences ship in each archive's `THIRD_PARTY_NOTICES.md`.
+[Apache 2.0](LICENSE) © Marius Högger. Release binaries embed the Bun runtime and other packages; their licences ship in each archive's `THIRD_PARTY_NOTICES.md`.
