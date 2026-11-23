@@ -10,7 +10,7 @@ eyebrow: Spec-driven development for coding agents
 title: Your agent writes the spec.
 titleAccent: You decide what gets built.
 lead: spec-tacular is a terminal UI on top of OpenSpec. It puts every requirement your agent proposes in front of you, one at a time. Accept, reject or defer it with one key. Design and tasks are drafted only from what you accepted, and your agent implements those tasks.
-worksWith: Works with Claude Code and opencode · built on OpenSpec · MIT
+worksWith: Works with Claude Code and opencode · built on OpenSpec · Apache 2.0
 primary: { label: Install, to: '#install' }
 secondary: { label: See how it works, to: '#how-it-works' }
 ---
@@ -371,7 +371,7 @@ title: Questions developers ask first
     - q: Can my team use it?
       a: Every decision is written to review.md in the change folder, so it is reviewed in pull requests with the rest of the change. Several people reviewing the same change at once is not built yet.
     - q: What does it cost?
-      a: spec-tacular is free and MIT licensed. You pay for your agent's model usage as usual; a sidebar shows the model, the drafting cost so far and the current step.
+      a: spec-tacular is free and Apache 2.0 licensed. You pay for your agent's model usage as usual; a sidebar shows the model, the drafting cost so far and the current step.
     - q: Is it ready?
       a: 'It is before 1.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet. The version is in the header above.'
   ---

@@ -237,7 +237,7 @@ A good pull request:
 ## Licensing of contributions
 
 By contributing you agree that your contribution is licensed under the
-project's [MIT License](LICENSE).
+project's [Apache License 2.0](LICENSE).
 
 ## Code of Conduct
 

@@ -22,5 +22,5 @@ optional dependency, so don't install with `--omit=optional`. Without npm:
 
 - Documentation: https://spec-tacular.app/docs
 - Source, issues and releases: https://github.com/wingfold-ai/spec-tacular
-- MIT licensed. The platform packages embed the Bun runtime and other packages;
+- Apache 2.0 licensed. The platform packages embed the Bun runtime and other packages;
   their licences are in each one's THIRD_PARTY_NOTICES.md.
