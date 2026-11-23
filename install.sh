@@ -4,17 +4,12 @@
 #   curl -fsSL https://spec-tacular.app/install.sh | sh
 #
 # spec-tacular.app serves this same file: website/ copies it at build time.
-# While the repository is private, the releases need the GitHub CLI, so fetch
-# the script through it instead:
-#
-#   gh api repos/wingfold-ai/spec-tacular/contents/install.sh \
-#     -H 'Accept: application/vnd.github.raw' | sh
 #
 # SPECTACULAR_VERSION      a release tag such as v0.1.0 (default: the latest release)
 # SPECTACULAR_INSTALL_DIR  where the binary goes (default: ~/.local/bin)
 #
-# Downloads with the GitHub CLI when it is signed in, which is what works
-# while the repository is private; otherwise with curl from github.com. The
+# Downloads with the GitHub CLI when it is signed in (which avoids github.com's
+# anonymous rate limits), otherwise with curl from github.com. The
 # archive is checked against the release's SHA256SUMS before anything is
 # installed.
 
@@ -71,7 +66,7 @@ elif command -v curl >/dev/null 2>&1; then
   if [ "$version" = latest ]; then
     # github.com redirects /releases/latest to /releases/tag/<tag>.
     url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" </dev/null) ||
-      die "could not find the latest release of $REPO (a private repository needs gh, signed in)"
+      die "could not find the latest release of $REPO"
     tag=${url##*/}
   else
     tag=$version
@@ -83,7 +78,7 @@ elif command -v curl >/dev/null 2>&1; then
     curl -fsSL -o "$tmp/$asset" "$base/$asset" </dev/null 2>/dev/null && break
     asset=
   done
-  [ -n "$asset" ] || die "could not download a build for $os-$arch from release $tag (a private repository needs gh, signed in)"
+  [ -n "$asset" ] || die "could not download a build for $os-$arch from release $tag"
   say "Downloaded $asset"
   curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" </dev/null ||
     die "could not download SHA256SUMS from release $tag"

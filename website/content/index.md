@@ -373,7 +373,7 @@ title: Questions developers ask first
     - q: What does it cost?
       a: spec-tacular is free and Apache 2.0 licensed. You pay for your agent's model usage as usual; a sidebar shows the model, the drafting cost so far and the current step.
     - q: Is it ready?
-      a: 'It is before 1.0 and in early access: the repository opens to the public with the launch. Linux and macOS today, no Windows build yet. The version is in the header above.'
+      a: 'It is before 1.0, so expect changes between releases; the version is in the header above. It is open source on GitHub under the Apache 2.0 licence, and issues and pull requests are welcome. Linux and macOS today, no Windows build yet.'
   ---
   ::
 
