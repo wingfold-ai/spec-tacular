@@ -38,7 +38,7 @@
   "dependencies": {
     "@opentui/core": "^0.8.4",
     "@opentui/solid": "^0.8.4",
-    "solid-js": "^1.9.19",
+    "solid-js": "^2.0.3",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
