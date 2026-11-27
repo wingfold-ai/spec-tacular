@@ -17,10 +17,10 @@
     "shots": "uv run --quiet --with pyte python scripts/tui-shots/capture.py"
   },
   "dependencies": {
-    "@iconify-json/lucide": "^1.2.156",
+    "@iconify-json/lucide": "^1.2.157",
     "@nuxt/content": "3.17.0",
     "@nuxt/fonts": "1.2.0",
-    "@nuxt/ui": "4.12.2",
+    "@nuxt/ui": "4.13.0",
     "@nuxtjs/seo": "6.0.1",
     "better-sqlite3": "^13.2.0",
     "nuxt": "4.6.4",
